@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.pyc
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+*.local
+
+# Environment / secrets — nikad ne komituj .env fajlove
+.env
+.env.*
+*.env
+
+# Logs
+*.log
+logs/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
