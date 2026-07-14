@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Server, Activity, Terminal, BookOpen, Users,
-  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw
+  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key
 } from 'lucide-react';
 import clsx from 'clsx';
 import useAuthStore from '../../store/authStore';
@@ -13,6 +13,7 @@ import { Modal, Alert, Spinner } from '../ui';
 const navItems = [
   { to: '/dashboard',  icon: Activity, label: 'Dashboard'   },
   { to: '/servers',    icon: Server,   label: 'Serveri'     },
+  { to: '/ssh-keys',   icon: Key,      label: 'SSH Kljucevi'},
   { to: '/monitoring', icon: Activity, label: 'Monitoring'  },
   { to: '/scripts',    icon: BookOpen, label: 'Skripte'     },
   { to: '/execute',    icon: Terminal, label: 'Izvrsavanje' },

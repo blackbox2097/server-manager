@@ -9,6 +9,7 @@ import Dashboard from './pages/dashboard/Dashboard';
 import Monitoring from './pages/dashboard/Monitoring';
 import Servers   from './pages/servers/Servers';
 import TerminalPage from './pages/servers/Terminal';
+import SshKeys   from './pages/servers/SshKeys';
 import Scripts   from './pages/scripts/Scripts';
 import Execute   from './pages/scripts/Execute';
 import Tenants   from './pages/admin/Tenants';
@@ -44,6 +45,7 @@ export default function App() {
       <Route path="/monitoring"    element={<Page component={Monitoring} />} />
       <Route path="/servers"       element={<Page component={Servers}    />} />
       <Route path="/servers/:serverId/terminal" element={<Page component={TerminalPage} />} />
+      <Route path="/ssh-keys"      element={<Page component={SshKeys}    />} />
       <Route path="/scripts"       element={<Page component={Scripts}    />} />
       <Route path="/execute"       element={<Page component={Execute}    />} />
       <Route path="/admin/tenants" element={<Page component={Tenants}    superadminOnly />} />
