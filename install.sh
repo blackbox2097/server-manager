@@ -682,13 +682,22 @@ deploy_if_present() {
     chown root:"$APP_USER" "${CONFIG_DIR}/.env"
 
     info "Pokrecem aplikaciju..."
-    pm2 delete servermanager 2>/dev/null || true
+    sudo -u "$APP_USER" pm2 delete servermanager 2>/dev/null || true
     sleep 1
     fuser -k ${APP_PORT}/tcp 2>/dev/null || true
     sleep 1
-    pm2 start "${APP_DIR}/ecosystem.config.js"
-    pm2 save > /dev/null 2>&1
+    sudo -u "$APP_USER" pm2 start "${APP_DIR}/ecosystem.config.js"
+    sudo -u "$APP_USER" pm2 save > /dev/null 2>&1
     sleep 3
+
+    info "Podesavam PM2 da automatski startuje aplikaciju pri boot-u sistema..."
+    env PATH=$PATH:/usr/bin pm2 startup systemd -u "$APP_USER" --hp "$APP_DIR" > /tmp/pm2-startup.log 2>&1 || true
+    sudo -u "$APP_USER" pm2 save > /dev/null 2>&1
+    if systemctl is-enabled "pm2-${APP_USER}" &>/dev/null; then
+        log "PM2 startup servis instaliran (pm2-${APP_USER}.service) — aplikacija ce se sama podici posle restarta"
+    else
+        warn "Automatska PM2 startup konfiguracija nije potvrdjena — proveri rucno: sudo -u ${APP_USER} pm2 startup"
+    fi
 
     # Health check
     local HEALTH
@@ -696,7 +705,7 @@ deploy_if_present() {
     if echo "$HEALTH" | grep -q "ok"; then
         log "Aplikacija pokrenuta i radi"
     else
-        warn "Aplikacija nije odmah odgovorila — provjerite: pm2 logs servermanager"
+        warn "Aplikacija nije odmah odgovorila — provjerite: sudo -u ${APP_USER} pm2 logs servermanager"
     fi
 }
 
