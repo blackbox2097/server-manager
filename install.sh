@@ -280,7 +280,24 @@ CREATE TABLE IF NOT EXISTS executions (
     CONSTRAINT executions_status_check CHECK (status IN ('running','done','failed','cancelled'))
 );
 
-CREATE TABLE IF NOT EXISTS execution_results (
+CREATE TABLE IF NOT EXISTS scheduled_jobs (
+    id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id          UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name               TEXT        NOT NULL,
+    script_id          UUID        NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+    server_ids         UUID[]      NOT NULL,
+    cron_expression    TEXT        NOT NULL,
+    active             BOOLEAN     NOT NULL DEFAULT TRUE,
+    last_run_at        TIMESTAMPTZ,
+    last_execution_id  UUID        REFERENCES executions(id) ON DELETE SET NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by         UUID        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT scheduled_jobs_name_tenant_unique UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_tenant ON scheduled_jobs (tenant_id);
+
+
     id              BIGSERIAL   PRIMARY KEY,
     execution_id    UUID        NOT NULL REFERENCES executions(id) ON DELETE CASCADE,
     server_id       UUID        REFERENCES servers(id) ON DELETE SET NULL,
@@ -335,7 +352,7 @@ $$ LANGUAGE plpgsql;
 DO $$
 DECLARE t TEXT;
 BEGIN
-    FOREACH t IN ARRAY ARRAY['tenants','users','ldap_configs','servers','ssh_keys','scripts']
+    FOREACH t IN ARRAY ARRAY['tenants','users','ldap_configs','servers','ssh_keys','scripts','scheduled_jobs']
     LOOP
         EXECUTE format(
             'DROP TRIGGER IF EXISTS trg_updated_at ON %I;

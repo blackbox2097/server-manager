@@ -28,6 +28,8 @@ async def lifespan(app: FastAPI):
     logger.info("Baza dostupna")
     from app.services.monitor import start
     start()
+    from app.services.scheduler import load_all_jobs
+    await load_all_jobs()
     yield
     from app.services.monitor import scheduler
     if scheduler.running:
@@ -46,13 +48,14 @@ if cfg.node_env != "production":
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
                        allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-from app.routers import auth, admin, servers, monitoring, operations, terminal
+from app.routers import auth, admin, servers, monitoring, operations, terminal, schedules
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(servers.router)
 app.include_router(monitoring.router)
 app.include_router(operations.router)
 app.include_router(terminal.router)
+app.include_router(schedules.router)
 
 
 @app.get("/health")

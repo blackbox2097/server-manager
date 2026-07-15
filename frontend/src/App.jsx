@@ -11,6 +11,7 @@ import Servers   from './pages/servers/Servers';
 import TerminalPage from './pages/servers/Terminal';
 import SshKeys   from './pages/servers/SshKeys';
 import Scripts   from './pages/scripts/Scripts';
+import Schedules from './pages/scripts/Schedules';
 import Execute   from './pages/scripts/Execute';
 import Tenants   from './pages/admin/Tenants';
 import Users     from './pages/admin/Users';
@@ -47,6 +48,7 @@ export default function App() {
       <Route path="/servers/:serverId/terminal" element={<Page component={TerminalPage} />} />
       <Route path="/ssh-keys"      element={<Page component={SshKeys}    />} />
       <Route path="/scripts"       element={<Page component={Scripts}    />} />
+      <Route path="/schedules"     element={<Page component={Schedules}  />} />
       <Route path="/execute"       element={<Page component={Execute}    />} />
       <Route path="/admin/tenants" element={<Page component={Tenants}    superadminOnly />} />
       <Route path="/admin/users"   element={<Page component={Users}      superadminOnly />} />
