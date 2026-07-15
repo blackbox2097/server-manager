@@ -18,6 +18,8 @@ class ScheduleIn(BaseModel):
     serverIds:      list[str]
     cronExpression: str
     active:         bool = True
+    notifyOnFailure: bool = True
+    notifyAlways:    bool = False
 
     @field_validator("serverIds")
     @classmethod
@@ -33,6 +35,8 @@ class ScheduleUp(BaseModel):
     serverIds:      list[str] | None = None
     cronExpression: str | None = None
     active:         bool | None = None
+    notifyOnFailure: bool | None = None
+    notifyAlways:    bool | None = None
 
 
 async def _with_next_run(rows) -> list[dict]:
@@ -76,10 +80,13 @@ async def create_schedule(tid: str, body: ScheduleIn, user=Depends(get_current_u
 
     try:
         row = await fetchrow(
-            """INSERT INTO scheduled_jobs (tenant_id, name, script_id, server_ids, cron_expression, active, created_by)
-               VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *""",
+            """INSERT INTO scheduled_jobs
+                 (tenant_id, name, script_id, server_ids, cron_expression, active,
+                  notify_on_failure, notify_always, created_by)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *""",
             tid, body.name, body.scriptId, body.serverIds,
-            body.cronExpression, body.active, user["id"])
+            body.cronExpression, body.active,
+            body.notifyOnFailure, body.notifyAlways, user["id"])
     except Exception as e:
         if "unique" in str(e).lower():
             raise HTTPException(409, "Zakazani posao sa tim nazivom vec postoji")
@@ -116,13 +123,16 @@ async def update_schedule(tid: str, sid: str, body: ScheduleUp, user=Depends(get
 
     row = await fetchrow(
         """UPDATE scheduled_jobs SET
-             name            = COALESCE($1, name),
-             script_id       = COALESCE($2, script_id),
-             server_ids      = COALESCE($3, server_ids),
-             cron_expression = COALESCE($4, cron_expression),
-             active          = COALESCE($5, active)
-           WHERE id=$6 AND tenant_id=$7 RETURNING *""",
+             name              = COALESCE($1, name),
+             script_id         = COALESCE($2, script_id),
+             server_ids        = COALESCE($3, server_ids),
+             cron_expression   = COALESCE($4, cron_expression),
+             active            = COALESCE($5, active),
+             notify_on_failure = COALESCE($6, notify_on_failure),
+             notify_always     = COALESCE($7, notify_always)
+           WHERE id=$8 AND tenant_id=$9 RETURNING *""",
         body.name, body.scriptId, body.serverIds, body.cronExpression, body.active,
+        body.notifyOnFailure, body.notifyAlways,
         sid, tid)
     if not row:
         raise HTTPException(404, "Zakazani posao nije pronadjen")
@@ -179,6 +189,10 @@ async def run_schedule_now(tid: str, sid: str, user=Depends(get_current_user)):
     if not row:
         raise HTTPException(404, "Zakazani posao nije pronadjen")
 
+    async def _on_complete(exec_id: str):
+        from app.services.notify import notify_scheduled_execution
+        await notify_scheduled_execution(exec_id, tid, row["notify_on_failure"], row["notify_always"])
+
     exec_id = await executor_run(
         tenant_id      = tid,
         server_ids     = [str(s) for s in row["server_ids"]],
@@ -186,6 +200,8 @@ async def run_schedule_now(tid: str, sid: str, user=Depends(get_current_user)):
         script_name    = f"[Rucno pokrenuto] {row['script_name']}",
         script_id      = str(row["script_id"]),
         started_by     = user["id"],
+        notify         = False,
+        on_complete    = _on_complete,
     )
     await execute(
         "UPDATE scheduled_jobs SET last_run_at=NOW(), last_execution_id=$1 WHERE id=$2",

@@ -16,6 +16,11 @@ def _job_id(scheduled_job_id: str) -> str:
     return f"sched_{scheduled_job_id}"
 
 
+async def _notify_after_completion(exec_id: str, tenant_id: str, notify_on_failure: bool, notify_always: bool):
+    from app.services.notify import notify_scheduled_execution
+    await notify_scheduled_execution(exec_id, tenant_id, notify_on_failure, notify_always)
+
+
 async def _run_scheduled_job(job_id: str):
     """Poziva se od strane APScheduler-a u zakazano vreme."""
     row = await fetchrow("SELECT * FROM scheduled_jobs WHERE id=$1 AND active=true", job_id)
@@ -29,13 +34,20 @@ async def _run_scheduled_job(job_id: str):
         return
 
     try:
+        tenant_id = str(row["tenant_id"])
+
+        async def _on_complete(exec_id: str):
+            await _notify_after_completion(exec_id, tenant_id, row["notify_on_failure"], row["notify_always"])
+
         exec_id = await executor_run(
-            tenant_id      = str(row["tenant_id"]),
+            tenant_id      = tenant_id,
             server_ids     = [str(s) for s in row["server_ids"]],
             content        = script["content"],
             script_name    = f"[Zakazano] {script['name']}",
             script_id      = str(row["script_id"]),
             started_by     = str(row["created_by"]) if row["created_by"] else None,
+            notify         = False,  # zakazani poslovi imaju sopstvenu notify logiku (on_complete)
+            on_complete    = _on_complete,
         )
         await execute(
             "UPDATE scheduled_jobs SET last_run_at=NOW(), last_execution_id=$1 WHERE id=$2",

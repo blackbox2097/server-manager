@@ -294,6 +294,8 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
     server_ids         UUID[]      NOT NULL,
     cron_expression    TEXT        NOT NULL,
     active             BOOLEAN     NOT NULL DEFAULT TRUE,
+    notify_on_failure  BOOLEAN     NOT NULL DEFAULT TRUE,
+    notify_always      BOOLEAN     NOT NULL DEFAULT FALSE,
     last_run_at        TIMESTAMPTZ,
     last_execution_id  UUID        REFERENCES executions(id) ON DELETE SET NULL,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),

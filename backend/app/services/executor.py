@@ -56,7 +56,8 @@ async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str) -> 
 
 
 async def run(tenant_id: str, server_ids: list, content: str,
-              script_name: str = "Ad-hoc", script_id=None, started_by=None) -> str:
+              script_name: str = "Ad-hoc", script_id=None, started_by=None,
+              notify: bool = True, on_complete=None) -> str:
     cfg = get_settings()
     ph  = ", ".join(f"${i+2}" for i in range(len(server_ids)))
     servers = await fetch(
@@ -103,7 +104,10 @@ async def run(tenant_id: str, server_ids: list, content: str,
         logger.info(f"Execution {eid}: {final} ok={ok} err={err}")
 
         from app.services.notify import notify_execution
-        asyncio.create_task(notify_execution(eid))
+        if notify:
+            asyncio.create_task(notify_execution(eid))
+        if on_complete:
+            asyncio.create_task(on_complete(eid))
 
     asyncio.create_task(_all())
     return eid

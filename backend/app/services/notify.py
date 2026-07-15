@@ -115,7 +115,8 @@ async def notify_server_status(server: dict, old_status: str, new_status: str):
 
 
 async def notify_execution(execution_id: str):
-    """Poziva se nakon svakog zavrsenog izvrsavanja skripte (rucnog ili zakazanog)."""
+    """Poziva se nakon svakog rucno pokrenutog izvrsavanja skripte (Execute stranica).
+    Zakazani poslovi imaju SOPSTVENU logiku (notify_scheduled_execution) — ne prolaze ovuda."""
     exec_row = await fetchrow("SELECT * FROM executions WHERE id=$1", execution_id)
     if not exec_row:
         return
@@ -140,11 +141,36 @@ async def notify_execution(execution_id: str):
     if not recipients:
         return
 
-    await _send_execution_email(exec_row, recipients)
+    await send_execution_email(exec_row, recipients)
+
+
+async def notify_scheduled_execution(execution_id: str, tenant_id: str,
+                                      notify_on_failure: bool, notify_always: bool):
+    """Zasebna logika za zakazane poslove — koristi PODESAVANJA TOG KONKRETNOG POSLA,
+    ne opsta tenant podesavanja za rucna izvrsavanja. Master prekidac (alerts_enabled)
+    i lista primalaca i dalje dolaze sa nivoa tenanta."""
+    tenant = await fetchrow("SELECT alerts_enabled FROM tenants WHERE id=$1", tenant_id)
+    if not tenant or not tenant["alerts_enabled"]:
+        return
+
+    exec_row = await fetchrow("SELECT * FROM executions WHERE id=$1", execution_id)
+    if not exec_row:
+        return
+
+    has_failures = exec_row["error_count"] > 0
+    should_send = (has_failures and notify_on_failure) or notify_always
+    if not should_send:
+        return
+
+    recipients = await get_recipients(tenant_id)
+    if not recipients:
+        return
+
+    await send_execution_email(exec_row, recipients)
 
 
 async def send_execution_report(execution_id: str, tenant_id: str, override_recipients: list[str] | None = None):
-    """Rucno pokrenuto slanje izvestaja (dugme u UI) — zaobilazi tenant toggle podesavanja."""
+    """Rucno pokrenuto slanje izvestaja (dugme u UI) — zaobilazi sve toggle provere."""
     exec_row = await fetchrow("SELECT * FROM executions WHERE id=$1 AND tenant_id=$2", execution_id, tenant_id)
     if not exec_row:
         raise ValueError("Execution nije pronadjen")
@@ -153,10 +179,10 @@ async def send_execution_report(execution_id: str, tenant_id: str, override_reci
     if not recipients:
         raise ValueError("Nema definisanih primalaca za ovaj tenant")
 
-    await _send_execution_email(exec_row, recipients)
+    await send_execution_email(exec_row, recipients)
 
 
-async def _send_execution_email(exec_row, recipients: list[str]):
+async def send_execution_email(exec_row, recipients: list[str]):
     results = await fetch(
         "SELECT server_name, status, exit_code, duration_ms FROM execution_results WHERE execution_id=$1 ORDER BY server_name",
         exec_row["id"]

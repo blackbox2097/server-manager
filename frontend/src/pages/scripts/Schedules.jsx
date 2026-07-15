@@ -25,6 +25,8 @@ function ScheduleForm({ tenantId, schedule, scripts, servers, onSave, onClose })
   const [scriptId,   setScriptId]   = useState(schedule?.script_id || '');
   const [cron,       setCron]       = useState(schedule?.cron_expression || '0 2 * * *');
   const [active,     setActive]     = useState(schedule?.active ?? true);
+  const [notifyOnFailure, setNotifyOnFailure] = useState(schedule?.notify_on_failure ?? true);
+  const [notifyAlways,    setNotifyAlways]    = useState(schedule?.notify_always ?? false);
   const [selected,   setSelected]   = useState(new Set(schedule?.server_ids || []));
   const [saving,     setSaving]     = useState(false);
   const [error,      setError]      = useState('');
@@ -46,6 +48,7 @@ function ScheduleForm({ tenantId, schedule, scripts, servers, onSave, onClose })
     setSaving(true); setError('');
     const payload = {
       name, scriptId, cronExpression: cron, active,
+      notifyOnFailure, notifyAlways,
       serverIds: [...selected],
     };
     try {
@@ -120,6 +123,23 @@ function ScheduleForm({ tenantId, schedule, scripts, servers, onSave, onClose })
           onChange={e => setActive(e.target.checked)} />
         <span className="text-sm text-gray-300">Aktivno (odmah počinje da se izvršava po rasporedu)</span>
       </label>
+
+      <div className="border-t border-gray-800 pt-3 space-y-2">
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">Email obaveštenja za ovo zakazivanje</p>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" className="accent-brand-500" checked={notifyOnFailure}
+            onChange={e => setNotifyOnFailure(e.target.checked)} />
+          <span className="text-sm text-gray-300">Pošalji alarm ako izvršavanje ne uspe</span>
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" className="accent-brand-500" checked={notifyAlways}
+            onChange={e => setNotifyAlways(e.target.checked)} />
+          <span className="text-sm text-gray-300">Uvek pošalji izveštaj (i kada uspe)</span>
+        </label>
+        <p className="text-xs text-gray-600">
+          Zahteva da su email alarmi uključeni i primaoci podešeni na stranici "Alarmi".
+        </p>
+      </div>
 
       <div className="flex justify-end gap-2 pt-2">
         <button className="btn-secondary" onClick={onClose}>Otkaži</button>

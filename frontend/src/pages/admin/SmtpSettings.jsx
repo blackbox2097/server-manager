@@ -93,6 +93,7 @@ export default function SmtpSettings() {
             <label className="label">Port</label>
             <input className="input" type="number" value={form.port}
               onChange={e => set('port', parseInt(e.target.value) || 587)} />
+            <p className="text-xs text-gray-600 mt-1">465=SSL, 587=STARTTLS</p>
           </div>
         </div>
 
@@ -121,11 +122,17 @@ export default function SmtpSettings() {
           </div>
         </div>
 
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" className="accent-brand-500" checked={form.useTls}
-            onChange={e => set('useTls', e.target.checked)} />
-          <span className="text-sm text-gray-300">Koristi TLS (preporučeno, port 587)</span>
-        </label>
+        {form.port === 465 ? (
+          <div className="text-xs text-gray-500 bg-gray-800/50 rounded-lg px-3 py-2">
+            Port 465 koristi direktan SSL — TLS opcija se ne primenjuje.
+          </div>
+        ) : (
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" className="accent-brand-500" checked={form.useTls}
+              onChange={e => set('useTls', e.target.checked)} />
+            <span className="text-sm text-gray-300">Koristi TLS (preporučeno, port 587)</span>
+          </label>
+        )}
 
         <div className="flex justify-end pt-2">
           <button className="btn-primary" onClick={handleSave} disabled={saving}>
