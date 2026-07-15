@@ -43,10 +43,10 @@ export default function SmtpSettings() {
     if (!form.host || !form.fromEmail) { setError('Host i "šalje sa" adresa su obavezni'); return; }
     setSaving(true); setError(''); setSuccess('');
     try {
-      const payload = { ...form, password: form.password || undefined };
+      const payload = { ...form, port: form.port || 587, password: form.password || undefined };
       const { data } = await api.put('/admin/smtp-settings', payload);
       setPasswordSet(data.passwordSet);
-      setForm(f => ({ ...f, password: '' }));
+      setForm(f => ({ ...f, port: f.port || 587, password: '' }));
       setSuccess('Podešavanja sačuvana.');
     } catch (err) {
       setError(err.response?.data?.detail || 'Greška pri čuvanju');
@@ -92,7 +92,11 @@ export default function SmtpSettings() {
           <div>
             <label className="label">Port</label>
             <input className="input" type="number" value={form.port}
-              onChange={e => set('port', parseInt(e.target.value) || 587)} />
+              onChange={e => {
+                const v = e.target.value;
+                set('port', v === '' ? '' : (parseInt(v) || ''));
+              }}
+              onBlur={() => { if (!form.port) set('port', 587); }} />
             <p className="text-xs text-gray-600 mt-1">465=SSL, 587=STARTTLS</p>
           </div>
         </div>
