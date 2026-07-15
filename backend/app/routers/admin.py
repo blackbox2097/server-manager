@@ -1,8 +1,9 @@
 # app/routers/admin.py
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from app.database import fetch, fetchrow, execute, get_pool
 from app.services.auth import require_superadmin, hash_password
+from app.services.crypto import encrypt
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -166,3 +167,61 @@ async def audit(limit: int = 50, offset: int = 0, action: str | None = None,
         f"SELECT * FROM audit_log WHERE {' AND '.join(cond)} ORDER BY occurred_at DESC LIMIT ${len(params)-1} OFFSET ${len(params)}",
         *params)
     return [dict(r) for r in rows]
+
+
+# ── SMTP podesavanja (globalno, superadmin) ──────────────────────────────────
+
+class SmtpSettingsIn(BaseModel):
+    host:      str
+    port:      int = 587
+    username:  str | None = None
+    password:  str | None = None  # ako je prazno pri update-u, zadrzava se staro
+    fromEmail: EmailStr
+    fromName:  str = "Server Manager"
+    useTls:    bool = True
+
+
+class SmtpTestIn(BaseModel):
+    to: EmailStr
+
+
+@router.get("/smtp-settings")
+async def get_smtp_settings(user=Depends(require_superadmin)):
+    row = await fetchrow("SELECT * FROM smtp_settings WHERE id=1")
+    if not row:
+        return {"configured": False}
+    d = dict(row)
+    d.pop("password_enc", None)
+    d["passwordSet"] = bool(row["password_enc"])
+    return d
+
+
+@router.put("/smtp-settings")
+async def update_smtp_settings(body: SmtpSettingsIn, user=Depends(require_superadmin)):
+    pw_enc = encrypt(body.password) if body.password else None
+    row = await fetchrow(
+        """UPDATE smtp_settings SET
+             host=$1, port=$2, username=$3,
+             password_enc = CASE WHEN $4::text IS NOT NULL THEN $4 ELSE password_enc END,
+             from_email=$5, from_name=$6, use_tls=$7,
+             configured=true, updated_at=NOW()
+           WHERE id=1 RETURNING *""",
+        body.host, body.port, body.username, pw_enc,
+        str(body.fromEmail), body.fromName, body.useTls)
+    d = dict(row)
+    d.pop("password_enc", None)
+    d["passwordSet"] = True
+    return d
+
+
+@router.post("/smtp-settings/test")
+async def test_smtp_settings(body: SmtpTestIn, user=Depends(require_superadmin)):
+    from app.services.notify import send_email
+    ok = await send_email(
+        [str(body.to)],
+        "Server Manager — Test email",
+        "<p>Ovo je test email iz Server Manager aplikacije. Ako ovo vidiš, SMTP podešavanja rade ispravno.</p>"
+    )
+    if not ok:
+        raise HTTPException(400, "Slanje nije uspelo — proveri SMTP podešavanja i logove servera")
+    return {"ok": True}

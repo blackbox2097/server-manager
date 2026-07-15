@@ -102,6 +102,9 @@ async def run(tenant_id: str, server_ids: list, content: str,
             tenant_id=tenant_id)
         logger.info(f"Execution {eid}: {final} ok={ok} err={err}")
 
+        from app.services.notify import notify_execution
+        asyncio.create_task(notify_execution(eid))
+
     asyncio.create_task(_all())
     return eid
 

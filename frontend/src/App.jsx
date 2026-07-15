@@ -10,11 +10,13 @@ import Monitoring from './pages/dashboard/Monitoring';
 import Servers   from './pages/servers/Servers';
 import TerminalPage from './pages/servers/Terminal';
 import SshKeys   from './pages/servers/SshKeys';
+import Alerts    from './pages/servers/Alerts';
 import Scripts   from './pages/scripts/Scripts';
 import Schedules from './pages/scripts/Schedules';
 import Execute   from './pages/scripts/Execute';
 import Tenants   from './pages/admin/Tenants';
 import Users     from './pages/admin/Users';
+import SmtpSettings from './pages/admin/SmtpSettings';
 
 function ProtectedRoute({ children, superadminOnly }) {
   const { user } = useAuthStore();
@@ -47,11 +49,13 @@ export default function App() {
       <Route path="/servers"       element={<Page component={Servers}    />} />
       <Route path="/servers/:serverId/terminal" element={<Page component={TerminalPage} />} />
       <Route path="/ssh-keys"      element={<Page component={SshKeys}    />} />
+      <Route path="/alerts"        element={<Page component={Alerts}     />} />
       <Route path="/scripts"       element={<Page component={Scripts}    />} />
       <Route path="/schedules"     element={<Page component={Schedules}  />} />
       <Route path="/execute"       element={<Page component={Execute}    />} />
       <Route path="/admin/tenants" element={<Page component={Tenants}    superadminOnly />} />
       <Route path="/admin/users"   element={<Page component={Users}      superadminOnly />} />
+      <Route path="/admin/smtp"    element={<Page component={SmtpSettings} superadminOnly />} />
       <Route path="*"              element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );

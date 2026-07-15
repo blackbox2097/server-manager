@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Server, Activity, Terminal, BookOpen, Users,
-  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock
+  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail
 } from 'lucide-react';
 import clsx from 'clsx';
 import useAuthStore from '../../store/authStore';
@@ -18,11 +18,13 @@ const navItems = [
   { to: '/scripts',    icon: BookOpen, label: 'Skripte'     },
   { to: '/schedules',  icon: Clock,    label: 'Zakazano'    },
   { to: '/execute',    icon: Terminal, label: 'Izvrsavanje' },
+  { to: '/alerts',     icon: Bell,     label: 'Alarmi'      },
 ];
 
 const adminItems = [
   { to: '/admin/tenants', icon: Shield, label: 'Tenanti'   },
   { to: '/admin/users',   icon: Users,  label: 'Operateri' },
+  { to: '/admin/smtp',    icon: Mail,   label: 'SMTP'      },
 ];
 
 // ── Change password modal ─────────────────────────────────────────────────────

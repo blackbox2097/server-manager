@@ -39,6 +39,7 @@ def _net_rate(server_id: str, rx_bytes: int, tx_bytes: int) -> tuple[float, floa
 
 async def _poll(server: dict):
     srv = dict(server)
+    old_status = srv.get("status")  # status PRE ovog poll-a, za detekciju promene
     if srv.get("private_key_enc"): srv["_private_key"]    = decrypt(srv["private_key_enc"])
     if srv.get("ssh_password"):    srv["_ssh_password"]   = decrypt(srv["ssh_password"])
     if srv.get("sudo_password"):   srv["_sudo_password"]  = decrypt(srv["sudo_password"])
@@ -78,6 +79,10 @@ async def _poll(server: dict):
                         "netRxKbps": rx_kbps, "netTxKbps": tx_kbps,
                         "processCount": m.get("processCount")},
         }, tenant_id=str(srv["tenant_id"]))
+
+        if old_status and old_status != status:
+            from app.services.notify import notify_server_status
+            asyncio.create_task(notify_server_status(srv, old_status, status))
     except Exception as e:
         err = str(e)[:500]
         await execute("UPDATE servers SET status='offline', last_error=$1 WHERE id=$2", err, srv["id"])
@@ -86,6 +91,11 @@ async def _poll(server: dict):
             "status": "offline", "error": err,
         }, tenant_id=str(srv["tenant_id"]))
         logger.warning(f"Poll neuspjesan: {srv['name']} - {err}")
+
+        if old_status and old_status != "offline":
+            srv["last_error"] = err
+            from app.services.notify import notify_server_status
+            asyncio.create_task(notify_server_status(srv, old_status, "offline"))
 
 
 async def poll_all():

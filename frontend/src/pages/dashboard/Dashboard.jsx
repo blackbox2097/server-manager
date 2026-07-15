@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Server, Wifi, WifiOff, AlertTriangle, PlayCircle,
-  CheckCircle2, XCircle, Loader2, Terminal as TerminalIcon
+  CheckCircle2, XCircle, Loader2, Terminal as TerminalIcon, Mail
 } from 'lucide-react';
 import api from '../../services/api';
 import ws from '../../services/ws';
@@ -58,6 +58,7 @@ export default function Dashboard() {
 
   const [servers,    setServers]    = useState([]);
   const [executions, setExecutions] = useState([]);
+  const [sendingReport, setSendingReport] = useState(null);
   const [loading,    setLoading]    = useState(true);
   const [liveData,   setLiveData]   = useState({});  // serverId -> latest metrics
 
@@ -84,6 +85,17 @@ export default function Dashboard() {
     } catch {}
     setLoading(false);
   }, [tenantId]);
+
+  const handleSendReport = async (execId) => {
+    setSendingReport(execId);
+    try {
+      await api.post(`/tenants/${tenantId}/executions/${execId}/send-report`);
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Slanje izveštaja nije uspelo — proveri da li su podešeni primaoci u sekciji Alarmi');
+    } finally {
+      setSendingReport(null);
+    }
+  };
 
   useEffect(() => {
     fetchData();
@@ -262,6 +274,15 @@ export default function Dashboard() {
                   </div>
                   {exec.started_by_name && (
                     <p className="text-xs text-gray-700 mt-0.5">od {exec.started_by_name}</p>
+                  )}
+                  {exec.status !== 'running' && (
+                    <button
+                      className="text-xs text-brand-400 hover:text-brand-300 hover:underline mt-1 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                      disabled={sendingReport === exec.id}
+                      onClick={() => handleSendReport(exec.id)}>
+                      {sendingReport === exec.id ? <Loader2 size={11} className="animate-spin" /> : <Mail size={11} />}
+                      Pošalji izveštaj mejlom
+                    </button>
                   )}
                 </div>
               ))}

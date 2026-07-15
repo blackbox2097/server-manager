@@ -114,6 +114,12 @@ CREATE TABLE IF NOT EXISTS tenants (
     color       TEXT         NOT NULL DEFAULT '#378ADD',
     description TEXT,
     active      BOOLEAN      NOT NULL DEFAULT TRUE,
+    alerts_enabled              BOOLEAN NOT NULL DEFAULT FALSE,
+    alert_on_offline            BOOLEAN NOT NULL DEFAULT TRUE,
+    alert_on_recovery           BOOLEAN NOT NULL DEFAULT TRUE,
+    alert_on_warning            BOOLEAN NOT NULL DEFAULT FALSE,
+    alert_on_execution_failure  BOOLEAN NOT NULL DEFAULT TRUE,
+    alert_on_execution_report   BOOLEAN NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     CONSTRAINT tenants_name_unique UNIQUE (name),
@@ -297,6 +303,30 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_tenant ON scheduled_jobs (tenant_id);
 
+CREATE TABLE IF NOT EXISTS alert_recipients (
+    id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    email      TEXT        NOT NULL,
+    active     BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by UUID        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT alert_recipients_unique UNIQUE (tenant_id, email)
+);
+
+CREATE TABLE IF NOT EXISTS smtp_settings (
+    id           INTEGER     PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    host         TEXT,
+    port         INTEGER     NOT NULL DEFAULT 587,
+    username     TEXT,
+    password_enc TEXT,
+    from_email   TEXT,
+    from_name    TEXT        NOT NULL DEFAULT 'Server Manager',
+    use_tls      BOOLEAN     NOT NULL DEFAULT TRUE,
+    configured   BOOLEAN     NOT NULL DEFAULT FALSE,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO smtp_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
 
     id              BIGSERIAL   PRIMARY KEY,
     execution_id    UUID        NOT NULL REFERENCES executions(id) ON DELETE CASCADE,
@@ -419,6 +449,7 @@ setup_python() {
         asyncpg==0.29.0 \
         paramiko==3.4.0 \
         pydantic==2.7.1 \
+        email-validator==2.1.1 \
         pydantic-settings==2.3.0 \
         "python-jose[cryptography]==3.3.0" \
         bcrypt==4.1.3 \
