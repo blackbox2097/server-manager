@@ -3,12 +3,13 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Server, Wifi, WifiOff, AlertTriangle, PlayCircle,
-  CheckCircle2, XCircle, Loader2, Terminal as TerminalIcon, Mail
+  CheckCircle2, XCircle, Loader2, Terminal as TerminalIcon, Mail, FileText
 } from 'lucide-react';
 import api from '../../services/api';
 import ws from '../../services/ws';
 import useAuthStore from '../../store/authStore';
 import { StatusBadge, MeterBar, Spinner, formatUptime } from '../../components/ui';
+import { LogRow } from '../servers/Logs';
 
 function StatCard({ icon: Icon, label, value, color = 'text-gray-100' }) {
   return (
@@ -58,6 +59,7 @@ export default function Dashboard() {
 
   const [servers,    setServers]    = useState([]);
   const [executions, setExecutions] = useState([]);
+  const [recentLogs, setRecentLogs] = useState([]);
   const [sendingReport, setSendingReport] = useState(null);
   const [loading,    setLoading]    = useState(true);
   const [liveData,   setLiveData]   = useState({});  // serverId -> latest metrics
@@ -68,12 +70,14 @@ export default function Dashboard() {
   const fetchData = useCallback(async () => {
     if (!tenantId || tenantId === '__admin__') { setLoading(false); return; }
     try {
-      const [monRes, execRes] = await Promise.all([
+      const [monRes, execRes, logRes] = await Promise.all([
         api.get(`/tenants/${tenantId}/monitoring`),
         api.get(`/tenants/${tenantId}/executions?limit=5`).catch(() => ({ data: [] })),
+        api.get(`/tenants/${tenantId}/logs?limit=6`).catch(() => ({ data: [] })),
       ]);
       setServers(monRes.data);
       setExecutions(execRes.data);
+      setRecentLogs(logRes.data);
 
       const init = {};
       monRes.data.forEach(s => {
@@ -237,7 +241,8 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Poslednja izvrsavanja skripti */}
+        {/* Poslednja izvrsavanja + Poslednje aktivnosti */}
+        <div className="space-y-4">
         <div className="card p-0 overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
             <h2 className="text-sm font-medium text-gray-300 flex items-center gap-1.5">
@@ -288,6 +293,29 @@ export default function Dashboard() {
               ))}
             </div>
           )}
+        </div>
+
+        {/* Poslednje aktivnosti (audit log) */}
+        <div className="card p-0 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+            <h2 className="text-sm font-medium text-gray-300 flex items-center gap-1.5">
+              <FileText size={14} /> Poslednje aktivnosti
+            </h2>
+            <button className="text-xs text-brand-400 hover:text-brand-300" onClick={() => navigate('/logs')}>
+              Svi logovi
+            </button>
+          </div>
+          {recentLogs.length === 0 ? (
+            <div className="py-10 text-center text-gray-600 text-sm px-4">
+              <FileText size={24} className="mx-auto mb-2 text-gray-700" />
+              Još nema zabeleženih aktivnosti
+            </div>
+          ) : (
+            <div>
+              {recentLogs.map(log => <LogRow key={log.id} log={log} />)}
+            </div>
+          )}
+        </div>
         </div>
       </div>
     </div>
