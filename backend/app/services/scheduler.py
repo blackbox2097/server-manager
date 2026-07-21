@@ -23,7 +23,10 @@ async def _notify_after_completion(exec_id: str, tenant_id: str, notify_on_failu
 
 async def _run_scheduled_job(job_id: str):
     """Poziva se od strane APScheduler-a u zakazano vreme."""
-    row = await fetchrow("SELECT * FROM scheduled_jobs WHERE id=$1 AND active=true", job_id)
+    row = await fetchrow(
+        """SELECT sj.*, u.username AS creator_username
+           FROM scheduled_jobs sj LEFT JOIN users u ON u.id = sj.created_by
+           WHERE sj.id=$1 AND sj.active=true""", job_id)
     if not row:
         logger.warning(f"Zakazani posao {job_id} nije pronadjen ili je neaktivan — preskacem")
         return
@@ -46,6 +49,7 @@ async def _run_scheduled_job(job_id: str):
             script_name    = f"[Zakazano] {script['name']}",
             script_id      = str(row["script_id"]),
             started_by     = str(row["created_by"]) if row["created_by"] else None,
+            started_by_username = row["creator_username"],
             notify         = False,  # zakazani poslovi imaju sopstvenu notify logiku (on_complete)
             on_complete    = _on_complete,
         )

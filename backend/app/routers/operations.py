@@ -92,7 +92,8 @@ async def execute_script(tid: str, body: ExecReq, user=Depends(get_current_user)
     if not content or not content.strip():
         raise HTTPException(400, "Sadrzaj skripte je prazan")
     try:
-        eid = await run(tid, body.serverIds, content, name, body.scriptId, user["id"])
+        eid = await run(tid, body.serverIds, content, name, body.scriptId, user["id"],
+                       started_by_username=user.get("username"))
         return {"executionId": eid, "message": f"Pokrenuto na {len(body.serverIds)} servera"}
     except ValueError as e:
         raise HTTPException(400, str(e))

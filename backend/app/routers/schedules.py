@@ -217,6 +217,7 @@ async def run_schedule_now(tid: str, sid: str, user=Depends(get_current_user)):
         script_name    = f"[Rucno pokrenuto] {row['script_name']}",
         script_id      = str(row["script_id"]),
         started_by     = user["id"],
+        started_by_username = user.get("username"),
         notify         = False,
         on_complete    = _on_complete,
     )

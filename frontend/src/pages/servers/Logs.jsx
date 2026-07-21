@@ -27,6 +27,7 @@ export function actionLabel(action) {
     'server.create': 'Server dodat', 'server.update': 'Server izmenjen', 'server.delete': 'Server obrisan',
     'server.status_online': 'Server online', 'server.status_offline': 'Server offline', 'server.status_warning': 'Server upozorenje',
     'script.create': 'Skripta dodata', 'script.update': 'Skripta izmenjena', 'script.delete': 'Skripta obrisana',
+    'script.execute': 'Skripta izvrsena',
     'schedule.create': 'Zakazivanje dodato', 'schedule.update': 'Zakazivanje izmenjeno',
     'schedule.delete': 'Zakazivanje obrisano', 'schedule.toggle': 'Zakazivanje pauzirano/aktivirano',
     'terminal.connect': 'Terminal otvoren', 'terminal.disconnect': 'Terminal zatvoren',
