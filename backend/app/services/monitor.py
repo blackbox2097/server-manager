@@ -83,6 +83,12 @@ async def _poll(server: dict):
         if old_status and old_status != status:
             from app.services.notify import notify_server_status
             asyncio.create_task(notify_server_status(srv, old_status, status))
+            from app.services.audit import log_event
+            asyncio.create_task(log_event(
+                f"server.status_{status}", tenant_id=str(srv["tenant_id"]),
+                resource_type="server", resource_id=str(srv["id"]),
+                details={"name": srv["name"], "from": old_status, "to": status}
+            ))
     except Exception as e:
         err = str(e)[:500]
         await execute("UPDATE servers SET status='offline', last_error=$1 WHERE id=$2", err, srv["id"])
@@ -96,6 +102,13 @@ async def _poll(server: dict):
             srv["last_error"] = err
             from app.services.notify import notify_server_status
             asyncio.create_task(notify_server_status(srv, old_status, "offline"))
+            from app.services.audit import log_event
+            asyncio.create_task(log_event(
+                "server.status_offline", tenant_id=str(srv["tenant_id"]),
+                resource_type="server", resource_id=str(srv["id"]),
+                details={"name": srv["name"], "from": old_status, "to": "offline"},
+                success=False, error_message=err
+            ))
 
 
 async def poll_all():
@@ -166,6 +179,9 @@ def start():
         return
     scheduler.add_job(poll_all, "interval", seconds=cfg.monitor_interval_sec, id="poll")
     scheduler.add_job(cleanup_metrics, "cron", hour=3, minute=0, id="cleanup")
+
+    from app.services.audit import cleanup_old_logs
+    scheduler.add_job(cleanup_old_logs, "cron", hour=3, minute=15, id="cleanup_logs")
     scheduler.start()
     logger.info(f"Monitoring pokrenut (interval: {cfg.monitor_interval_sec}s)")
     asyncio.get_event_loop().create_task(poll_all())

@@ -1,5 +1,5 @@
 # app/routers/schedules.py
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, field_validator
 
 from app.database import fetch, fetchrow, execute
@@ -8,8 +8,11 @@ from app.services.scheduler import (
     register_job, unregister_job, get_next_run
 )
 from app.services.executor import run as executor_run
+from app.services.audit import log_event
 
 router = APIRouter(prefix="/api/tenants", tags=["schedules"])
+
+def _ip(req: Request) -> str | None: return req.client.host if req.client else None
 
 
 class ScheduleIn(BaseModel):
@@ -65,7 +68,7 @@ async def list_schedules(tid: str, user=Depends(get_current_user)):
 
 
 @router.post("/{tid}/schedules", status_code=201)
-async def create_schedule(tid: str, body: ScheduleIn, user=Depends(get_current_user)):
+async def create_schedule(tid: str, body: ScheduleIn, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_scripts_manage")
 
     script = await fetchrow("SELECT id FROM scripts WHERE id=$1 AND tenant_id=$2", body.scriptId, tid)
@@ -100,11 +103,15 @@ async def create_schedule(tid: str, body: ScheduleIn, user=Depends(get_current_u
             await execute("DELETE FROM scheduled_jobs WHERE id=$1", job["id"])
             raise HTTPException(400, str(e))
 
+    await log_event("schedule.create", user_id=user["id"], username=user.get("username"),
+                    tenant_id=tid, ip_address=_ip(req),
+                    resource_type="scheduled_job", resource_id=str(job["id"]),
+                    details={"name": body.name, "cron": body.cronExpression})
     return job
 
 
 @router.put("/{tid}/schedules/{sid}")
-async def update_schedule(tid: str, sid: str, body: ScheduleUp, user=Depends(get_current_user)):
+async def update_schedule(tid: str, sid: str, body: ScheduleUp, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_scripts_manage")
 
     if body.scriptId:
@@ -145,21 +152,27 @@ async def update_schedule(tid: str, sid: str, body: ScheduleUp, user=Depends(get
         except ValueError as e:
             raise HTTPException(400, str(e))
 
+    await log_event("schedule.update", user_id=user["id"], username=user.get("username"),
+                    tenant_id=tid, ip_address=_ip(req),
+                    resource_type="scheduled_job", resource_id=sid, details={"name": job["name"]})
     return job
 
 
 @router.delete("/{tid}/schedules/{sid}")
-async def delete_schedule(tid: str, sid: str, user=Depends(get_current_user)):
+async def delete_schedule(tid: str, sid: str, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_scripts_manage")
-    row = await fetchrow("DELETE FROM scheduled_jobs WHERE id=$1 AND tenant_id=$2 RETURNING id", sid, tid)
+    row = await fetchrow("DELETE FROM scheduled_jobs WHERE id=$1 AND tenant_id=$2 RETURNING id, name", sid, tid)
     if not row:
         raise HTTPException(404, "Zakazani posao nije pronadjen")
     unregister_job(sid)
+    await log_event("schedule.delete", user_id=user["id"], username=user.get("username"),
+                    tenant_id=tid, ip_address=_ip(req),
+                    resource_type="scheduled_job", resource_id=sid, details={"name": row["name"]})
     return {"ok": True}
 
 
 @router.post("/{tid}/schedules/{sid}/toggle")
-async def toggle_schedule(tid: str, sid: str, user=Depends(get_current_user)):
+async def toggle_schedule(tid: str, sid: str, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_scripts_manage")
     row = await fetchrow(
         "UPDATE scheduled_jobs SET active = NOT active WHERE id=$1 AND tenant_id=$2 RETURNING *",
@@ -176,6 +189,10 @@ async def toggle_schedule(tid: str, sid: str, user=Depends(get_current_user)):
     else:
         unregister_job(sid)
 
+    await log_event("schedule.toggle", user_id=user["id"], username=user.get("username"),
+                    tenant_id=tid, ip_address=_ip(req),
+                    resource_type="scheduled_job", resource_id=sid,
+                    details={"name": job["name"], "active": job["active"]})
     return job
 
 

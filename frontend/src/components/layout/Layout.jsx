@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Server, Activity, Terminal, BookOpen, Users,
-  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail
+  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail, FileText
 } from 'lucide-react';
 import clsx from 'clsx';
 import useAuthStore from '../../store/authStore';
@@ -19,12 +19,14 @@ const navItems = [
   { to: '/schedules',  icon: Clock,    label: 'Zakazano'    },
   { to: '/execute',    icon: Terminal, label: 'Izvrsavanje' },
   { to: '/alerts',     icon: Bell,     label: 'Alarmi'      },
+  { to: '/logs',       icon: FileText, label: 'Logovi'      },
 ];
 
 const adminItems = [
-  { to: '/admin/tenants', icon: Shield, label: 'Tenanti'   },
-  { to: '/admin/users',   icon: Users,  label: 'Operateri' },
-  { to: '/admin/smtp',    icon: Mail,   label: 'SMTP'      },
+  { to: '/admin/tenants', icon: Shield,   label: 'Tenanti'   },
+  { to: '/admin/users',   icon: Users,    label: 'Operateri' },
+  { to: '/admin/smtp',    icon: Mail,     label: 'SMTP'      },
+  { to: '/admin/logs',    icon: FileText, label: 'Logovi (svi tenanti)' },
 ];
 
 // ── Change password modal ─────────────────────────────────────────────────────

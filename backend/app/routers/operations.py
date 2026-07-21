@@ -1,11 +1,15 @@
 # app/routers/operations.py
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel
 from app.database import fetch, fetchrow, execute
 from app.services.auth import get_current_user, check_tenant_perm
 from app.services.executor import run, list_execs, get_exec
+from app.services.audit import log_event
 
 router = APIRouter(prefix="/api/tenants", tags=["operations"])
+
+
+def _ip(req: Request) -> str | None: return req.client.host if req.client else None
 
 
 class ScriptIn(BaseModel):
@@ -33,12 +37,15 @@ async def list_scripts(tid: str, user=Depends(get_current_user)):
 
 
 @router.post("/{tid}/scripts", status_code=201)
-async def create_script(tid: str, body: ScriptIn, user=Depends(get_current_user)):
+async def create_script(tid: str, body: ScriptIn, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_scripts_manage")
     try:
         row = await fetchrow(
             "INSERT INTO scripts (tenant_id, name, description, os_type, content, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
             tid, body.name, body.description, body.osType, body.content, user["id"])
+        await log_event("script.create", user_id=user["id"], username=user.get("username"),
+                        tenant_id=tid, ip_address=_ip(req),
+                        resource_type="script", resource_id=str(row["id"]), details={"name": body.name})
         return dict(row)
     except Exception as e:
         if "unique" in str(e).lower(): raise HTTPException(409, "Skripta vec postoji")
@@ -46,7 +53,7 @@ async def create_script(tid: str, body: ScriptIn, user=Depends(get_current_user)
 
 
 @router.put("/{tid}/scripts/{scid}")
-async def update_script(tid: str, scid: str, body: ScriptUp, user=Depends(get_current_user)):
+async def update_script(tid: str, scid: str, body: ScriptUp, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_scripts_manage")
     row = await fetchrow(
         """UPDATE scripts SET name=COALESCE($1,name), description=COALESCE($2,description),
@@ -54,15 +61,21 @@ async def update_script(tid: str, scid: str, body: ScriptUp, user=Depends(get_cu
            WHERE id=$5 AND tenant_id=$6 AND is_builtin=false RETURNING *""",
         body.name, body.description, body.osType, body.content, scid, tid)
     if not row: raise HTTPException(404, "Skripta nije pronadjena ili je sistemska")
+    await log_event("script.update", user_id=user["id"], username=user.get("username"),
+                    tenant_id=tid, ip_address=_ip(req),
+                    resource_type="script", resource_id=scid, details={"name": row["name"]})
     return dict(row)
 
 
 @router.delete("/{tid}/scripts/{scid}")
-async def delete_script(tid: str, scid: str, user=Depends(get_current_user)):
+async def delete_script(tid: str, scid: str, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_scripts_manage")
     row = await fetchrow(
-        "DELETE FROM scripts WHERE id=$1 AND tenant_id=$2 AND is_builtin=false RETURNING id", scid, tid)
+        "DELETE FROM scripts WHERE id=$1 AND tenant_id=$2 AND is_builtin=false RETURNING id, name", scid, tid)
     if not row: raise HTTPException(404, "Skripta nije pronadjena ili je sistemska")
+    await log_event("script.delete", user_id=user["id"], username=user.get("username"),
+                    tenant_id=tid, ip_address=_ip(req),
+                    resource_type="script", resource_id=scid, details={"name": row["name"]})
     return {"ok": True}
 
 

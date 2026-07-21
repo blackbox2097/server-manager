@@ -1,15 +1,17 @@
 # app/routers/servers.py
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Request
 from pydantic import BaseModel, field_validator
 from app.database import fetch, fetchrow, execute
 from app.services.auth import get_current_user, check_tenant_perm
 from app.services.crypto import encrypt, decrypt, ssh_fingerprint
+from app.services.audit import log_event
 
 router = APIRouter(prefix="/api/tenants", tags=["servers"])
 
 # prazan string -> None
 def _n(v): return None if v == "" else v
 def _uuid(v): return None if not v or v == "" else v
+def _ip(req: Request) -> str | None: return req.client.host if req.client else None
 
 
 class ServerIn(BaseModel):
@@ -76,7 +78,7 @@ async def list_servers(tid: str, user=Depends(get_current_user)):
 
 
 @router.post("/{tid}/servers", status_code=201)
-async def create_server(tid: str, body: ServerIn, user=Depends(get_current_user)):
+async def create_server(tid: str, body: ServerIn, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_servers_manage")
     try:
         row = await fetchrow(
@@ -96,6 +98,10 @@ async def create_server(tid: str, body: ServerIn, user=Depends(get_current_user)
             _n(body.winrmUser),
             encrypt(body.winrmPassword) if body.winrmPassword else None,
             user["id"])
+        await log_event("server.create", user_id=user["id"], username=user.get("username"),
+                        tenant_id=tid, ip_address=_ip(req),
+                        resource_type="server", resource_id=str(row["id"]),
+                        details={"name": body.name, "ipAddress": body.ipAddress, "osType": body.osType})
         return dict(row)
     except Exception as e:
         if "unique" in str(e).lower(): raise HTTPException(409, "Server vec postoji u ovom tenantu")
@@ -103,7 +109,7 @@ async def create_server(tid: str, body: ServerIn, user=Depends(get_current_user)
 
 
 @router.put("/{tid}/servers/{sid}")
-async def update_server(tid: str, sid: str, body: ServerUp, user=Depends(get_current_user)):
+async def update_server(tid: str, sid: str, body: ServerUp, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_servers_manage")
     row = await fetchrow(
         """UPDATE servers SET
@@ -129,15 +135,22 @@ async def update_server(tid: str, sid: str, body: ServerUp, user=Depends(get_cur
         encrypt(body.winrmPassword) if body.winrmPassword else None,
         sid, tid)
     if not row: raise HTTPException(404, "Server nije pronadjen")
+    await log_event("server.update", user_id=user["id"], username=user.get("username"),
+                    tenant_id=tid, ip_address=_ip(req),
+                    resource_type="server", resource_id=sid,
+                    details=body.model_dump(exclude={"sshPassword", "sudoPassword", "winrmPassword"}, exclude_none=True))
     return dict(row)
 
 
 @router.delete("/{tid}/servers/{sid}")
-async def delete_server(tid: str, sid: str, user=Depends(get_current_user)):
+async def delete_server(tid: str, sid: str, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_servers_manage")
     row = await fetchrow(
-        "UPDATE servers SET active=false WHERE id=$1 AND tenant_id=$2 RETURNING id", sid, tid)
+        "UPDATE servers SET active=false WHERE id=$1 AND tenant_id=$2 RETURNING id, name", sid, tid)
     if not row: raise HTTPException(404, "Server nije pronadjen")
+    await log_event("server.delete", user_id=user["id"], username=user.get("username"),
+                    tenant_id=tid, ip_address=_ip(req),
+                    resource_type="server", resource_id=sid, details={"name": row["name"]})
     return {"ok": True}
 
 
@@ -200,7 +213,7 @@ async def list_keys(tid: str, user=Depends(get_current_user)):
 
 @router.post("/{tid}/ssh-keys", status_code=201)
 async def create_key(
-    tid: str,
+    tid: str, req: Request,
     name: str = Form(...), description: str | None = Form(None),
     keyType: str = Form("ed25519"), keyFilePath: str | None = Form(None),
     privateKeyContent: str | None = Form(None), publicKeyContent: str | None = Form(None),
@@ -226,6 +239,9 @@ async def create_key(
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                RETURNING id, name, description, public_key, key_type, fingerprint, key_file_path, created_at""",
             tid, name, _n(description), pub, pk_enc, keyType, fp, _n(keyFilePath), user["id"])
+        await log_event("sshkey.create", user_id=user["id"], username=user.get("username"),
+                        tenant_id=tid, ip_address=_ip(req),
+                        resource_type="ssh_key", resource_id=str(row["id"]), details={"name": name})
         return dict(row)
     except Exception as e:
         if "unique" in str(e).lower(): raise HTTPException(409, "Kljuc vec postoji")
@@ -233,11 +249,14 @@ async def create_key(
 
 
 @router.delete("/{tid}/ssh-keys/{kid}")
-async def delete_key(tid: str, kid: str, user=Depends(get_current_user)):
+async def delete_key(tid: str, kid: str, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_keys_manage")
     u = await fetchrow("SELECT COUNT(*) AS c FROM servers WHERE ssh_key_id=$1", kid)
     if u and int(u["c"]) > 0:
         raise HTTPException(409, f"Kljuc je u upotrebi na {u['c']} servera")
-    row = await fetchrow("DELETE FROM ssh_keys WHERE id=$1 AND tenant_id=$2 RETURNING id", kid, tid)
+    row = await fetchrow("DELETE FROM ssh_keys WHERE id=$1 AND tenant_id=$2 RETURNING id, name", kid, tid)
     if not row: raise HTTPException(404, "Kljuc nije pronadjen")
+    await log_event("sshkey.delete", user_id=user["id"], username=user.get("username"),
+                    tenant_id=tid, ip_address=_ip(req),
+                    resource_type="ssh_key", resource_id=kid, details={"name": row["name"]})
     return {"ok": True}

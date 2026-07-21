@@ -6,6 +6,7 @@ from app.services.auth import (
     verify_password, hash_password, make_access_token,
     make_refresh_token, get_current_user
 )
+from app.services.audit import log_event
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -44,26 +45,34 @@ class ChangePwReq(BaseModel):
 
 @router.post("/login")
 async def login(body: LoginReq, req: Request):
+    ip = req.client.host if req.client else None
     user = await fetchrow(
         "SELECT id, username, password_hash, full_name, role, auth_type, active FROM users WHERE username=$1",
         body.username)
+
     if not user or not user["active"]:
         verify_password("dummy", "$2b$12$dummy_hash_to_prevent_timing")
+        await log_event("auth.login_failed", username=body.username, ip_address=ip,
+                        success=False, error_message="Korisnik ne postoji ili je neaktivan")
         raise HTTPException(401, "Pogresan username ili password")
+
     if user["auth_type"] == "ldap":
         raise HTTPException(400, "Koristite LDAP login")
+
     if not verify_password(body.password, user["password_hash"]):
+        await log_event("auth.login_failed", user_id=str(user["id"]), username=body.username,
+                        ip_address=ip, success=False, error_message="Pogresna lozinka")
         raise HTTPException(401, "Pogresan username ili password")
 
     access  = make_access_token(str(user["id"]), user["role"], user["username"])
     refresh = make_refresh_token()
     await execute(
         "INSERT INTO user_sessions (user_id, refresh_token, ip_address, user_agent) VALUES ($1,$2,$3,$4)",
-        user["id"], refresh,
-        req.client.host if req.client else None,
-        req.headers.get("user-agent"))
-    await execute("UPDATE users SET last_login_at=NOW(), last_login_ip=$1 WHERE id=$2",
-                  req.client.host if req.client else None, user["id"])
+        user["id"], refresh, ip, req.headers.get("user-agent"))
+    await execute("UPDATE users SET last_login_at=NOW(), last_login_ip=$1 WHERE id=$2", ip, user["id"])
+
+    await log_event("auth.login", user_id=str(user["id"]), username=user["username"], ip_address=ip)
+
     tenants = await _tenants_for(str(user["id"]), user["role"])
     return {
         "accessToken": access, "refreshToken": refresh,
@@ -92,16 +101,18 @@ async def refresh(body: RefreshReq, req: Request):
 
 
 @router.post("/logout")
-async def logout(body: LogoutReq, user: dict = Depends(get_current_user)):
+async def logout(body: LogoutReq, req: Request, user: dict = Depends(get_current_user)):
     if body.refreshToken:
         await execute(
             "UPDATE user_sessions SET revoked_at=NOW() WHERE refresh_token=$1 AND user_id=$2",
             body.refreshToken, user["id"])
+    await log_event("auth.logout", user_id=user["id"], username=user["username"],
+                    ip_address=req.client.host if req.client else None)
     return {"ok": True}
 
 
 @router.post("/change-password")
-async def change_pw(body: ChangePwReq, user: dict = Depends(get_current_user)):
+async def change_pw(body: ChangePwReq, req: Request, user: dict = Depends(get_current_user)):
     if len(body.newPassword) < 10:
         raise HTTPException(400, "Minimum 10 karaktera")
     row = await fetchrow("SELECT password_hash, auth_type FROM users WHERE id=$1", user["id"])
@@ -111,6 +122,9 @@ async def change_pw(body: ChangePwReq, user: dict = Depends(get_current_user)):
         raise HTTPException(400, "Trenutna lozinka nije ispravna")
     await execute("UPDATE users SET password_hash=$1 WHERE id=$2", hash_password(body.newPassword), user["id"])
     await execute("UPDATE user_sessions SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL", user["id"])
+
+    await log_event("auth.password_change", user_id=user["id"], username=user["username"],
+                    ip_address=req.client.host if req.client else None)
     return {"ok": True}
 
 

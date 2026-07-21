@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from jose import jwt, JWTError
@@ -11,6 +12,7 @@ from app.database import fetchrow
 from app.services.crypto import decrypt
 from app.services.auth import check_tenant_perm
 from app.services.terminal import TerminalSession
+from app.services.audit import log_event
 
 router = APIRouter(tags=["terminal"])
 logger = logging.getLogger(__name__)
@@ -27,6 +29,8 @@ async def terminal_ws(ws: WebSocket, tenant_id: str, server_id: str, token: str 
         return
 
     user = {"id": payload["sub"], "role": payload.get("role")}
+    username = payload.get("name")
+
     try:
         await check_tenant_perm(tenant_id, user, "perm_scripts_run")
     except Exception as e:
@@ -70,8 +74,16 @@ async def terminal_ws(ws: WebSocket, tenant_id: str, server_id: str, token: str 
         await session.start()
     except Exception as e:
         await ws.send_text(f"\r\n\x1b[31mGreska konekcije: {e}\x1b[0m\r\n")
+        await log_event("terminal.connect", user_id=user["id"], username=username,
+                        tenant_id=tenant_id, resource_type="server", resource_id=server_id,
+                        details={"serverName": srv["name"]}, success=False, error_message=str(e))
         await ws.close(code=1011)
         return
+
+    connect_ts = time.time()
+    await log_event("terminal.connect", user_id=user["id"], username=username,
+                    tenant_id=tenant_id, resource_type="server", resource_id=server_id,
+                    details={"serverName": srv["name"], "ipAddress": str(srv["ip_address"])})
 
     async def on_data(data: bytes):
         try:
@@ -101,3 +113,7 @@ async def terminal_ws(ws: WebSocket, tenant_id: str, server_id: str, token: str 
     finally:
         reader_task.cancel()
         session.close()
+        duration_s = round(time.time() - connect_ts)
+        await log_event("terminal.disconnect", user_id=user["id"], username=username,
+                        tenant_id=tenant_id, resource_type="server", resource_id=server_id,
+                        details={"serverName": srv["name"], "durationSeconds": duration_s})
