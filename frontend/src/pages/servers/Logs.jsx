@@ -39,9 +39,34 @@ export function actionLabel(action) {
   return map[action] || action;
 }
 
+function detailsSummary(log) {
+  const d = log.details;
+  if (!d) return null;
+  if (log.action === 'script.execute') {
+    const servers = (d.serverNames || []).join(', ');
+    return (
+      <>
+        {servers && <div className="truncate">Server{d.serverNames?.length > 1 ? 'i' : ''}: {servers}</div>}
+        {d.contentPreview && <div className="truncate font-mono text-gray-600">$ {d.contentPreview}</div>}
+      </>
+    );
+  }
+  if (['server.create', 'server.update', 'server.delete'].includes(log.action) && d.name) {
+    return <div className="truncate">Server: {d.name}{d.ipAddress ? ` (${d.ipAddress})` : ''}</div>;
+  }
+  if (log.action.startsWith('schedule.') && d.name) {
+    return <div className="truncate">Zakazivanje: {d.name}</div>;
+  }
+  if (log.action.startsWith('script.') && log.action !== 'script.execute' && d.name) {
+    return <div className="truncate">Skripta: {d.name}</div>;
+  }
+  return null;
+}
+
 export function LogRow({ log, showTenant = false }) {
   const [expanded, setExpanded] = useState(false);
   const hasDetails = log.details && Object.keys(log.details).length > 0;
+  const summary = detailsSummary(log);
 
   return (
     <div className="border-b border-gray-800/50">
@@ -53,8 +78,8 @@ export function LogRow({ log, showTenant = false }) {
           <div className="flex items-center gap-2">
             <span className="text-sm text-gray-200">{actionLabel(log.action)}</span>
             {showTenant && log.tenant_name && <span className="badge-gray text-xs">{log.tenant_name}</span>}
-            {log.resource_id && <span className="text-xs text-gray-600 font-mono">{log.resource_id.slice(0, 8)}</span>}
           </div>
+          {summary && <div className="text-xs text-gray-500 mt-0.5">{summary}</div>}
           <div className="text-xs text-gray-500 mt-0.5">
             {log.username || 'sistem'} {log.ip_address && `· ${log.ip_address}`}
             {log.error_message && <span className="text-red-500"> · {log.error_message}</span>}

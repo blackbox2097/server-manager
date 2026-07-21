@@ -31,7 +31,7 @@ async def log_event(
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)""",
             user_id, username, tenant_id, ip_address, action,
             resource_type, resource_id,
-            json.dumps(details) if details is not None else None,
+            details,
             success, error_message,
         )
     except Exception as e:

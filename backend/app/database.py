@@ -1,5 +1,6 @@
 # app/database.py
 import asyncpg
+import json
 import logging
 from app.config import get_settings
 
@@ -11,6 +12,12 @@ async def _init_conn(conn):
     # inet/cidr -> string automatski, nema vise TypeError u SSH konekciji
     await conn.set_type_codec("inet", encoder=str, decoder=str, schema="pg_catalog", format="text")
     await conn.set_type_codec("cidr", encoder=str, decoder=str, schema="pg_catalog", format="text")
+    # json/jsonb -> Python dict/list automatski, inace asyncpg vraca sirovi JSON string
+    for typ in ("json", "jsonb"):
+        await conn.set_type_codec(
+            typ, encoder=json.dumps, decoder=json.loads,
+            schema="pg_catalog", format="text",
+        )
 
 
 async def init_db():

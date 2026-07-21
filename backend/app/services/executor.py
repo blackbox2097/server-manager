@@ -108,8 +108,12 @@ async def run(tenant_id: str, server_ids: list, content: str,
             "script.execute",
             user_id=started_by, username=started_by_username, tenant_id=tenant_id,
             resource_type="execution", resource_id=eid,
-            details={"scriptName": script_name, "serverCount": len(servers),
-                    "successCount": ok, "errorCount": err, "status": final},
+            details={
+                "scriptName": script_name,
+                "serverNames": [s["name"] for s in servers],
+                "contentPreview": content[:200] + ("..." if len(content) > 200 else ""),
+                "successCount": ok, "errorCount": err, "status": final,
+            },
             success=(err == 0)
         ))
 
