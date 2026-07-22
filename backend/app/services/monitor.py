@@ -87,7 +87,11 @@ async def _poll(server: dict):
             asyncio.create_task(log_event(
                 f"server.status_{status}", tenant_id=str(srv["tenant_id"]),
                 resource_type="server", resource_id=str(srv["id"]),
-                details={"name": srv["name"], "from": old_status, "to": status}
+                details={
+                    "name": srv["name"], "from": old_status, "to": status,
+                    "cpuPercent": m["cpuPercent"], "ramPercent": m["ramPercent"],
+                    "diskPercent": m["diskPercent"],
+                }
             ))
     except Exception as e:
         err = str(e)[:500]

@@ -51,6 +51,21 @@ function detailsSummary(log) {
       </>
     );
   }
+  if (log.action === 'server.status_warning' || (log.action === 'server.status_online' && d.from === 'warning')) {
+    const parts = [];
+    if (d.cpuPercent  != null) parts.push(`CPU ${Math.round(d.cpuPercent)}%`);
+    if (d.ramPercent  != null) parts.push(`RAM ${Math.round(d.ramPercent)}%`);
+    if (d.diskPercent != null) parts.push(`Disk ${Math.round(d.diskPercent)}%`);
+    return (
+      <>
+        {d.name && <div className="truncate">Server: {d.name}</div>}
+        {parts.length > 0 && <div className="truncate text-gray-600">{parts.join(' · ')}</div>}
+      </>
+    );
+  }
+  if (log.action.startsWith('server.status_') && d.name) {
+    return <div className="truncate">Server: {d.name} ({d.from} → {d.to})</div>;
+  }
   if (['server.create', 'server.update', 'server.delete'].includes(log.action) && d.name) {
     return <div className="truncate">Server: {d.name}{d.ipAddress ? ` (${d.ipAddress})` : ''}</div>;
   }
