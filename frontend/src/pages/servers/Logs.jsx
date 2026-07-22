@@ -25,7 +25,8 @@ export function actionLabel(action) {
     'auth.login': 'Prijava', 'auth.login_failed': 'Neuspela prijava',
     'auth.logout': 'Odjava', 'auth.password_change': 'Promena lozinke',
     'server.create': 'Server dodat', 'server.update': 'Server izmenjen', 'server.delete': 'Server obrisan',
-    'server.status_online': 'Server online', 'server.status_offline': 'Server offline', 'server.status_warning': 'Server upozorenje',
+    'server.status_warning': 'Upozorenje počelo', 'server.status_offline': 'Server nedostupan',
+    'server.status_online': 'Server online', 'server.recovery': 'Server se oporavio',
     'script.create': 'Skripta dodata', 'script.update': 'Skripta izmenjena', 'script.delete': 'Skripta obrisana',
     'script.execute': 'Skripta izvrsena',
     'schedule.create': 'Zakazivanje dodato', 'schedule.update': 'Zakazivanje izmenjeno',
@@ -37,6 +38,16 @@ export function actionLabel(action) {
     'user.tenant_assign': 'Dodela tenanata', 'smtp.update': 'SMTP izmenjen',
   };
   return map[action] || action;
+}
+
+function formatDuration(seconds) {
+  if (seconds == null) return null;
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.round(seconds / 60);
+  if (mins < 60) return `${mins} min`;
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem > 0 ? `${hrs}h ${rem}min` : `${hrs}h`;
 }
 
 function detailsSummary(log) {
@@ -51,7 +62,8 @@ function detailsSummary(log) {
       </>
     );
   }
-  if (log.action === 'server.status_warning' || (log.action === 'server.status_online' && d.from === 'warning')) {
+  // Pocetak problema — upozorenje ili nedostupnost, sa konkretnim vrednostima resursa
+  if (log.action === 'server.status_warning' || log.action === 'server.status_offline') {
     const parts = [];
     if (d.cpuPercent  != null) parts.push(`CPU ${Math.round(d.cpuPercent)}%`);
     if (d.ramPercent  != null) parts.push(`RAM ${Math.round(d.ramPercent)}%`);
@@ -60,6 +72,16 @@ function detailsSummary(log) {
       <>
         {d.name && <div className="truncate">Server: {d.name}</div>}
         {parts.length > 0 && <div className="truncate text-gray-600">{parts.join(' · ')}</div>}
+      </>
+    );
+  }
+  // Kraj problema — oporavak, sa trajanjem incidenta ako je poznato
+  if (log.action === 'server.recovery' || (log.action === 'server.status_online' && d.from && d.from !== 'unknown')) {
+    const duration = formatDuration(d.durationSeconds);
+    return (
+      <>
+        {d.name && <div className="truncate">Server: {d.name} — bio u stanju "{d.from === 'warning' ? 'upozorenje' : 'offline'}"</div>}
+        {duration && <div className="truncate text-gray-600">Trajanje problema: {duration}</div>}
       </>
     );
   }

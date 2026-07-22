@@ -1,8 +1,9 @@
 # app/services/monitor.py
 import asyncio, logging, time
+from datetime import datetime, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.config import get_settings
-from app.database import fetch, execute
+from app.database import fetch, fetchrow, execute
 from app.services.crypto import decrypt
 from app.services.ws_manager import ws_manager
 
@@ -13,6 +14,11 @@ scheduler = AsyncIOScheduler()
 # od pokretanja mrezne kartice, pa nam treba razlika kroz vreme da dobijemo B/s)
 # server_id -> {"rx": int, "tx": int, "ts": float}
 _net_prev: dict[str, dict] = {}
+
+# Debounce kes za promene statusa — izbegava "flapping" alarme za kratke skokove.
+# Promena statusa se potvrdjuje tek posle N uzastopnih poll-ova sa istim novim stanjem.
+# server_id -> {"candidate": status_str, "count": int}
+_status_pending: dict[str, dict] = {}
 
 
 def _net_rate(server_id: str, rx_bytes: int, tx_bytes: int) -> tuple[float, float]:
@@ -28,7 +34,6 @@ def _net_rate(server_id: str, rx_bytes: int, tx_bytes: int) -> tuple[float, floa
     if elapsed <= 0:
         return 0.0, 0.0
 
-    # Ako je brojac resetovan (npr. restart mreznog interfejsa), izbegni negativnu brzinu
     rx_delta = max(0, rx_bytes - prev["rx"])
     tx_delta = max(0, tx_bytes - prev["tx"])
 
@@ -37,9 +42,80 @@ def _net_rate(server_id: str, rx_bytes: int, tx_bytes: int) -> tuple[float, floa
     return rx_kbps, tx_kbps
 
 
+def _confirm_status(server_id, old_status: str | None, raw_status: str) -> str | None:
+    """Debounce logika za promenu statusa.
+    Vraca POTVRDJEN novi status ako je promena potvrdjena ovim poll-om
+    (raw_status se ponovio dovoljno puta zaredom), ili None ako:
+      - nema promene u odnosu na trenutni potvrdjeni status, ili
+      - promena je jos u toku potvrdjivanja (treba jos poll-ova).
+    Prva klasifikacija servera (old_status prazan/unknown) se potvrdjuje odmah."""
+    sid = str(server_id)
+    cfg = get_settings()
+
+    if not old_status or old_status == "unknown":
+        _status_pending.pop(sid, None)
+        return raw_status
+
+    if raw_status == old_status:
+        _status_pending.pop(sid, None)
+        return None
+
+    pending = _status_pending.get(sid)
+    if pending and pending["candidate"] == raw_status:
+        pending["count"] += 1
+    else:
+        pending = {"candidate": raw_status, "count": 1}
+    _status_pending[sid] = pending
+
+    if pending["count"] >= cfg.status_debounce_polls:
+        _status_pending.pop(sid, None)
+        return raw_status
+    return None
+
+
+async def _log_status_transition(srv: dict, old_status: str, new_status: str,
+                                  metrics: dict | None = None, error: str | None = None):
+    """Upisuje potvrdjenu promenu statusa u audit log i salje email notifikaciju.
+    Jasno razlikuje POCETAK problema (status_warning/status_offline) od
+    KRAJA problema (recovery), ukljucujuci trajanje incidenta kad je poznato."""
+    from app.services.audit import log_event
+    from app.services.notify import notify_server_status
+
+    is_recovery = new_status == "online" and old_status in ("warning", "offline")
+    action = "server.recovery" if is_recovery else f"server.status_{new_status}"
+
+    details = {"name": srv["name"], "from": old_status, "to": new_status}
+    if metrics:
+        details["cpuPercent"]  = metrics["cpuPercent"]
+        details["ramPercent"]  = metrics["ramPercent"]
+        details["diskPercent"] = metrics["diskPercent"]
+
+    if is_recovery:
+        incident_start = await fetchrow(
+            """SELECT occurred_at FROM audit_log
+               WHERE resource_id=$1 AND action IN ('server.status_warning','server.status_offline')
+               ORDER BY occurred_at DESC LIMIT 1""",
+            str(srv["id"])
+        )
+        if incident_start:
+            duration = (datetime.now(timezone.utc) - incident_start["occurred_at"]).total_seconds()
+            details["durationSeconds"] = round(duration)
+
+    asyncio.create_task(log_event(
+        action, tenant_id=str(srv["tenant_id"]),
+        resource_type="server", resource_id=str(srv["id"]),
+        details=details, success=(new_status != "offline"), error_message=error
+    ))
+
+    notify_srv = dict(srv)
+    if error:
+        notify_srv["last_error"] = error
+    asyncio.create_task(notify_server_status(notify_srv, old_status, new_status))
+
+
 async def _poll(server: dict):
     srv = dict(server)
-    old_status = srv.get("status")  # status PRE ovog poll-a, za detekciju promene
+    old_status = srv.get("status")  # POTVRDJEN status pre ovog poll-a
     if srv.get("private_key_enc"): srv["_private_key"]    = decrypt(srv["private_key_enc"])
     if srv.get("ssh_password"):    srv["_ssh_password"]   = decrypt(srv["ssh_password"])
     if srv.get("sudo_password"):   srv["_sudo_password"]  = decrypt(srv["sudo_password"])
@@ -51,12 +127,13 @@ async def _poll(server: dict):
             from app.services.ssh import get_metrics
         m = await get_metrics(srv)
         high = m["cpuPercent"] >= 90 or m["ramPercent"] >= 90 or m["diskPercent"] >= 90
-        status = "warning" if high else "online"
+        raw_status = "warning" if high else "online"
 
         rx_kbps, tx_kbps = _net_rate(
             str(srv["id"]), m.get("netRxBytes", 0), m.get("netTxBytes", 0)
         )
 
+        # Sirove metrike se UVEK upisuju, bez obzira na debounce statusa
         await execute(
             """INSERT INTO metrics
                  (server_id, cpu_percent, ram_percent, disk_percent, uptime_seconds,
@@ -67,52 +144,39 @@ async def _poll(server: dict):
             m["uptimeSeconds"], m.get("loadAvg1m"), m.get("loadAvg5m"), m.get("loadAvg15m"),
             rx_kbps, tx_kbps, m.get("processCount"),
         )
+
+        confirmed = _confirm_status(srv["id"], old_status, raw_status)
+        display_status = confirmed or old_status or raw_status
+
         await execute(
             "UPDATE servers SET status=$1, last_seen_at=NOW(), last_error=NULL, os_name=COALESCE($2,os_name) WHERE id=$3",
-            status, m.get("osName"), srv["id"]
+            display_status, m.get("osName"), srv["id"]
         )
         await ws_manager.broadcast("metrics", {
             "serverId": str(srv["id"]), "tenantId": str(srv["tenant_id"]),
-            "status": status,
+            "status": display_status,
             "metrics": {"cpu": m["cpuPercent"], "ram": m["ramPercent"],
                         "disk": m["diskPercent"], "uptime": m["uptimeSeconds"],
                         "netRxKbps": rx_kbps, "netTxKbps": tx_kbps,
                         "processCount": m.get("processCount")},
         }, tenant_id=str(srv["tenant_id"]))
 
-        if old_status and old_status != status:
-            from app.services.notify import notify_server_status
-            asyncio.create_task(notify_server_status(srv, old_status, status))
-            from app.services.audit import log_event
-            asyncio.create_task(log_event(
-                f"server.status_{status}", tenant_id=str(srv["tenant_id"]),
-                resource_type="server", resource_id=str(srv["id"]),
-                details={
-                    "name": srv["name"], "from": old_status, "to": status,
-                    "cpuPercent": m["cpuPercent"], "ramPercent": m["ramPercent"],
-                    "diskPercent": m["diskPercent"],
-                }
-            ))
+        if confirmed and old_status and old_status != confirmed:
+            await _log_status_transition(srv, old_status, confirmed, metrics=m)
     except Exception as e:
         err = str(e)[:500]
-        await execute("UPDATE servers SET status='offline', last_error=$1 WHERE id=$2", err, srv["id"])
+        confirmed = _confirm_status(srv["id"], old_status, "offline")
+        display_status = confirmed or old_status or "offline"
+
+        await execute("UPDATE servers SET status=$1, last_error=$2 WHERE id=$3", display_status, err, srv["id"])
         await ws_manager.broadcast("metrics", {
             "serverId": str(srv["id"]), "tenantId": str(srv["tenant_id"]),
-            "status": "offline", "error": err,
+            "status": display_status, "error": err,
         }, tenant_id=str(srv["tenant_id"]))
         logger.warning(f"Poll neuspjesan: {srv['name']} - {err}")
 
-        if old_status and old_status != "offline":
-            srv["last_error"] = err
-            from app.services.notify import notify_server_status
-            asyncio.create_task(notify_server_status(srv, old_status, "offline"))
-            from app.services.audit import log_event
-            asyncio.create_task(log_event(
-                "server.status_offline", tenant_id=str(srv["tenant_id"]),
-                resource_type="server", resource_id=str(srv["id"]),
-                details={"name": srv["name"], "from": old_status, "to": "offline"},
-                success=False, error_message=err
-            ))
+        if confirmed and old_status and old_status != "offline":
+            await _log_status_transition(srv, old_status, "offline", error=err)
 
 
 async def poll_all():
@@ -187,5 +251,5 @@ def start():
     from app.services.audit import cleanup_old_logs
     scheduler.add_job(cleanup_old_logs, "cron", hour=3, minute=15, id="cleanup_logs")
     scheduler.start()
-    logger.info(f"Monitoring pokrenut (interval: {cfg.monitor_interval_sec}s)")
+    logger.info(f"Monitoring pokrenut (interval: {cfg.monitor_interval_sec}s, debounce: {cfg.status_debounce_polls} poll-a)")
     asyncio.get_event_loop().create_task(poll_all())

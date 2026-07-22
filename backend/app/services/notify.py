@@ -82,9 +82,9 @@ async def notify_server_status(server: dict, old_status: str, new_status: str):
     if not tenant or not tenant["alerts_enabled"]:
         return
 
-    is_recovery = old_status == "offline" and new_status in ("online", "warning")
+    is_recovery = new_status == "online" and old_status in ("offline", "warning")
     is_offline  = new_status == "offline"
-    is_warning  = new_status == "warning" and old_status not in ("offline",)
+    is_warning  = new_status == "warning" and old_status != "offline"
 
     should_send = (
         (is_offline  and tenant["alert_on_offline"]) or

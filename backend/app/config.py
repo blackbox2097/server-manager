@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     monitor_max_parallel:   int = 20
     metrics_retention_days: int = 7
     log_retention_days:     int = 30
+    status_debounce_polls:  int = 2
 
     ssh_connect_timeout_ms:   int = 10000
     ssh_exec_timeout_ms:      int = 300000
