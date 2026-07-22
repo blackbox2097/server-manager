@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     log_retention_days:     int = 30
     status_debounce_polls:  int = 2
 
+    backup_dir: str = "/var/backups/servermanager"
+    pm2_user:   str = "servermanager"
+
     ssh_connect_timeout_ms:   int = 10000
     ssh_exec_timeout_ms:      int = 300000
     winrm_connect_timeout_ms: int = 15000

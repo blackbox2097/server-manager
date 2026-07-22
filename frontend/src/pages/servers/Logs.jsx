@@ -37,6 +37,8 @@ export function actionLabel(action) {
     'tenant.create': 'Tenant kreiran', 'tenant.update': 'Tenant izmenjen', 'tenant.delete': 'Tenant obrisan',
     'user.create': 'Operater kreiran', 'user.update': 'Operater izmenjen', 'user.delete': 'Operater obrisan',
     'user.tenant_assign': 'Dodela tenanata', 'smtp.update': 'SMTP izmenjen',
+    'backup.create': 'Backup kreiran', 'backup.delete': 'Backup obrisan',
+    'backup.upload': 'Backup otpremljen', 'backup.restore': 'Baza vracena iz backup-a',
   };
   return map[action] || action;
 }

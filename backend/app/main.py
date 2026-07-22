@@ -48,7 +48,7 @@ if cfg.node_env != "production":
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
                        allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-from app.routers import auth, admin, servers, monitoring, operations, terminal, schedules, alerts, logs
+from app.routers import auth, admin, servers, monitoring, operations, terminal, schedules, alerts, logs, backup
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(servers.router)
@@ -58,6 +58,7 @@ app.include_router(terminal.router)
 app.include_router(schedules.router)
 app.include_router(alerts.router)
 app.include_router(logs.router)
+app.include_router(backup.router)
 
 
 @app.get("/health")

@@ -434,6 +434,9 @@ setup_app_user() {
     mkdir -p "$DATA_DIR/ssh-keys" "$DATA_DIR/uploads"
     mkdir -p "$APP_DIR/backend/app/"{routers,services,models}
     mkdir -p "$APP_DIR/frontend/dist"
+    mkdir -p "/var/backups/servermanager"
+    chown "$APP_USER:$APP_USER" "/var/backups/servermanager"
+    chmod 750 "/var/backups/servermanager"
     chmod 750 "$DATA_DIR/ssh-keys"
     log "Direktorijumi kreirani"
 }
@@ -514,6 +517,9 @@ MODULE_MONITORING=true
 MODULE_SCRIPT_EXEC=true
 MODULE_WINRM=true
 MODULE_LDAP=false
+
+BACKUP_DIR=/var/backups/servermanager
+PM2_USER=${APP_USER}
 ENVEOF
     chmod 640 "${CONFIG_DIR}/.env"
     chown root:"$APP_USER" "${CONFIG_DIR}/.env"
@@ -675,6 +681,30 @@ deploy_if_present() {
         info "Kopiram frontend..."
         cp -r "${SCRIPT_DIR}/frontend/dist/." "${APP_DIR}/frontend/dist/"
         chown -R "$APP_USER:$APP_USER" "${APP_DIR}/frontend"
+    fi
+
+    if [[ -d "${SCRIPT_DIR}/scripts" ]]; then
+        info "Instaliram backup/restore skripte..."
+        mkdir -p "${APP_DIR}/scripts"
+        cp "${SCRIPT_DIR}/scripts/backup_db.sh"  "${APP_DIR}/scripts/" 2>/dev/null || true
+        cp "${SCRIPT_DIR}/scripts/restore_db.sh" "${APP_DIR}/scripts/" 2>/dev/null || true
+        chown root:root "${APP_DIR}/scripts/backup_db.sh" "${APP_DIR}/scripts/restore_db.sh" 2>/dev/null || true
+        chmod 700 "${APP_DIR}/scripts/backup_db.sh" "${APP_DIR}/scripts/restore_db.sh" 2>/dev/null || true
+
+        # Usko ograniceno sudo pravilo — app korisnik sme da pokrene SAMO ova dva
+        # konkretna skripta kao root, nista drugo. Neophodno da bi dugmici za
+        # backup/restore u UI-ju mogli da funkcionisu.
+        cat > /tmp/servermanager-backup-sudoers << SUDOEOF
+${APP_USER} ALL=(root) NOPASSWD: ${APP_DIR}/scripts/backup_db.sh, ${APP_DIR}/scripts/restore_db.sh
+SUDOEOF
+        if visudo -c -f /tmp/servermanager-backup-sudoers &>/dev/null; then
+            cp /tmp/servermanager-backup-sudoers /etc/sudoers.d/servermanager-backup
+            chmod 440 /etc/sudoers.d/servermanager-backup
+            log "Sudo pravilo za backup/restore instalirano"
+        else
+            warn "Sudo pravilo nije validno — backup/restore dugmici u UI-ju nece raditi. Proveri rucno."
+        fi
+        rm -f /tmp/servermanager-backup-sudoers
     fi
 
     chown -R "$APP_USER:$APP_USER" "${APP_DIR}"

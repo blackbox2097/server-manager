@@ -14,6 +14,7 @@ const CATEGORIES = [
   { label: 'Prijave',      prefix: 'auth.'        },
   { label: 'Terminal',     prefix: 'terminal.'    },
   { label: 'Tenant/Korisnici', prefix: 'tenant.'  },
+  { label: 'Backup',       prefix: 'backup.'      },
 ];
 
 export default function AdminLogs() {

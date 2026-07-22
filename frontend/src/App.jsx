@@ -19,6 +19,7 @@ import Tenants   from './pages/admin/Tenants';
 import Users     from './pages/admin/Users';
 import SmtpSettings from './pages/admin/SmtpSettings';
 import AdminLogs from './pages/admin/AdminLogs';
+import Backup    from './pages/admin/Backup';
 
 function ProtectedRoute({ children, superadminOnly }) {
   const { user } = useAuthStore();
@@ -60,6 +61,7 @@ export default function App() {
       <Route path="/admin/users"   element={<Page component={Users}      superadminOnly />} />
       <Route path="/admin/smtp"    element={<Page component={SmtpSettings} superadminOnly />} />
       <Route path="/admin/logs"    element={<Page component={AdminLogs}  superadminOnly />} />
+      <Route path="/admin/backup"  element={<Page component={Backup}     superadminOnly />} />
       <Route path="*"              element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );

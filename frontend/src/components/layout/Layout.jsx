@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Server, Activity, Terminal, BookOpen, Users,
-  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail, FileText
+  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail, FileText, Database
 } from 'lucide-react';
 import clsx from 'clsx';
 import useAuthStore from '../../store/authStore';
@@ -27,6 +27,7 @@ const adminItems = [
   { to: '/admin/users',   icon: Users,    label: 'Operateri' },
   { to: '/admin/smtp',    icon: Mail,     label: 'SMTP'      },
   { to: '/admin/logs',    icon: FileText, label: 'Logovi (svi tenanti)' },
+  { to: '/admin/backup',  icon: Database, label: 'Backup' },
 ];
 
 // ── Change password modal ─────────────────────────────────────────────────────
