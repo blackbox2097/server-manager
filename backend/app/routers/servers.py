@@ -174,6 +174,48 @@ async def test_server(tid: str, sid: str, user=Depends(get_current_user)):
     return await test_connection(srv)
 
 
+@router.post("/{tid}/servers/{sid}/restart")
+async def restart_server(tid: str, sid: str, req: Request, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user, "perm_servers_manage")
+    row = await fetchrow(
+        """SELECT s.*, sk.private_key_enc, sk.key_file_path
+           FROM servers s LEFT JOIN ssh_keys sk ON sk.id=s.ssh_key_id
+           WHERE s.id=$1 AND s.tenant_id=$2 AND s.active=true""", sid, tid)
+    if not row: raise HTTPException(404, "Server nije pronadjen")
+    srv = dict(row)
+    if srv.get("private_key_enc"): srv["_private_key"]    = decrypt(srv["private_key_enc"])
+    if srv.get("ssh_password"):    srv["_ssh_password"]   = decrypt(srv["ssh_password"])
+    if srv.get("sudo_password"):   srv["_sudo_password"]  = decrypt(srv["sudo_password"])
+    if srv.get("winrm_password"):  srv["_winrm_password"] = decrypt(srv["winrm_password"])
+
+    # Odlozena komanda — vraca odgovor PRE nego sto se konekcija prekine usled restarta
+    if srv["os_type"] == "windows":
+        from app.services.winrm import execute_script
+        cmd = 'shutdown /r /t 5 /f; Write-Output "RESTART_INITIATED"'
+    else:
+        from app.services.ssh import execute_script
+        cmd = "nohup bash -c 'sleep 1 && reboot' >/dev/null 2>&1 & disown; echo RESTART_INITIATED"
+
+    try:
+        result = await execute_script(srv, cmd)
+    except Exception as e:
+        result = {"exitCode": -1, "stdout": "", "stderr": str(e)}
+
+    ok = "RESTART_INITIATED" in (result.get("stdout") or "")
+
+    await log_event(
+        "server.restart", user_id=user["id"], username=user.get("username"),
+        tenant_id=tid, ip_address=req.client.host if req.client else None,
+        resource_type="server", resource_id=sid,
+        details={"name": srv["name"]}, success=ok,
+        error_message=None if ok else (result.get("stderr") or "Komanda nije potvrdjena")
+    )
+
+    if not ok:
+        raise HTTPException(502, result.get("stderr") or "Restart komanda nije potvrdjena od strane servera")
+    return {"ok": True, "message": "Restart komanda poslata — server ce biti nedostupan par minuta"}
+
+
 @router.get("/{tid}/servers/{sid}/processes")
 async def server_processes(tid: str, sid: str, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user)

@@ -25,6 +25,7 @@ export function actionLabel(action) {
     'auth.login': 'Prijava', 'auth.login_failed': 'Neuspela prijava',
     'auth.logout': 'Odjava', 'auth.password_change': 'Promena lozinke',
     'server.create': 'Server dodat', 'server.update': 'Server izmenjen', 'server.delete': 'Server obrisan',
+    'server.restart': 'Server restartovan',
     'server.status_warning': 'Upozorenje počelo', 'server.status_offline': 'Server nedostupan',
     'server.status_online': 'Server online', 'server.recovery': 'Server se oporavio',
     'script.create': 'Skripta dodata', 'script.update': 'Skripta izmenjena', 'script.delete': 'Skripta obrisana',
@@ -88,7 +89,7 @@ function detailsSummary(log) {
   if (log.action.startsWith('server.status_') && d.name) {
     return <div className="truncate">Server: {d.name} ({d.from} → {d.to})</div>;
   }
-  if (['server.create', 'server.update', 'server.delete'].includes(log.action) && d.name) {
+  if (['server.create', 'server.update', 'server.delete', 'server.restart'].includes(log.action) && d.name) {
     return <div className="truncate">Server: {d.name}{d.ipAddress ? ` (${d.ipAddress})` : ''}</div>;
   }
   if (log.action.startsWith('schedule.') && d.name) {

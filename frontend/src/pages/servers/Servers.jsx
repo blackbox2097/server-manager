@@ -1,7 +1,7 @@
 // src/pages/servers/Servers.jsx
 import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit, Trash2, Plug, Server, TerminalSquare, ArrowDown, ArrowUp, Cpu } from 'lucide-react';
+import { Plus, Edit, Trash2, Plug, Server, TerminalSquare, ArrowDown, ArrowUp, Cpu, RotateCw } from 'lucide-react';
 import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import {
@@ -241,6 +241,8 @@ export default function Servers() {
   const [modalOpen,  setModalOpen]  = useState(false);
   const [modalTitle, setModalTitle] = useState('Dodaj server');
   const [delConfirm, setDelConfirm] = useState(null);
+  const [restartConfirm, setRestartConfirm] = useState(null);
+  const [restarting, setRestarting] = useState(null);
   const [testResult, setTestResult] = useState({});
   const [testing,    setTesting]    = useState(null);
   const [procModalServer, setProcModalServer] = useState(null);
@@ -282,6 +284,19 @@ export default function Servers() {
     await api.delete(`/tenants/${tenantId}/servers/${id}`);
     setServers(prev => prev.filter(s => s.id !== id));
     setDelConfirm(null);
+  };
+
+  const handleRestart = async (server) => {
+    setRestarting(server.id);
+    setRestartConfirm(null);
+    try {
+      await api.post(`/tenants/${tenantId}/servers/${server.id}/restart`);
+      alert(`Restart komanda poslata za "${server.name}" — server ce biti nedostupan par minuta.`);
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Restart nije uspeo');
+    } finally {
+      setRestarting(null);
+    }
   };
 
   const handleTest = async (server) => {
@@ -385,6 +400,10 @@ export default function Servers() {
               ...(canManage ? [{
                 key: 'actions', label: '', render: s => (
                   <div className="flex items-center gap-1">
+                    <button className="btn-ghost py-1 px-2 text-yellow-500 hover:text-yellow-400"
+                      onClick={() => setRestartConfirm(s)} disabled={restarting === s.id} title="Restartuj server">
+                      {restarting === s.id ? <Spinner size={14} /> : <RotateCw size={14} />}
+                    </button>
                     <button className="btn-ghost py-1 px-2" onClick={() => openEdit(s)} title="Uredi">
                       <Edit size={14} />
                     </button>
@@ -423,6 +442,15 @@ export default function Servers() {
         danger
         onConfirm={() => handleDelete(delConfirm.id)}
         onCancel={() => setDelConfirm(null)}
+      />
+
+      <ConfirmDialog
+        open={!!restartConfirm}
+        title="Restartuj server"
+        message={`Da li si siguran da hoćeš da restartuješ "${restartConfirm?.name}"? Ovo će prekinuti sve trenutne konekcije i procese na serveru, i server će biti nedostupan par minuta.`}
+        danger
+        onConfirm={() => handleRestart(restartConfirm)}
+        onCancel={() => setRestartConfirm(null)}
       />
     </div>
   );
