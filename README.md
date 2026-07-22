@@ -27,7 +27,7 @@ Multi-tenant platforma za upravljanje serverima (Linux + Windows) u VPN/intranet
 
 ## Instalacija
 
-Zahtjeva Ubuntu 24.04 ili 26.04 LTS.
+Zahteva Ubuntu 24.04 ili 26.04 LTS.
 
 ```bash
 git clone https://github.com/<username>/server-manager.git
@@ -45,7 +45,7 @@ sudo bash install.sh
 
 Instalacioni skript podešava: PostgreSQL bazu i šemu, Python virtualenv, PM2, Nginx, UFW firewall, i pokreće aplikaciju.
 
-Default login nakon instalacije: `superadmin` / `ChangeMe123!` — **obavezno promijeniti odmah nakon prvog logina**.
+Default login nakon instalacije: `superadmin` / `ChangeMe123!` — **obavezno promeniti odmah nakon prvog logina**.
 
 ## Windows serveri
 
@@ -81,8 +81,8 @@ scripts/
 install.sh              — kompletna instalacija na čist Ubuntu server
 ```
 
-## Bezbjednosne napomene
+## Bezbednosne napomene
 
 - SSH lozinke, sudo lozinke i WinRM lozinke se čuvaju enkriptovane (AES-256-GCM) u bazi
 - WinRM konfiguracija u ovom projektu koristi HTTP + Basic auth, što je prihvatljivo **samo** unutar zatvorene VPN/intranet mreže — ne izlagati port 5985 na internet
-- Preporučuje se da servisni SSH nalozi koriste ključeve umjesto lozinki gdje god je moguće
+- Preporučuje se da servisni SSH nalozi koriste ključeve umesto lozinki gde god je moguće
