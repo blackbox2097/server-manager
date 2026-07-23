@@ -122,8 +122,6 @@ CREATE TABLE IF NOT EXISTS tenants (
     alert_on_execution_report   BOOLEAN NOT NULL DEFAULT FALSE,
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    CONSTRAINT tenants_name_unique UNIQUE (name),
-    CONSTRAINT tenants_slug_unique UNIQUE (slug),
     CONSTRAINT tenants_slug_format CHECK (slug ~ '^[a-z0-9][a-z0-9\-]{1,48}[a-z0-9]$')
 );
 
@@ -142,7 +140,6 @@ CREATE TABLE IF NOT EXISTS users (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_by      UUID        REFERENCES users(id) ON DELETE SET NULL,
-    CONSTRAINT users_username_unique UNIQUE (username),
     CONSTRAINT users_role_check CHECK (role IN ('superadmin', 'operator')),
     CONSTRAINT users_auth_type_check CHECK (auth_type IN ('local', 'ldap'))
 );
@@ -227,8 +224,7 @@ CREATE TABLE IF NOT EXISTS servers (
     created_by      UUID        REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT servers_os_type_check  CHECK (os_type IN ('linux', 'windows')),
     CONSTRAINT servers_status_check   CHECK (status IN ('online', 'offline', 'warning', 'unknown')),
-    CONSTRAINT servers_env_check      CHECK (environment IN ('production', 'staging', 'dev')),
-    CONSTRAINT servers_name_tenant_unique UNIQUE (tenant_id, name)
+    CONSTRAINT servers_env_check      CHECK (environment IN ('production', 'staging', 'dev'))
 );
 
 CREATE TABLE IF NOT EXISTS metrics (
@@ -392,6 +388,13 @@ BEGIN
              FOR EACH ROW EXECUTE FUNCTION set_updated_at();', t, t);
     END LOOP;
 END $$;
+
+-- Parcijalni unique indeksi — ogranicenje vazi SAMO za aktivne redove,
+-- tako da "obrisano" (active=false) ime/username/slug ponovo postaje slobodno.
+CREATE UNIQUE INDEX IF NOT EXISTS tenants_name_active_unique  ON tenants (name) WHERE active = true;
+CREATE UNIQUE INDEX IF NOT EXISTS tenants_slug_active_unique  ON tenants (slug) WHERE active = true;
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_active_unique ON users (username) WHERE active = true;
+CREATE UNIQUE INDEX IF NOT EXISTS servers_name_tenant_active_unique ON servers (tenant_id, name) WHERE active = true;
 
 GRANT USAGE ON SCHEMA public TO servermanager;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO servermanager;
