@@ -79,71 +79,86 @@ Write-Host "  Windows build: $osBuild"
 
 $sshInstalled = $false
 
-if ($osBuild -ge 17763) {
-    # Windows Server 2019+ / Windows 10 1809+ -- OpenSSH je ugradjena komponenta
-    Write-Step "Koristim ugradjenu Windows Capability za OpenSSH..."
-
-    $sshCapability = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
-
-    if ($sshCapability -and $sshCapability.State -ne "Installed") {
-        Write-Step "Instaliram OpenSSH Server (moze potrajati par minuta)..."
-        Add-WindowsCapability -Online -Name $sshCapability.Name | Out-Null
-        Write-Ok "OpenSSH Server instaliran"
-        $sshInstalled = $true
-    } elseif ($sshCapability) {
-        Write-Ok "OpenSSH Server je vec instaliran"
-        $sshInstalled = $true
-    } else {
-        Write-Warn "OpenSSH.Server capability nije pronadjena iako Windows build to podrzava -- proveri Windows Update izvor"
-    }
-} else {
-    # Windows Server 2016 / starije verzije -- nema ugradjenu komponentu,
-    # potrebna je rucna instalacija Win32-OpenSSH paketa
-    Write-Warn "Ovaj Windows build ($osBuild) nema ugradjenu OpenSSH komponentu (potreban build 17763+)."
-    Write-Step "Instaliram Win32-OpenSSH rucno (Server 2016 metod)..."
+function Install-OpenSSHManual {
+    # Rucna instalacija Win32-OpenSSH preko GitHub-a -- koristi se kad ugradjena
+    # Windows Capability instalacija ne uspe (cest slucaj u firmenim mrezama gde
+    # Windows Update/WSUS ne servira opcione komponente -- greska 0x800f0954)
+    Write-Step "Instaliram Win32-OpenSSH rucno (preuzimanje sa GitHub-a)..."
 
     $sshExisting = Get-Service sshd -ErrorAction SilentlyContinue
     if ($sshExisting) {
         Write-Ok "sshd servis vec postoji na sistemu -- preskacem instalaciju"
+        return $true
+    }
+
+    $installDir  = "C:\Program Files\OpenSSH"
+    $zipPath     = "$env:TEMP\OpenSSH-Win64.zip"
+    $downloadUrl = "https://github.com/PowerShell/Win32-OpenSSH/releases/latest/download/OpenSSH-Win64.zip"
+
+    try {
+        Write-Step "Preuzimam Win32-OpenSSH sa GitHub-a..."
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
+        Write-Ok "Preuzimanje zavrseno"
+
+        Write-Step "Raspakujem i instaliram..."
+        Expand-Archive -Path $zipPath -DestinationPath "C:\Program Files\" -Force
+        Rename-Item -Path "C:\Program Files\OpenSSH-Win64" -NewName "OpenSSH" -ErrorAction SilentlyContinue
+
+        Push-Location $installDir
+        & powershell.exe -ExecutionPolicy Bypass -File .\install-sshd.ps1
+        Pop-Location
+
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        Write-Ok "Win32-OpenSSH instaliran"
+        return $true
+    } catch {
+        Write-Warn "Automatsko preuzimanje nije uspelo (verovatno nema internet pristupa na ovoj masini)."
+        Write-Warn "Greska: $($_.Exception.Message)"
+        Write-Host ""
+        Write-Host "  RUCNA INSTALACIJA (na masini sa internet pristupom):" -ForegroundColor Yellow
+        Write-Host "  1. Preuzmi: https://github.com/PowerShell/Win32-OpenSSH/releases/latest"
+        Write-Host "     (fajl OpenSSH-Win64.zip)"
+        Write-Host "  2. Prebaci zip na ovu masinu (USB, mrezni deljeni folder, itd.)"
+        Write-Host "  3. Raspakuj u C:\Program Files\OpenSSH\"
+        Write-Host "  4. Pokreni kao Administrator:"
+        Write-Host "     cd 'C:\Program Files\OpenSSH'"
+        Write-Host "     .\install-sshd.ps1"
+        Write-Host "  5. Pokreni ovu skriptu ponovo da zavrsi podesavanje (firewall, default shell)"
+        Write-Host ""
+        return $false
+    }
+}
+
+if ($osBuild -ge 17763) {
+    # Windows Server 2019+ / Windows 10 1809+ -- pokusaj prvo ugradjenu komponentu
+    Write-Step "Koristim ugradjenu Windows Capability za OpenSSH..."
+
+    $sshCapability = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
+
+    if ($sshCapability -and $sshCapability.State -eq "Installed") {
+        Write-Ok "OpenSSH Server je vec instaliran"
         $sshInstalled = $true
-    } else {
-        $installDir = "C:\Program Files\OpenSSH"
-        $zipPath    = "$env:TEMP\OpenSSH-Win64.zip"
-        $downloadUrl = "https://github.com/PowerShell/Win32-OpenSSH/releases/latest/download/OpenSSH-Win64.zip"
-
+    } elseif ($sshCapability) {
+        Write-Step "Instaliram OpenSSH Server (moze potrajati par minuta)..."
         try {
-            Write-Step "Preuzimam Win32-OpenSSH sa GitHub-a..."
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
-            Write-Ok "Preuzimanje zavrseno"
-
-            Write-Step "Raspakujem i instaliram..."
-            Expand-Archive -Path $zipPath -DestinationPath "C:\Program Files\" -Force
-            Rename-Item -Path "C:\Program Files\OpenSSH-Win64" -NewName "OpenSSH" -ErrorAction SilentlyContinue
-
-            Push-Location $installDir
-            & powershell.exe -ExecutionPolicy Bypass -File .\install-sshd.ps1
-            Pop-Location
-
-            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-            Write-Ok "Win32-OpenSSH instaliran"
+            Add-WindowsCapability -Online -Name $sshCapability.Name -ErrorAction Stop | Out-Null
+            Write-Ok "OpenSSH Server instaliran (ugradjena komponenta)"
             $sshInstalled = $true
         } catch {
-            Write-Warn "Automatsko preuzimanje nije uspelo (verovatno nema internet pristupa na ovoj masini)."
-            Write-Warn "Greska: $($_.Exception.Message)"
-            Write-Host ""
-            Write-Host "  RUCNA INSTALACIJA (na masini sa internet pristupom):" -ForegroundColor Yellow
-            Write-Host "  1. Preuzmi: https://github.com/PowerShell/Win32-OpenSSH/releases/latest"
-            Write-Host "     (fajl OpenSSH-Win64.zip)"
-            Write-Host "  2. Prebaci zip na ovu masinu (USB, mrezni deljeni folder, itd.)"
-            Write-Host "  3. Raspakuj u C:\Program Files\OpenSSH\"
-            Write-Host "  4. Pokreni kao Administrator:"
-            Write-Host "     cd 'C:\Program Files\OpenSSH'"
-            Write-Host "     .\install-sshd.ps1"
-            Write-Host "  5. Pokreni ovu skriptu ponovo da zavrsi podesavanje (firewall, default shell)"
-            Write-Host ""
+            Write-Warn "Ugradjena instalacija nije uspela: $($_.Exception.Message)"
+            Write-Warn "Ovo je cest slucaj kad Windows Update / WSUS ne servira opcione komponente."
+            Write-Warn "Prelazim na rucnu instalaciju..."
+            $sshInstalled = Install-OpenSSHManual
         }
+    } else {
+        Write-Warn "OpenSSH.Server capability nije pronadjena -- prelazim na rucnu instalaciju..."
+        $sshInstalled = Install-OpenSSHManual
     }
+} else {
+    # Windows Server 2016 / starije verzije -- nema ugradjenu komponentu uopste
+    Write-Warn "Ovaj Windows build ($osBuild) nema ugradjenu OpenSSH komponentu (potreban build 17763+)."
+    $sshInstalled = Install-OpenSSHManual
 }
 
 if ($sshInstalled) {
