@@ -351,12 +351,12 @@ export default function Servers() {
                   <div className="text-xs text-gray-500">{s.ip_address} · {s.os_type === 'windows' ? '🪟 Windows' : '🐧 Linux'}</div>
                 </div>
               )},
-              { key: 'status', label: 'Status',   render: s => <StatusBadge status={s.status} /> },
-              { key: 'cpu',    label: 'CPU',       render: s => <MetricCell value={s.cpu_percent}  label="CPU"  /> },
-              { key: 'ram',    label: 'RAM',       render: s => <MetricCell value={s.ram_percent}  label="RAM"  /> },
-              { key: 'disk',   label: 'Disk',      render: s => <DiskCell value={s.disk_percent} disks={s.disks} /> },
-              { key: 'uptime', label: 'Uptime',    render: s => <span className="text-xs text-gray-500">{formatUptime(s.uptime_seconds)}</span> },
-              { key: 'net',    label: 'Mreza',     render: s => (
+              { key: 'status', label: 'Status',   sortKey: 'status', render: s => <StatusBadge status={s.status} /> },
+              { key: 'cpu',    label: 'CPU',       sortValue: s => s.cpu_percent, render: s => <MetricCell value={s.cpu_percent}  label="CPU"  /> },
+              { key: 'ram',    label: 'RAM',       sortValue: s => s.ram_percent, render: s => <MetricCell value={s.ram_percent}  label="RAM"  /> },
+              { key: 'disk',   label: 'Disk',      sortValue: s => s.disk_percent, render: s => <DiskCell value={s.disk_percent} disks={s.disks} /> },
+              { key: 'uptime', label: 'Uptime',    sortValue: s => s.uptime_seconds, render: s => <span className="text-xs text-gray-500">{formatUptime(s.uptime_seconds)}</span> },
+              { key: 'net',    label: 'Mreza',     sortable: false, render: s => (
                 <div className="text-xs text-gray-500 space-y-0.5">
                   <div className="flex items-center gap-1">
                     <ArrowDown size={10} className="text-green-500" />
@@ -368,7 +368,7 @@ export default function Servers() {
                   </div>
                 </div>
               )},
-              { key: 'procs',  label: 'Procesi',   render: s => (
+              { key: 'procs',  label: 'Procesi',   sortable: false, render: s => (
                 <button
                   className="text-xs text-gray-500 hover:text-brand-400 hover:underline flex items-center gap-1 transition-colors disabled:cursor-not-allowed disabled:no-underline disabled:hover:text-gray-500"
                   onClick={() => openProcesses(s)}
@@ -378,7 +378,7 @@ export default function Servers() {
                   {s.process_count ?? '—'}
                 </button>
               )},
-              { key: 'test',   label: 'Konekcija', render: s => (
+              { key: 'test',   label: 'Konekcija', sortable: false, render: s => (
                 <div className="flex items-center gap-2">
                   <button className="btn-ghost text-xs py-1 px-2"
                     onClick={() => handleTest(s)} disabled={testing === s.id}>
@@ -393,7 +393,7 @@ export default function Servers() {
                 </div>
               )},
               ...(canTerminal ? [{
-                key: 'terminal', label: '', render: s => (
+                key: 'terminal', label: '', sortable: false, render: s => (
                   <button className="btn-ghost py-1 px-2 text-brand-400 hover:text-brand-300"
                     onClick={() => navigate(`/servers/${s.id}/terminal`)} title="Otvori terminal">
                     <TerminalSquare size={14} />
@@ -401,7 +401,7 @@ export default function Servers() {
                 )
               }] : []),
               ...(canManage ? [{
-                key: 'actions', label: '', render: s => (
+                key: 'actions', label: '', sortable: false, render: s => (
                   <div className="flex items-center gap-1">
                     <button className="btn-ghost py-1 px-2 text-yellow-500 hover:text-yellow-400"
                       onClick={() => setRestartConfirm(s)} disabled={restarting === s.id} title="Restartuj server">

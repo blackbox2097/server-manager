@@ -3,7 +3,7 @@
 
 import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Loader2, AlertCircle, CheckCircle, Info, XCircle, AlertTriangle } from 'lucide-react';
+import { Loader2, AlertCircle, CheckCircle, Info, XCircle, AlertTriangle, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import clsx from 'clsx';
 
 // ── Spinner ───────────────────────────────────────────────────────────────────
@@ -178,21 +178,67 @@ export function Empty({ icon: Icon, title, subtitle, action }) {
 }
 
 // ── Table ─────────────────────────────────────────────────────────────────────
-export function Table({ columns, rows, onRowClick }) {
+export function Table({ columns, rows, onRowClick, defaultSort }) {
+  const [sortKey, setSortKey] = useState(defaultSort?.key ?? null);
+  const [sortDir, setSortDir] = useState(defaultSort?.dir ?? 'asc');
+
+  const handleSort = (col) => {
+    if (col.sortable === false) return;
+    const key = col.sortKey || col.key;
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
+  const getValue = (col, row) => col.sortValue ? col.sortValue(row) : row[col.sortKey || col.key];
+
+  const sortedRows = (() => {
+    if (!sortKey) return rows;
+    const col = columns.find(c => (c.sortKey || c.key) === sortKey);
+    if (!col) return rows;
+    const sorted = [...rows].sort((a, b) => {
+      const av = getValue(col, a);
+      const bv = getValue(col, b);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === 'number' && typeof bv === 'number') return av - bv;
+      return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
+    });
+    return sortDir === 'asc' ? sorted : sorted.reverse();
+  })();
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-gray-800">
-            {columns.map(col => (
-              <th key={col.key} className="text-left py-2.5 px-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
-                {col.label}
-              </th>
-            ))}
+            {columns.map(col => {
+              const key = col.sortKey || col.key;
+              const isActive = sortKey === key;
+              return (
+                <th key={col.key}
+                    onClick={() => handleSort(col)}
+                    className={clsx('text-left py-2.5 px-3 text-xs font-medium text-gray-500 uppercase tracking-wider',
+                      col.sortable !== false && 'cursor-pointer select-none hover:text-gray-300 transition-colors')}>
+                  <span className="inline-flex items-center gap-1">
+                    {col.label}
+                    {col.sortable !== false && (
+                      isActive
+                        ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
+                        : <ChevronsUpDown size={12} className="opacity-30" />
+                    )}
+                  </span>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
+          {sortedRows.map((row, i) => (
             <tr key={row.id || i}
                 className={clsx('border-b border-gray-800/50 transition-colors',
                   onRowClick && 'cursor-pointer hover:bg-gray-800/50')}
