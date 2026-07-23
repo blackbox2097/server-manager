@@ -57,17 +57,46 @@ async def _post(server, body):
     )
     proto = "https" if https else "http"
     url   = f"{proto}://{str(server['ip_address'])}:{port}/wsman"
-    auth  = base64.b64encode(f"{user}:{pw}".encode()).decode()
-    conn  = aiohttp.TCPConnector(ssl=False)
+    auth_type = server.get("winrm_auth_type") or "local"
+    timeout   = cfg.winrm_connect_timeout_ms / 1000
+
+    if auth_type == "domain":
+        # NTLM je jedini nacin da domenski nalozi rade preko WinRM-a — Basic auth
+        # (ispod) fundamentalno ne podrzava domenske naloge, bez obzira na format
+        # korisnickog imena. Koristimo sinhroni 'requests' u thread executor-u
+        # (isti obrazac kao Paramiko SSH), jer 'requests-ntlm' nije async-nativan.
+        return await asyncio.get_event_loop().run_in_executor(None, _post_ntlm_sync, url, body, user, pw, timeout)
+
+    auth = base64.b64encode(f"{user}:{pw}".encode()).decode()
+    conn = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=conn) as sess:
         async with sess.post(url, data=body.encode(),
                              headers={"Content-Type": "application/soap+xml;charset=UTF-8",
                                       "Authorization": f"Basic {auth}"},
-                             timeout=aiohttp.ClientTimeout(total=cfg.winrm_connect_timeout_ms/1000)) as r:
+                             timeout=aiohttp.ClientTimeout(total=timeout)) as r:
             text = await r.text()
             if r.status >= 400:
                 raise RuntimeError(f"WinRM HTTP {r.status}")
             return text
+
+
+def _post_ntlm_sync(url: str, body: str, user: str, pw: str, timeout: float) -> str:
+    """NTLM POST preko 'requests' — mora biti domenski nalog u formatu DOMEN\\korisnik."""
+    import requests
+    from requests_ntlm import HttpNtlmAuth
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    resp = requests.post(
+        url, data=body.encode(),
+        headers={"Content-Type": "application/soap+xml;charset=UTF-8"},
+        auth=HttpNtlmAuth(user, pw),
+        verify=False,  # samopotpisani sertifikati su cesti u internim mrezama
+        timeout=timeout,
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"WinRM HTTP {resp.status_code}")
+    return resp.text
 
 
 async def execute_script(server, script) -> dict:

@@ -207,7 +207,10 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
             <F label="Korisnik">
               <input className="input" value={form.winrmUser}
                 onChange={e => set('winrmUser', e.target.value)}
-                placeholder="Administrator" />
+                placeholder={form.winrmAuthType === 'domain' ? 'DOMEN\\korisnik' : 'Administrator'} />
+              {form.winrmAuthType === 'domain' && (
+                <p className="text-xs text-gray-600 mt-1">Format: DOMEN\korisnik (NTLM autentifikacija)</p>
+              )}
             </F>
             <F label="Lozinka">
               <input className="input" type="password" value={form.winrmPassword}

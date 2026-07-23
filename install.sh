@@ -461,7 +461,9 @@ setup_python() {
         python-multipart==0.0.9 \
         cryptography==42.0.8 \
         aiohttp==3.9.5 \
-        apscheduler==3.10.4
+        apscheduler==3.10.4 \
+        requests==2.31.0 \
+        requests-ntlm==1.3.0
 
     # Provjeri
     "${VENV_DIR}/bin/python" -c "
