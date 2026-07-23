@@ -200,12 +200,10 @@ async def get_metrics(server) -> dict:
             except ValueError:
                 continue
 
-    system_disk = next((d for d in disks if d["name"].upper().rstrip(":") == "C"), None)
-    disk_percent_win = system_disk["percent"] if system_disk else min(100, int(g("DISK") or 0))
     return {
         "cpuPercent": min(100, int(g("CPU") or 0)),
         "ramPercent": min(100, int(g("RAM") or 0)),
-        "diskPercent": disk_percent_win,
+        "diskPercent": min(100, int(g("DISK") or 0)),
         "disks": disks,
         "uptimeSeconds": int(g("UP") or 0),
         "loadAvg1m": None, "loadAvg5m": None, "loadAvg15m": None,

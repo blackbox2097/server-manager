@@ -126,8 +126,7 @@ async def get_metrics(server: dict) -> dict:
                     disks.append({"name": name, "percent": min(100, max(0, float(pct)))})
                 except ValueError:
                     continue
-            system_disk = next((d for d in disks if d["name"] == "/"), None)
-            disk_percent = system_disk["percent"] if system_disk else max((d["percent"] for d in disks), default=0)
+            disk_percent = max((d["percent"] for d in disks), default=0)
 
             load = first("LOAD").split()
             net_parts = first("NET").split("|")
