@@ -1,8 +1,9 @@
 // src/components/ui/index.jsx
 // Zajednički UI komponente
 
-import React from 'react';
-import { Loader2, AlertCircle, CheckCircle, Info, XCircle } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { Loader2, AlertCircle, CheckCircle, Info, XCircle, AlertTriangle } from 'lucide-react';
 import clsx from 'clsx';
 
 // ── Spinner ───────────────────────────────────────────────────────────────────
@@ -53,22 +54,51 @@ export function MetricCell({ value, label }) {
   );
 }
 
-// ── Disk meter — isto kao MetricCell, ali sa hover prikazom po drajvu ako ih ima vise
+// ── Disk meter — prikazuje root/sistemski disk kao glavni broj (ne najpunjeniji),
+// sa upozorenjem ako je NEKI DRUGI drajv kritičan. Detalji po drajvu preko hover
+// popup-a koji se renderuje u portalu (van tabele), da ga tabela ne bi sekla.
 export function DiskCell({ value, disks }) {
+  const [hover, setHover] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const triggerRef = useRef(null);
+
   if (value == null) return <span className="text-gray-600 text-xs">—</span>;
-  const hasBreakdown = Array.isArray(disks) && disks.length > 1;
+
+  const list = Array.isArray(disks) ? disks : [];
+  const hasBreakdown = list.length > 1;
+
+  // Primarni broj = root ("/") ili sistemski (C:) disk ako postoji u listi,
+  // inace najpunjeniji (worst-case) — isto kao ranije
+  const primary = list.find(d => d.name === '/' || d.name === 'C:');
+  const displayValue = primary ? primary.percent : value;
+  const displayName  = primary ? primary.name : null;
+
+  // Da li NEKI DRUGI drajv (osim onog koji se prikazuje) ima kriticno stanje?
+  const hiddenCritical = list.some(d => d !== primary && d.percent >= 90);
+
+  const handleEnter = () => {
+    if (!hasBreakdown) return;
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) setPos({ top: rect.bottom + 4, left: rect.left });
+    setHover(true);
+  };
+
   return (
-    <div className="min-w-[72px] group relative">
+    <div ref={triggerRef} className="min-w-[72px]" onMouseEnter={handleEnter} onMouseLeave={() => setHover(false)}>
       <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-gray-500">
-          Disk{hasBreakdown && <span className="text-gray-600"> ({disks.length})</span>}
+        <span className="text-xs text-gray-500 flex items-center gap-1">
+          Disk{displayName && <span className="text-gray-600 font-mono">({displayName})</span>}
+          {hiddenCritical && <AlertTriangle size={11} className="text-red-500" title="Drugi disk je kritičan — pogledaj detalje" />}
         </span>
-        <span className="text-xs font-medium">{Math.round(value)}%</span>
+        <span className="text-xs font-medium">{Math.round(displayValue)}%</span>
       </div>
-      <MeterBar value={value} />
-      {hasBreakdown && (
-        <div className="hidden group-hover:block absolute z-20 top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg p-2 shadow-xl min-w-[160px]">
-          {disks
+      <MeterBar value={displayValue} />
+
+      {hasBreakdown && hover && createPortal(
+        <div
+          className="fixed z-[100] bg-gray-800 border border-gray-700 rounded-lg p-2 shadow-xl min-w-[160px]"
+          style={{ top: pos.top, left: pos.left }}>
+          {list
             .slice()
             .sort((a, b) => b.percent - a.percent)
             .map(d => (
@@ -79,7 +109,8 @@ export function DiskCell({ value, disks }) {
                 </span>
               </div>
             ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
