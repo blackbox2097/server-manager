@@ -64,12 +64,12 @@ async def list_servers(tid: str, user=Depends(get_current_user)):
                   s.status, s.last_seen_at, s.last_error, s.active, s.created_at,
                   sk.name AS ssh_key_name,
                   (s.sudo_password IS NOT NULL) AS has_sudo_password,
-                  m.cpu_percent, m.ram_percent, m.disk_percent, m.uptime_seconds, m.collected_at,
+                  m.cpu_percent, m.ram_percent, m.disk_percent, m.disks, m.uptime_seconds, m.collected_at,
                   m.net_rx_kbps, m.net_tx_kbps, m.process_count
            FROM servers s
            LEFT JOIN ssh_keys sk ON sk.id=s.ssh_key_id
            LEFT JOIN LATERAL (
-               SELECT cpu_percent, ram_percent, disk_percent, uptime_seconds, collected_at,
+               SELECT cpu_percent, ram_percent, disk_percent, disks, uptime_seconds, collected_at,
                       net_rx_kbps, net_tx_kbps, process_count
                FROM metrics WHERE server_id=s.id ORDER BY collected_at DESC LIMIT 1
            ) m ON true

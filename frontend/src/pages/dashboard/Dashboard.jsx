@@ -8,7 +8,7 @@ import {
 import api from '../../services/api';
 import ws from '../../services/ws';
 import useAuthStore from '../../store/authStore';
-import { StatusBadge, MeterBar, Spinner, formatUptime } from '../../components/ui';
+import { StatusBadge, MeterBar, DiskCell, Spinner, formatUptime } from '../../components/ui';
 import { LogRow } from '../servers/Logs';
 
 function StatCard({ icon: Icon, label, value, color = 'text-gray-100' }) {
@@ -82,7 +82,7 @@ export default function Dashboard() {
       const init = {};
       monRes.data.forEach(s => {
         if (s.cpu_percent != null) {
-          init[s.id] = { cpu: s.cpu_percent, ram: s.ram_percent, disk: s.disk_percent, uptime: s.uptime_seconds };
+          init[s.id] = { cpu: s.cpu_percent, ram: s.ram_percent, disk: s.disk_percent, disks: s.disks, uptime: s.uptime_seconds };
         }
       });
       setLiveData(init);
@@ -219,7 +219,7 @@ export default function Dashboard() {
                     </div>
                     {live && server.status !== 'offline' && (
                       <div className="hidden sm:flex items-center gap-4">
-                        {[['CPU', live.cpu], ['RAM', live.ram], ['Disk', live.disk]].map(([lbl, val]) => (
+                        {[['CPU', live.cpu], ['RAM', live.ram]].map(([lbl, val]) => (
                           <div key={lbl} className="w-20">
                             <div className="flex justify-between text-xs text-gray-500 mb-1">
                               <span>{lbl}</span><span>{Math.round(val || 0)}%</span>
@@ -227,6 +227,9 @@ export default function Dashboard() {
                             <MeterBar value={val} />
                           </div>
                         ))}
+                        <div className="w-20">
+                          <DiskCell value={live.disk} disks={live.disks} />
+                        </div>
                       </div>
                     )}
                     {server.status === 'offline' && (

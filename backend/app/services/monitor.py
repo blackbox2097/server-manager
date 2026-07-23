@@ -138,11 +138,11 @@ async def _poll(server: dict):
             """INSERT INTO metrics
                  (server_id, cpu_percent, ram_percent, disk_percent, uptime_seconds,
                   load_avg_1m, load_avg_5m, load_avg_15m,
-                  net_rx_kbps, net_tx_kbps, process_count)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)""",
+                  net_rx_kbps, net_tx_kbps, process_count, disks)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)""",
             srv["id"], m["cpuPercent"], m["ramPercent"], m["diskPercent"],
             m["uptimeSeconds"], m.get("loadAvg1m"), m.get("loadAvg5m"), m.get("loadAvg15m"),
-            rx_kbps, tx_kbps, m.get("processCount"),
+            rx_kbps, tx_kbps, m.get("processCount"), m.get("disks") or [],
         )
 
         confirmed = _confirm_status(srv["id"], old_status, raw_status)
@@ -156,7 +156,8 @@ async def _poll(server: dict):
             "serverId": str(srv["id"]), "tenantId": str(srv["tenant_id"]),
             "status": display_status,
             "metrics": {"cpu": m["cpuPercent"], "ram": m["ramPercent"],
-                        "disk": m["diskPercent"], "uptime": m["uptimeSeconds"],
+                        "disk": m["diskPercent"], "disks": m.get("disks") or [],
+                        "uptime": m["uptimeSeconds"],
                         "netRxKbps": rx_kbps, "netTxKbps": tx_kbps,
                         "processCount": m.get("processCount")},
         }, tenant_id=str(srv["tenant_id"]))
@@ -218,12 +219,12 @@ async def get_latest(tenant_id: str) -> list:
     rows = await fetch(
         """SELECT s.id, s.name, s.hostname, s.ip_address, s.os_type, s.os_name,
                   s.status, s.last_seen_at, s.last_error, s.tags, s.environment,
-                  m.cpu_percent, m.ram_percent, m.disk_percent,
+                  m.cpu_percent, m.ram_percent, m.disk_percent, m.disks,
                   m.uptime_seconds, m.load_avg_1m, m.collected_at AS metric_at,
                   m.net_rx_kbps, m.net_tx_kbps, m.process_count
            FROM servers s
            LEFT JOIN LATERAL (
-               SELECT cpu_percent, ram_percent, disk_percent, uptime_seconds, load_avg_1m,
+               SELECT cpu_percent, ram_percent, disk_percent, disks, uptime_seconds, load_avg_1m,
                       collected_at, net_rx_kbps, net_tx_kbps, process_count
                FROM metrics WHERE server_id=s.id ORDER BY collected_at DESC LIMIT 1
            ) m ON true

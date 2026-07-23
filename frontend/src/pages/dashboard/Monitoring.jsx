@@ -51,6 +51,7 @@ export default function Monitoring() {
           cpu_percent:  data.metrics.cpu,
           ram_percent:  data.metrics.ram,
           disk_percent: data.metrics.disk,
+          disks:        data.metrics.disks,
           uptime_seconds: data.metrics.uptime,
           net_rx_kbps:  data.metrics.netRxKbps,
           net_tx_kbps:  data.metrics.netTxKbps,
@@ -123,6 +124,27 @@ export default function Monitoring() {
                   </div>
                 ))}
               </div>
+
+              {/* Detaljan pregled diskova po drajvu — samo ako ih ima vise od jednog */}
+              {Array.isArray(selServer.disks) && selServer.disks.length > 1 && (
+                <div className="card">
+                  <p className="text-xs font-medium text-gray-500 mb-3">Diskovi po drajvu — {selServer.name}</p>
+                  <div className="space-y-2.5">
+                    {selServer.disks
+                      .slice()
+                      .sort((a, b) => b.percent - a.percent)
+                      .map(d => (
+                        <div key={d.name}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs text-gray-400 font-mono">{d.name}</span>
+                            <span className="text-xs font-medium text-gray-300">{Math.round(d.percent)}%</span>
+                          </div>
+                          <MeterBar value={d.percent} />
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
 
               <div className="card">
                 <div className="flex items-center justify-between mb-1">

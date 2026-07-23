@@ -241,6 +241,7 @@ CREATE TABLE IF NOT EXISTS metrics (
     net_rx_kbps     NUMERIC(12,2),
     net_tx_kbps     NUMERIC(12,2),
     process_count   INTEGER,
+    disks           JSONB,
     raw_data        JSONB
 );
 CREATE INDEX IF NOT EXISTS idx_metrics_server_time ON metrics (server_id, collected_at DESC);

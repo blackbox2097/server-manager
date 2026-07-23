@@ -53,6 +53,38 @@ export function MetricCell({ value, label }) {
   );
 }
 
+// ── Disk meter — isto kao MetricCell, ali sa hover prikazom po drajvu ako ih ima vise
+export function DiskCell({ value, disks }) {
+  if (value == null) return <span className="text-gray-600 text-xs">—</span>;
+  const hasBreakdown = Array.isArray(disks) && disks.length > 1;
+  return (
+    <div className="min-w-[72px] group relative">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-gray-500">
+          Disk{hasBreakdown && <span className="text-gray-600"> ({disks.length})</span>}
+        </span>
+        <span className="text-xs font-medium">{Math.round(value)}%</span>
+      </div>
+      <MeterBar value={value} />
+      {hasBreakdown && (
+        <div className="hidden group-hover:block absolute z-20 top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg p-2 shadow-xl min-w-[160px]">
+          {disks
+            .slice()
+            .sort((a, b) => b.percent - a.percent)
+            .map(d => (
+              <div key={d.name} className="flex items-center justify-between gap-3 py-0.5">
+                <span className="text-xs text-gray-400 font-mono">{d.name}</span>
+                <span className={`text-xs font-medium ${d.percent >= 90 ? 'text-red-400' : d.percent >= 75 ? 'text-yellow-400' : 'text-gray-300'}`}>
+                  {Math.round(d.percent)}%
+                </span>
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Alert box ─────────────────────────────────────────────────────────────────
 export function Alert({ type = 'info', message, onClose }) {
   const map = {

@@ -5,7 +5,7 @@ import { Plus, Edit, Trash2, Plug, Server, TerminalSquare, ArrowDown, ArrowUp, C
 import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import {
-  StatusBadge, MetricCell, Modal, ConfirmDialog,
+  StatusBadge, MetricCell, DiskCell, Modal, ConfirmDialog,
   Alert, Spinner, Empty, Table, formatUptime, formatNetSpeed
 } from '../../components/ui';
 import ProcessListModal from '../../components/ProcessListModal';
@@ -354,7 +354,7 @@ export default function Servers() {
               { key: 'status', label: 'Status',   render: s => <StatusBadge status={s.status} /> },
               { key: 'cpu',    label: 'CPU',       render: s => <MetricCell value={s.cpu_percent}  label="CPU"  /> },
               { key: 'ram',    label: 'RAM',       render: s => <MetricCell value={s.ram_percent}  label="RAM"  /> },
-              { key: 'disk',   label: 'Disk',      render: s => <MetricCell value={s.disk_percent} label="Disk" /> },
+              { key: 'disk',   label: 'Disk',      render: s => <DiskCell value={s.disk_percent} disks={s.disks} /> },
               { key: 'uptime', label: 'Uptime',    render: s => <span className="text-xs text-gray-500">{formatUptime(s.uptime_seconds)}</span> },
               { key: 'net',    label: 'Mreza',     render: s => (
                 <div className="text-xs text-gray-500 space-y-0.5">

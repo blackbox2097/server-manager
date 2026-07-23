@@ -82,8 +82,10 @@ async def get_metrics(server: dict) -> dict:
                 'printf "%s\\n" "${cpu:-0}"',
                 'echo "---RAM---"',
                 "free | awk '/^Mem:/{printf \"%.0f\\n\", ($3/$2)*100}'",
-                'echo "---DISK---"',
-                "df / | awk 'NR==2{gsub(\"%\",\"\"); print $5}'",
+                'echo "---DISKS---"',
+                # Sve realne particije (bez virtuelnih fs kao tmpfs/overlay), format: mount|procenat
+                "df -x tmpfs -x devtmpfs -x squashfs -x overlay -x proc -x sysfs -x cgroup -x cgroup2 "
+                "--output=target,pcent 2>/dev/null | tail -n +2 | awk '{gsub(\"%\",\"\",$NF); print $1\"|\"$NF}'",
                 'echo "---UPTIME---"',
                 "awk '{print int($1)}' /proc/uptime",
                 'echo "---LOAD---"',
@@ -99,26 +101,49 @@ async def get_metrics(server: dict) -> dict:
             if code != 0 and stderr and not stdout:
                 raise RuntimeError(stderr[:200])
 
-            lines = [l.strip() for l in stdout.split("\n")]
-            def idx(k): return lines.index(f"---{k}---") if f"---{k}---" in lines else -1
-            def val(k):
-                i = idx(k)
-                return lines[i+1] if i >= 0 and i+1 < len(lines) else "0"
+            # Parsiraj izlaz u sekcije po ---MARKER--- oznakama (podrzava vise linija po sekciji)
+            sections: dict[str, list[str]] = {}
+            current = None
+            for raw in stdout.split("\n"):
+                line = raw.strip()
+                if line.startswith("---") and line.endswith("---") and len(line) > 6:
+                    current = line.strip("-")
+                    sections[current] = []
+                elif current is not None:
+                    if line:
+                        sections[current].append(line)
 
-            load = val("LOAD").split()
-            net_parts = val("NET").split("|")
+            def first(key, default="0"):
+                vals = sections.get(key, [])
+                return vals[0] if vals else default
+
+            disks = []
+            for line in sections.get("DISKS", []):
+                if "|" not in line:
+                    continue
+                name, pct = line.rsplit("|", 1)
+                try:
+                    disks.append({"name": name, "percent": min(100, max(0, float(pct)))})
+                except ValueError:
+                    continue
+            disk_percent = max((d["percent"] for d in disks), default=0)
+
+            load = first("LOAD").split()
+            net_parts = first("NET").split("|")
+
             return {
-                "cpuPercent":    min(100, max(0, float(val("CPU")  or 0))),
-                "ramPercent":    min(100, max(0, int(val("RAM")    or 0))),
-                "diskPercent":   min(100, max(0, int(val("DISK")   or 0))),
-                "uptimeSeconds": int(val("UPTIME") or 0),
+                "cpuPercent":    min(100, max(0, float(first("CPU") or 0))),
+                "ramPercent":    min(100, max(0, int(first("RAM") or 0))),
+                "diskPercent":   disk_percent,
+                "disks":         disks,
+                "uptimeSeconds": int(first("UPTIME") or 0),
                 "loadAvg1m":     float(load[0]) if load else 0,
                 "loadAvg5m":     float(load[1]) if len(load) > 1 else 0,
                 "loadAvg15m":    float(load[2]) if len(load) > 2 else 0,
                 "netRxBytes":    int(net_parts[0]) if len(net_parts) > 0 and net_parts[0].isdigit() else 0,
                 "netTxBytes":    int(net_parts[1]) if len(net_parts) > 1 and net_parts[1].isdigit() else 0,
-                "processCount":  int(val("PROCS") or 0),
-                "osName":        lines[idx("OSNAME")+1] if idx("OSNAME") >= 0 else "Linux",
+                "processCount":  int(first("PROCS") or 0),
+                "osName":        first("OSNAME") or "Linux",
             }
         finally:
             client.close()

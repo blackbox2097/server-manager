@@ -164,14 +164,22 @@ async def get_metrics(server) -> dict:
         "$cpu=[math]::Round((Get-CimInstance Win32_Processor|Measure-Object -Property LoadPercentage -Average).Average)",
         "$os=Get-CimInstance Win32_OperatingSystem",
         "$ram=[math]::Round((($os.TotalVisibleMemorySize-$os.FreePhysicalMemory)/$os.TotalVisibleMemorySize)*100)",
-        "$disk=(Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3 AND DeviceID='C:'\"| ForEach-Object{[math]::Round((($_.Size-$_.FreeSpace)/$_.Size)*100)}|Select-Object -First 1)",
+        # Svi fiksni drajvovi (ne samo C:), format po drajvu: NAZIV=procenat, odvojeno sa ;
+        "$diskParts=@()",
+        "Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | ForEach-Object {",
+        "  if ($_.Size -gt 0) { $p=[math]::Round((($_.Size-$_.FreeSpace)/$_.Size)*100) } else { $p=0 }",
+        "  $diskParts += \"$($_.DeviceID)=$p\"",
+        "}",
+        "$disksStr=($diskParts -join ';'); if (-not $disksStr) { $disksStr='NONE' }",
+        "$diskMax=0",
+        "foreach ($dp in $diskParts) { $v=[int]($dp.Split('=')[1]); if ($v -gt $diskMax) { $diskMax=$v } }",
         "$up=[int]((Get-Date)-$os.LastBootUpTime).TotalSeconds",
         "$procs=(Get-Process).Count",
         "$netStats=Get-NetAdapterStatistics -ErrorAction SilentlyContinue | Where-Object {$_.ReceivedBytes -gt 0 -or $_.SentBytes -gt 0}",
         "$rx=($netStats | Measure-Object -Property ReceivedBytes -Sum).Sum",
         "$tx=($netStats | Measure-Object -Property SentBytes -Sum).Sum",
         "if (-not $rx) {$rx=0}; if (-not $tx) {$tx=0}",
-        "Write-Output \"SM_CPU:$cpu|SM_RAM:$ram|SM_DISK:$disk|SM_UP:$up|SM_PROCS:$procs|SM_RX:$rx|SM_TX:$tx|SM_OS:$($os.Caption)\"",
+        "Write-Output \"SM_CPU:$cpu|SM_RAM:$ram|SM_DISK:$diskMax|SM_DISKS:$disksStr|SM_UP:$up|SM_PROCS:$procs|SM_RX:$rx|SM_TX:$tx|SM_OS:$($os.Caption)\"",
     ])
     r = await execute_script(server, ps)
     if "SM_CPU" not in r["stdout"]:
@@ -179,10 +187,24 @@ async def get_metrics(server) -> dict:
     def g(k):
         m = re.search(rf"SM_{k}:([^|\r\n]+)", r["stdout"])
         return m.group(1).strip() if m else None
+
+    disks = []
+    disks_raw = g("DISKS")
+    if disks_raw and disks_raw != "NONE":
+        for part in disks_raw.split(";"):
+            if "=" not in part:
+                continue
+            name, pct = part.split("=", 1)
+            try:
+                disks.append({"name": name, "percent": min(100, max(0, float(pct)))})
+            except ValueError:
+                continue
+
     return {
         "cpuPercent": min(100, int(g("CPU") or 0)),
         "ramPercent": min(100, int(g("RAM") or 0)),
         "diskPercent": min(100, int(g("DISK") or 0)),
+        "disks": disks,
         "uptimeSeconds": int(g("UP") or 0),
         "loadAvg1m": None, "loadAvg5m": None, "loadAvg15m": None,
         "netRxBytes": int(g("RX") or 0),
