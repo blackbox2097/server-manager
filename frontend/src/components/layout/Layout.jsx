@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Server, Activity, Terminal, BookOpen, Users,
-  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail, FileText, Database
+  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail, FileText, Database, Zap
 } from 'lucide-react';
 import clsx from 'clsx';
 import useAuthStore from '../../store/authStore';
@@ -19,6 +19,7 @@ const navItems = [
   { to: '/schedules',  icon: Clock,    label: 'Zakazano'    },
   { to: '/execute',    icon: Terminal, label: 'Izvrsavanje' },
   { to: '/alerts',     icon: Bell,     label: 'Alarmi'      },
+  { to: '/automation', icon: Zap,      label: 'Automatizacija' },
   { to: '/logs',       icon: FileText, label: 'Logovi'      },
 ];
 

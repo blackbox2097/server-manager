@@ -84,6 +84,12 @@ async def _log_status_transition(srv: dict, old_status: str, new_status: str,
     is_recovery = new_status == "online" and old_status in ("warning", "offline")
     action = "server.recovery" if is_recovery else f"server.status_{new_status}"
 
+    from app.services.automation import check_status_trigger
+    if is_recovery:
+        asyncio.create_task(check_status_trigger(srv, "recovery"))
+    elif new_status == "offline":
+        asyncio.create_task(check_status_trigger(srv, "offline"))
+
     details = {"name": srv["name"], "from": old_status, "to": new_status}
     if metrics:
         details["cpuPercent"]  = metrics["cpuPercent"]
@@ -126,6 +132,8 @@ async def _poll(server: dict):
         m = await get_metrics(srv)
         high = m["cpuPercent"] >= 90 or m["ramPercent"] >= 90 or m["diskPercent"] >= 90
         raw_status = "warning" if high else "online"
+        from app.services.automation import check_metric_triggers
+        asyncio.create_task(check_metric_triggers(srv, m))
 
         rx_kbps, tx_kbps = _net_rate(
             str(srv["id"]), m.get("netRxBytes", 0), m.get("netTxBytes", 0)

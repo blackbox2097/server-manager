@@ -8,7 +8,7 @@ from app.services.ws_manager import ws_manager
 logger = logging.getLogger(__name__)
 
 
-async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str) -> str:
+async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str, trigger_source: str = "manual") -> str:
     row = await fetchrow(
         """INSERT INTO execution_results
              (execution_id, server_id, server_name, server_ip, status, started_at)
@@ -35,6 +35,11 @@ async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str) -> 
         result = {"exitCode": -1, "stdout": "", "stderr": str(e), "durationMs": 0}
         status = "error"
 
+    if status == "error" and trigger_source in ("manual", "scheduled"):
+        automation_trigger = "exec_failed" if trigger_source == "manual" else "scheduled_exec_failed"
+        from app.services.automation import check_exec_failed_trigger
+        asyncio.create_task(check_exec_failed_trigger(tenant_id, str(server["id"]), automation_trigger))
+
     await execute(
         """UPDATE execution_results
            SET status=$1, exit_code=$2, stdout=$3, stderr=$4, finished_at=NOW(), duration_ms=$5
@@ -55,7 +60,8 @@ async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str) -> 
 
 async def run(tenant_id: str, server_ids: list, content: str,
               script_name: str = "Ad-hoc", script_id=None, started_by=None,
-              notify: bool = True, on_complete=None, started_by_username: str | None = None) -> str:
+              notify: bool = True, on_complete=None, started_by_username: str | None = None,
+              rule_id: str | None = None, trigger_source: str = "manual") -> str:
     cfg = get_settings()
     ph  = ", ".join(f"${i+2}" for i in range(len(server_ids)))
     servers = await fetch(
@@ -70,9 +76,11 @@ async def run(tenant_id: str, server_ids: list, content: str,
     eid = str(uuid.uuid4())
     await execute(
         """INSERT INTO executions
-             (id, tenant_id, script_id, script_name, script_content, started_by, status, server_count)
-           VALUES ($1,$2,$3,$4,$5,$6,'running',$7)""",
-        eid, tenant_id, script_id, script_name, content, started_by, len(servers)
+             (id, tenant_id, script_id, script_name, script_content, started_by, status, server_count,
+              rule_id, trigger_source)
+           VALUES ($1,$2,$3,$4,$5,$6,'running',$7,$8,$9)""",
+        eid, tenant_id, script_id, script_name, content, started_by, len(servers),
+        rule_id, trigger_source
     )
     await ws_manager.broadcast("exec_created",
         {"executionId": eid, "tenantId": tenant_id,
@@ -84,7 +92,7 @@ async def run(tenant_id: str, server_ids: list, content: str,
         mp = cfg.monitor_max_parallel
         for i in range(0, len(servers), mp):
             results = await asyncio.gather(
-                *[_run_one(eid, dict(s), content, tenant_id) for s in servers[i:i+mp]],
+                *[_run_one(eid, dict(s), content, tenant_id, trigger_source) for s in servers[i:i+mp]],
                 return_exceptions=True
             )
             for r in results:

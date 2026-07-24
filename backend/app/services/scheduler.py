@@ -52,6 +52,7 @@ async def _run_scheduled_job(job_id: str):
             started_by_username = row["creator_username"],
             notify         = False,  # zakazani poslovi imaju sopstvenu notify logiku (on_complete)
             on_complete    = _on_complete,
+            trigger_source = "scheduled",
         )
         await execute(
             "UPDATE scheduled_jobs SET last_run_at=NOW(), last_execution_id=$1 WHERE id=$2",
