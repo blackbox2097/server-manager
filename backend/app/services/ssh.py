@@ -14,6 +14,13 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+class SSHConnectionError(Exception):
+    """Konekcija (handshake/auth/mreza) nije uspela -- za razliku od greske
+    u samoj komandi/skripti koja se izvrsava posle uspesne konekcije.
+    Koristi se za auto-fallback SSH -> WinRM."""
+    pass
+
+
 def _connect(server: dict) -> paramiko.SSHClient:
     cfg      = get_settings()
     auth     = server.get("ssh_auth_type") or "key"
@@ -48,7 +55,10 @@ def _connect(server: dict) -> paramiko.SSHClient:
         if pw:
             kw["password"] = pw
 
-    client.connect(**kw)
+    try:
+        client.connect(**kw)
+    except Exception as e:
+        raise SSHConnectionError(str(e)) from e
     return client
 
 
@@ -240,10 +250,9 @@ async def _list_processes_linux(server: dict, limit: int = 50) -> list[dict]:
 async def _test_connection_linux(server: dict) -> dict:
     def _run():
         start = time.time()
+        client = _connect(server)
         try:
-            client = _connect(server)
             out, _, _ = _exec(client, "echo sm_ok && hostname", timeout=5)
-            client.close()
             ok = out.startswith("sm_ok")
             hn = out.split("\n")[1].strip() if ok and "\n" in out else None
             return {"ok": ok, "hostname": hn,
@@ -251,6 +260,8 @@ async def _test_connection_linux(server: dict) -> dict:
         except Exception as e:
             return {"ok": False, "error": str(e),
                     "durationMs": int((time.time()-start)*1000)}
+        finally:
+            client.close()
 
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
@@ -418,10 +429,9 @@ async def _test_connection_windows(server: dict) -> dict:
     """Test SSH konekcije ka Windows serveru. Zamena za winrm.test_connection."""
     def _run():
         start = time.time()
+        client = _connect(server)
         try:
-            client = _connect(server)
             out, _, _ = _exec(client, 'powershell -NoProfile -Command "Write-Output sm_ok; hostname"', timeout=10)
-            client.close()
             ok = "sm_ok" in out
             hn = None
             if ok:
@@ -433,6 +443,8 @@ async def _test_connection_windows(server: dict) -> dict:
         except Exception as e:
             return {"ok": False, "error": str(e),
                     "durationMs": int((time.time()-start)*1000)}
+        finally:
+            client.close()
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
