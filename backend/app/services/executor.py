@@ -27,8 +27,8 @@ async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str) -> 
     if srv.get("winrm_password"):  srv["_winrm_password"] = decrypt(srv["winrm_password"])
 
     try:
-        # svi OS idu preko SSH (paramiko) -- WinRM napusten iz bezbednosnih razloga
-        from app.services.ssh import execute_script
+        # SSH primarno, auto-fallback na WinRM za Windows ako SSH konekcija ne uspe
+        from app.services.conn_dispatch import execute_script
         result = await execute_script(srv, content)
         status = "success" if result["exitCode"] == 0 else "error"
     except Exception as e:

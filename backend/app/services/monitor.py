@@ -121,8 +121,8 @@ async def _poll(server: dict):
     if srv.get("sudo_password"):   srv["_sudo_password"]  = decrypt(srv["sudo_password"])
     if srv.get("winrm_password"):  srv["_winrm_password"] = decrypt(srv["winrm_password"])
     try:
-        # svi OS idu preko SSH (paramiko) -- WinRM napusten iz bezbednosnih razloga
-        from app.services.ssh import get_metrics
+        # SSH primarno, auto-fallback na WinRM za Windows ako SSH konekcija ne uspe
+        from app.services.conn_dispatch import get_metrics
         m = await get_metrics(srv)
         high = m["cpuPercent"] >= 90 or m["ramPercent"] >= 90 or m["diskPercent"] >= 90
         raw_status = "warning" if high else "online"
