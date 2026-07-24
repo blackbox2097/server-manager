@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 import paramiko
+import re
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ def _write_remote(client: paramiko.SSHClient, path: str, content: str, mode: int
         sftp.close()
 
 
-async def get_metrics(server: dict) -> dict:
+async def _get_metrics_linux(server: dict) -> dict:
     def _run():
         client = _connect(server)
         try:
@@ -252,3 +253,88 @@ async def test_connection(server: dict) -> dict:
                     "durationMs": int((time.time()-start)*1000)}
 
     return await asyncio.get_event_loop().run_in_executor(None, _run)
+
+
+async def _get_metrics_windows(server: dict) -> dict:
+    """Windows metrike preko SSH (PowerShell skripta se upise kao .ps1 i izvrsi).
+    Zamena za winrm.get_metrics -- izbegava unencrypted WinRM basic auth."""
+    ps_lines = [
+        "$ErrorActionPreference='SilentlyContinue'",
+        "$cpu=[math]::Round((Get-CimInstance Win32_Processor|Measure-Object -Property LoadPercentage -Average).Average)",
+        "$os=Get-CimInstance Win32_OperatingSystem",
+        "$ram=[math]::Round((($os.TotalVisibleMemorySize-$os.FreePhysicalMemory)/$os.TotalVisibleMemorySize)*100)",
+        "$diskParts=@()",
+        "Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | ForEach-Object {",
+        "  if ($_.Size -gt 0) { $p=[math]::Round((($_.Size-$_.FreeSpace)/$_.Size)*100) } else { $p=0 }",
+        "  $diskParts += \"$($_.DeviceID)=$p\"",
+        "}",
+        "$disksStr=($diskParts -join ';'); if (-not $disksStr) { $disksStr='NONE' }",
+        "$diskMax=0",
+        "foreach ($dp in $diskParts) { $v=[int]($dp.Split('=')[1]); if ($v -gt $diskMax) { $diskMax=$v } }",
+        "$up=[int]((Get-Date)-$os.LastBootUpTime).TotalSeconds",
+        "$procs=(Get-Process).Count",
+        "$netStats=Get-NetAdapterStatistics -ErrorAction SilentlyContinue | Where-Object {$_.ReceivedBytes -gt 0 -or $_.SentBytes -gt 0}",
+        "$rx=($netStats | Measure-Object -Property ReceivedBytes -Sum).Sum",
+        "$tx=($netStats | Measure-Object -Property SentBytes -Sum).Sum",
+        "if (-not $rx) {$rx=0}; if (-not $tx) {$tx=0}",
+        "Write-Output \"SM_CPU:$cpu|SM_RAM:$ram|SM_DISK:$diskMax|SM_DISKS:$disksStr|SM_UP:$up|SM_PROCS:$procs|SM_RX:$rx|SM_TX:$tx|SM_OS:$($os.Caption)\"",
+    ]
+    ps_script = "\r\n".join(ps_lines) + "\r\n"
+
+    def _run():
+        client = _connect(server)
+        try:
+            rand = "".join(random.choices(string.ascii_lowercase, k=8))
+            ts   = int(time.time() * 1000)
+            tmp  = f"C:/Windows/Temp/.sm_{ts}_{rand}.ps1"
+            _write_remote(client, tmp, ps_script, mode=0o700)
+            cmd = (
+                f'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{tmp}"'
+            )
+            stdout, stderr, code = _exec(client, cmd, timeout=30)
+            try:
+                sftp = client.open_sftp()
+                sftp.remove(tmp)
+                sftp.close()
+            except Exception:
+                pass
+            if "SM_CPU" not in stdout:
+                raise RuntimeError(stderr[:200] or "SSH Windows metrike neuspjesne")
+
+            def g(k):
+                m = re.search(rf"SM_{k}:([^|\r\n]+)", stdout)
+                return m.group(1).strip() if m else None
+
+            disks = []
+            disks_raw = g("DISKS")
+            if disks_raw and disks_raw != "NONE":
+                for part in disks_raw.split(";"):
+                    if "=" not in part:
+                        continue
+                    name, pct = part.split("=", 1)
+                    try:
+                        disks.append({"name": name, "percent": min(100, max(0, float(pct)))})
+                    except ValueError:
+                        continue
+            return {
+                "cpuPercent": min(100, int(g("CPU") or 0)),
+                "ramPercent": min(100, int(g("RAM") or 0)),
+                "diskPercent": min(100, int(g("DISK") or 0)),
+                "disks": disks,
+                "uptimeSeconds": int(g("UP") or 0),
+                "loadAvg1m": None, "loadAvg5m": None, "loadAvg15m": None,
+                "netRxBytes": int(g("RX") or 0),
+                "netTxBytes": int(g("TX") or 0),
+                "processCount": int(g("PROCS") or 0),
+                "osName": g("OS") or "Windows",
+            }
+        finally:
+            client.close()
+    return await asyncio.get_event_loop().run_in_executor(None, _run)
+
+
+async def get_metrics(server: dict) -> dict:
+    """Dispatch po os_type -- Linux i Windows sada oba idu preko SSH (paramiko)."""
+    if server.get("os_type") == "windows":
+        return await _get_metrics_windows(server)
+    return await _get_metrics_linux(server)
