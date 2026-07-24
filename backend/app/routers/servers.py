@@ -22,11 +22,18 @@ class ServerIn(BaseModel):
     sshKeyId: str | None = None; sshPassword: str | None = None; sudoPassword: str | None = None
     winrmPort: int = 5985; winrmHttps: bool = False; winrmAuthType: str = "local"
     winrmUser: str | None = None; winrmPassword: str | None = None
+    connectionMethod: str = "auto"
 
     @field_validator("osType")
     @classmethod
     def check_os(cls, v):
         if v not in ("linux", "windows"): raise ValueError("linux ili windows")
+        return v
+
+    @field_validator("connectionMethod")
+    @classmethod
+    def check_conn_method(cls, v):
+        if v not in ("auto", "ssh", "winrm"): raise ValueError("auto, ssh ili winrm")
         return v
 
     @field_validator("sshKeyId", "sshPassword", "sudoPassword", "winrmPassword",
@@ -43,6 +50,13 @@ class ServerUp(BaseModel):
     sshKeyId: str | None = None; sshPassword: str | None = None; sudoPassword: str | None = None
     winrmPort: int | None = None; winrmHttps: bool | None = None; winrmAuthType: str | None = None
     winrmUser: str | None = None; winrmPassword: str | None = None
+    connectionMethod: str | None = None
+
+    @field_validator("connectionMethod")
+    @classmethod
+    def check_conn_method(cls, v):
+        if v is not None and v not in ("auto", "ssh", "winrm"): raise ValueError("auto, ssh ili winrm")
+        return v
 
     @field_validator("sshKeyId", "sshPassword", "sudoPassword", "winrmPassword",
                      "winrmUser", "sshUser", "hostname", "description", "osName",
@@ -61,6 +75,7 @@ async def list_servers(tid: str, user=Depends(get_current_user)):
                   s.os_type, s.os_name, s.tags, s.environment,
                   s.ssh_port, s.ssh_user, s.ssh_auth_type, s.ssh_key_id,
                   s.winrm_port, s.winrm_https, s.winrm_auth_type, s.winrm_user,
+                  s.connection_method,
                   s.status, s.last_seen_at, s.last_error, s.active, s.created_at,
                   sk.name AS ssh_key_name,
                   (s.sudo_password IS NOT NULL) AS has_sudo_password,
@@ -86,8 +101,8 @@ async def create_server(tid: str, body: ServerIn, req: Request, user=Depends(get
                  (tenant_id, name, description, hostname, ip_address, os_type, os_name,
                   tags, environment, ssh_port, ssh_user, ssh_auth_type, ssh_key_id,
                   ssh_password, sudo_password, winrm_port, winrm_https, winrm_auth_type,
-                  winrm_user, winrm_password, created_by)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+                  winrm_user, winrm_password, connection_method, created_by)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
                RETURNING id, name, ip_address, os_type, status""",
             tid, body.name, _n(body.description), _n(body.hostname), body.ipAddress,
             body.osType, _n(body.osName), body.tags, body.environment,
@@ -97,6 +112,7 @@ async def create_server(tid: str, body: ServerIn, req: Request, user=Depends(get
             body.winrmPort, body.winrmHttps, body.winrmAuthType,
             _n(body.winrmUser),
             encrypt(body.winrmPassword) if body.winrmPassword else None,
+            body.connectionMethod,
             user["id"])
         await log_event("server.create", user_id=user["id"], username=user.get("username"),
                         tenant_id=tid, ip_address=_ip(req),
@@ -123,8 +139,9 @@ async def update_server(tid: str, sid: str, body: ServerUp, req: Request, user=D
              sudo_password = CASE WHEN $13::text IS NOT NULL THEN $13 ELSE sudo_password END,
              winrm_port=COALESCE($14,winrm_port), winrm_https=COALESCE($15,winrm_https),
              winrm_auth_type=COALESCE($16,winrm_auth_type), winrm_user=COALESCE($17,winrm_user),
-             winrm_password = CASE WHEN $18::text IS NOT NULL THEN $18 ELSE winrm_password END
-           WHERE id=$19 AND tenant_id=$20 AND active=true
+             winrm_password = CASE WHEN $18::text IS NOT NULL THEN $18 ELSE winrm_password END,
+             connection_method=COALESCE($19,connection_method)
+           WHERE id=$20 AND tenant_id=$21 AND active=true
            RETURNING id, name, ip_address, os_type""",
         _n(body.name), _n(body.description), _n(body.hostname), _n(body.ipAddress),
         _n(body.osName), body.tags, _n(body.environment),
@@ -133,6 +150,7 @@ async def update_server(tid: str, sid: str, body: ServerUp, req: Request, user=D
         encrypt(body.sudoPassword)  if body.sudoPassword  else None,
         body.winrmPort, body.winrmHttps, _n(body.winrmAuthType), _n(body.winrmUser),
         encrypt(body.winrmPassword) if body.winrmPassword else None,
+        _n(body.connectionMethod),
         sid, tid)
     if not row: raise HTTPException(404, "Server nije pronadjen")
     await log_event("server.update", user_id=user["id"], username=user.get("username"),

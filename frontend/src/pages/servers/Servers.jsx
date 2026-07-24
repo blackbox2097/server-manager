@@ -28,6 +28,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
     sudoPassword: '',
     winrmPort: 5985, winrmHttps: false, winrmAuthType: 'local',
     winrmUser: 'Administrator', winrmPassword: '',
+    connectionMethod: 'auto',
     ...(server ? {
       name:          server.name          || '',
       description:   server.description   || '',
@@ -46,6 +47,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
       winrmHttps:    server.winrm_https   || false,
       winrmAuthType: server.winrm_auth_type || 'local',
       winrmUser:     server.winrm_user    || '',
+      connectionMethod: server.connection_method || 'auto',
     } : {}),
   }));
 
@@ -181,8 +183,24 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
       )}
 
       {form.osType === 'windows' && (
-        <div className="border border-gray-800 rounded-lg p-3 space-y-3">
+        <div className="space-y-3">
+          <div className="border border-gray-800 rounded-lg p-3 space-y-3">
+            <F label="Metod konekcije">
+              <select className="input" value={form.connectionMethod}
+                onChange={e => set('connectionMethod', e.target.value)}>
+                <option value="auto">Auto (preporuceno) - SSH, WinRM kao rezerva</option>
+                <option value="ssh">Samo SSH</option>
+                <option value="winrm">Samo WinRM</option>
+              </select>
+            </F>
+          </div>
+          <div className="border border-gray-800 rounded-lg p-3 space-y-3">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">WinRM konfiguracija</p>
+          <p className="text-xs text-gray-600">
+            SSH je primarni metod konekcije. WinRM polja ispod su opciona -- koriste se samo kao
+            rezerva ako SSH konekcija ne uspe. Nije neophodno popuniti ih ako ste sigurni da je
+            OpenSSH server dostupan na ovom serveru.
+          </p>
           <div className="grid grid-cols-3 gap-3">
             <F label="Port">
               <input className="input" type="number" value={form.winrmPort}
@@ -217,6 +235,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
                 onChange={e => set('winrmPassword', e.target.value)}
                 placeholder={isEdit ? '(ostavi prazno da zadržiš staru)' : ''} />
             </F>
+          </div>
           </div>
         </div>
       )}
