@@ -27,10 +27,8 @@ async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str) -> 
     if srv.get("winrm_password"):  srv["_winrm_password"] = decrypt(srv["winrm_password"])
 
     try:
-        if srv["os_type"] == "windows":
-            from app.services.winrm import execute_script
-        else:
-            from app.services.ssh import execute_script
+        # svi OS idu preko SSH (paramiko) -- WinRM napusten iz bezbednosnih razloga
+        from app.services.ssh import execute_script
         result = await execute_script(srv, content)
         status = "success" if result["exitCode"] == 0 else "error"
     except Exception as e:

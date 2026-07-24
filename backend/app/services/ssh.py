@@ -153,7 +153,7 @@ async def _get_metrics_linux(server: dict) -> dict:
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
-async def execute_script(server: dict, script_content: str) -> dict:
+async def _execute_script_linux(server: dict, script_content: str) -> dict:
     cfg = get_settings()
 
     def _run():
@@ -206,7 +206,7 @@ async def execute_script(server: dict, script_content: str) -> dict:
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
-async def list_processes(server: dict, limit: int = 50) -> list[dict]:
+async def _list_processes_linux(server: dict, limit: int = 50) -> list[dict]:
     def _run():
         client = _connect(server)
         try:
@@ -237,7 +237,7 @@ async def list_processes(server: dict, limit: int = 50) -> list[dict]:
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
-async def test_connection(server: dict) -> dict:
+async def _test_connection_linux(server: dict) -> dict:
     def _run():
         start = time.time()
         try:
@@ -338,3 +338,120 @@ async def get_metrics(server: dict) -> dict:
     if server.get("os_type") == "windows":
         return await _get_metrics_windows(server)
     return await _get_metrics_linux(server)
+
+
+async def _execute_script_windows(server: dict, script_content: str) -> dict:
+    """Izvrsava PowerShell skriptu na Windows serveru preko SSH (paramiko).
+    Zamena za winrm.execute_script."""
+    cfg = get_settings()
+    def _run():
+        start  = time.time()
+        client = _connect(server)
+        try:
+            rand = "".join(random.choices(string.ascii_lowercase, k=8))
+            ts   = int(time.time() * 1000)
+            tmp  = f"C:/Windows/Temp/.sm_{ts}_{rand}.ps1"
+            _write_remote(client, tmp, script_content, mode=0o700)
+            cmd = f'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{tmp}"'
+            stdout, stderr, code = _exec(
+                client, cmd, timeout=cfg.ssh_exec_timeout_ms // 1000
+            )
+            try:
+                sftp = client.open_sftp()
+                sftp.remove(tmp)
+                sftp.close()
+            except Exception:
+                pass
+            return {"exitCode": code, "stdout": stdout,
+                    "stderr": stderr, "durationMs": int((time.time()-start)*1000)}
+        except Exception as e:
+            return {"exitCode": -1, "stdout": "",
+                    "stderr": f"Greska konekcije: {e}",
+                    "durationMs": int((time.time()-start)*1000)}
+        finally:
+            client.close()
+    return await asyncio.get_event_loop().run_in_executor(None, _run)
+
+
+async def _list_processes_windows(server: dict, limit: int = 50) -> list[dict]:
+    """Lista Windows procesa preko SSH (PowerShell). Zamena za winrm.list_processes."""
+    def _run():
+        client = _connect(server)
+        try:
+            ps = (
+                "$ErrorActionPreference='SilentlyContinue'\n"
+                "$os=Get-CimInstance Win32_OperatingSystem\n"
+                "$totalKB=$os.TotalVisibleMemorySize\n"
+                f"Get-Process | Sort-Object CPU -Descending | Select-Object -First {int(limit)} | ForEach-Object {{\n"
+                "  $rssKb=[math]::Round($_.WorkingSet64/1KB)\n"
+                "  $memPct=if($totalKB -gt 0){[math]::Round(($rssKb/$totalKB)*100,1)}else{0}\n"
+                "  $cpuVal=if($_.CPU){[math]::Round($_.CPU,1)}else{0}\n"
+                "  \"$($_.Id)|$($_.ProcessName)|$cpuVal|$memPct|$rssKb\"\n"
+                "}\n"
+            )
+            cmd = f'powershell -NoProfile -NonInteractive -Command "{ps}"'
+            stdout, stderr, code = _exec(client, cmd, timeout=15)
+            if code != 0 and stderr and not stdout:
+                raise RuntimeError(stderr[:200])
+            procs = []
+            for line in stdout.strip().split("\n"):
+                parts = line.strip().split("|")
+                if len(parts) < 5:
+                    continue
+                try:
+                    procs.append({
+                        "pid":   int(parts[0]),
+                        "name":  parts[1],
+                        "cpu":   float(parts[2]),
+                        "mem":   float(parts[3]),
+                        "rssKb": int(parts[4]),
+                    })
+                except ValueError:
+                    continue
+            return procs
+        finally:
+            client.close()
+    return await asyncio.get_event_loop().run_in_executor(None, _run)
+
+
+async def _test_connection_windows(server: dict) -> dict:
+    """Test SSH konekcije ka Windows serveru. Zamena za winrm.test_connection."""
+    def _run():
+        start = time.time()
+        try:
+            client = _connect(server)
+            out, _, _ = _exec(client, 'powershell -NoProfile -Command "Write-Output sm_ok; hostname"', timeout=10)
+            client.close()
+            ok = "sm_ok" in out
+            hn = None
+            if ok:
+                lines = [l.strip() for l in out.strip().split("\n") if l.strip()]
+                if len(lines) > 1:
+                    hn = lines[-1]
+            return {"ok": ok, "hostname": hn,
+                    "durationMs": int((time.time()-start)*1000)}
+        except Exception as e:
+            return {"ok": False, "error": str(e),
+                    "durationMs": int((time.time()-start)*1000)}
+    return await asyncio.get_event_loop().run_in_executor(None, _run)
+
+
+async def execute_script(server: dict, script_content: str) -> dict:
+    """Dispatch po os_type -- izvrsavanje skripti sad uvek preko SSH."""
+    if server.get("os_type") == "windows":
+        return await _execute_script_windows(server, script_content)
+    return await _execute_script_linux(server, script_content)
+
+
+async def list_processes(server: dict, limit: int = 50) -> list[dict]:
+    """Dispatch po os_type -- lista procesa sad uvek preko SSH."""
+    if server.get("os_type") == "windows":
+        return await _list_processes_windows(server, limit)
+    return await _list_processes_linux(server, limit)
+
+
+async def test_connection(server: dict) -> dict:
+    """Dispatch po os_type -- test konekcije sad uvek preko SSH."""
+    if server.get("os_type") == "windows":
+        return await _test_connection_windows(server)
+    return await _test_connection_linux(server)

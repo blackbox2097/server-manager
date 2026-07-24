@@ -167,10 +167,8 @@ async def test_server(tid: str, sid: str, user=Depends(get_current_user)):
     if srv.get("ssh_password"):    srv["_ssh_password"]   = decrypt(srv["ssh_password"])
     if srv.get("sudo_password"):   srv["_sudo_password"]  = decrypt(srv["sudo_password"])
     if srv.get("winrm_password"):  srv["_winrm_password"] = decrypt(srv["winrm_password"])
-    if srv["os_type"] == "windows":
-        from app.services.winrm import test_connection
-    else:
-        from app.services.ssh import test_connection
+    # svi OS idu preko SSH (paramiko) -- WinRM napusten iz bezbednosnih razloga
+    from app.services.ssh import test_connection
     return await test_connection(srv)
 
 
@@ -189,11 +187,11 @@ async def restart_server(tid: str, sid: str, req: Request, user=Depends(get_curr
     if srv.get("winrm_password"):  srv["_winrm_password"] = decrypt(srv["winrm_password"])
 
     # Odlozena komanda — vraca odgovor PRE nego sto se konekcija prekine usled restarta
+    # svi OS idu preko SSH (paramiko) -- WinRM napusten iz bezbednosnih razloga
+    from app.services.ssh import execute_script
     if srv["os_type"] == "windows":
-        from app.services.winrm import execute_script
         cmd = 'shutdown /r /t 5 /f; Write-Output "RESTART_INITIATED"'
     else:
-        from app.services.ssh import execute_script
         cmd = "nohup bash -c 'sleep 1 && reboot' >/dev/null 2>&1 & disown; echo RESTART_INITIATED"
 
     try:
@@ -230,10 +228,8 @@ async def server_processes(tid: str, sid: str, user=Depends(get_current_user)):
     if srv.get("sudo_password"):   srv["_sudo_password"]  = decrypt(srv["sudo_password"])
     if srv.get("winrm_password"):  srv["_winrm_password"] = decrypt(srv["winrm_password"])
     try:
-        if srv["os_type"] == "windows":
-            from app.services.winrm import list_processes
-        else:
-            from app.services.ssh import list_processes
+        # svi OS idu preko SSH (paramiko) -- WinRM napusten iz bezbednosnih razloga
+        from app.services.ssh import list_processes
         procs = await list_processes(srv)
         return {"osType": srv["os_type"], "processes": procs}
     except Exception as e:
