@@ -118,7 +118,7 @@ async def check_exec_failed_trigger(tenant_id: str, server_id: str, trigger_type
     )
     if not rules:
         return
-    server = await fetchrow("SELECT * FROM servers WHERE id=$1", server_id)
+    server = await fetchrow("SELECT id, name FROM servers WHERE id=$1 AND active=true", server_id)
     if not server:
         return
     await _fire_matching_rules(rules, dict(server))

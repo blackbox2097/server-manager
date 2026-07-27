@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     db_name: str = "servermanager"
     db_user: str = "servermanager"
     db_pass: str = ""
+    db_pool_min: int = 5
+    db_pool_max: int = 25
 
     jwt_secret:     str = ""
     jwt_expires_in: str = "8h"

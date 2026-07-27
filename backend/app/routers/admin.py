@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, EmailStr
 from app.database import fetch, fetchrow, execute, get_pool
+from app.services.audit_query import build_audit_filter
 from app.services.auth import require_superadmin, hash_password
 from app.services.crypto import encrypt
 from app.services.audit import log_event
@@ -190,27 +191,16 @@ async def audit(
     dateFrom: str | None = None, dateTo: str | None = None,
     user=Depends(require_superadmin),
 ):
-    cond, params = ["1=1"], []
-    if action:
-        params.append(f"{action}%"); cond.append(f"a.action LIKE ${len(params)}")
-    if tenantId:
-        params.append(tenantId); cond.append(f"a.tenant_id=${len(params)}")
-    if userId:
-        params.append(userId); cond.append(f"a.user_id=${len(params)}")
-    if success is not None:
-        params.append(success); cond.append(f"a.success=${len(params)}")
-    if search:
-        params.append(f"%{search}%")
-        cond.append(f"(a.username ILIKE ${len(params)} OR a.resource_id ILIKE ${len(params)} OR a.details::text ILIKE ${len(params)} OR a.action ILIKE ${len(params)})")
-    if dateFrom:
-        params.append(dateFrom); cond.append(f"a.occurred_at >= ${len(params)}")
-    if dateTo:
-        params.append(dateTo); cond.append(f"a.occurred_at <= ${len(params)}")
+    cond, params = build_audit_filter(
+        prefix="a", tenant_id=tenantId, action=action, user_id=userId,
+        success=success, search=search, date_from=dateFrom, date_to=dateTo,
+    )
+    where = " AND ".join(cond) if cond else "1=1"
     params += [min(limit, 500), offset]
     rows = await fetch(
         f"""SELECT a.*, t.name AS tenant_name FROM audit_log a
             LEFT JOIN tenants t ON t.id = a.tenant_id
-            WHERE {' AND '.join(cond)}
+            WHERE {where}
             ORDER BY a.occurred_at DESC LIMIT ${len(params)-1} OFFSET ${len(params)}""",
         *params)
     return [dict(r) for r in rows]
@@ -227,26 +217,15 @@ async def export_audit(
     from datetime import datetime
     from fastapi.responses import StreamingResponse
 
-    cond, params = ["1=1"], []
-    if action:
-        params.append(f"{action}%"); cond.append(f"a.action LIKE ${len(params)}")
-    if tenantId:
-        params.append(tenantId); cond.append(f"a.tenant_id=${len(params)}")
-    if userId:
-        params.append(userId); cond.append(f"a.user_id=${len(params)}")
-    if success is not None:
-        params.append(success); cond.append(f"a.success=${len(params)}")
-    if search:
-        params.append(f"%{search}%")
-        cond.append(f"(a.username ILIKE ${len(params)} OR a.resource_id ILIKE ${len(params)} OR a.details::text ILIKE ${len(params)} OR a.action ILIKE ${len(params)})")
-    if dateFrom:
-        params.append(dateFrom); cond.append(f"a.occurred_at >= ${len(params)}")
-    if dateTo:
-        params.append(dateTo); cond.append(f"a.occurred_at <= ${len(params)}")
+    cond, params = build_audit_filter(
+        prefix="a", tenant_id=tenantId, action=action, user_id=userId,
+        success=success, search=search, date_from=dateFrom, date_to=dateTo,
+    )
+    where = " AND ".join(cond) if cond else "1=1"
     rows = await fetch(
         f"""SELECT a.*, t.name AS tenant_name FROM audit_log a
             LEFT JOIN tenants t ON t.id = a.tenant_id
-            WHERE {' AND '.join(cond)} ORDER BY a.occurred_at DESC LIMIT 5000""",
+            WHERE {where} ORDER BY a.occurred_at DESC LIMIT 5000""",
         *params)
 
     buf = io.StringIO()

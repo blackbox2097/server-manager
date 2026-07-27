@@ -26,7 +26,7 @@ async def init_db():
     _pool = await asyncpg.create_pool(
         host=cfg.db_host, port=cfg.db_port,
         database=cfg.db_name, user=cfg.db_user, password=cfg.db_pass,
-        min_size=2, max_size=10, command_timeout=30,
+        min_size=cfg.db_pool_min, max_size=cfg.db_pool_max, command_timeout=30,
         init=_init_conn,
     )
     logger.info("PostgreSQL pool kreiran")

@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from app.database import fetch
+from app.services.audit_query import build_audit_filter
 from app.services.auth import get_current_user, check_tenant_perm
 
 router = APIRouter(prefix="/api/tenants", tags=["logs"])
@@ -16,27 +17,10 @@ def _build_query(tenant_id: str, action: str | None, user_id: str | None,
                  success: bool | None, search: str | None,
                  date_from: str | None, date_to: str | None,
                  limit: int, offset: int):
-    cond   = ["tenant_id = $1"]
-    params: list = [tenant_id]
-
-    if action:
-        params.append(f"{action}%")
-        cond.append(f"action LIKE ${len(params)}")
-    if user_id:
-        params.append(user_id)
-        cond.append(f"user_id = ${len(params)}")
-    if success is not None:
-        params.append(success)
-        cond.append(f"success = ${len(params)}")
-    if search:
-        params.append(f"%{search}%")
-        cond.append(f"(username ILIKE ${len(params)} OR resource_id ILIKE ${len(params)} OR details::text ILIKE ${len(params)} OR action ILIKE ${len(params)})")
-    if date_from:
-        params.append(date_from)
-        cond.append(f"occurred_at >= ${len(params)}")
-    if date_to:
-        params.append(date_to)
-        cond.append(f"occurred_at <= ${len(params)}")
+    cond, params = build_audit_filter(
+        tenant_id=tenant_id, action=action, user_id=user_id, success=success,
+        search=search, date_from=date_from, date_to=date_to,
+    )
 
     where = " AND ".join(cond)
     params_list = params + [limit, offset]
