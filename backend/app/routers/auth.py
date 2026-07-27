@@ -1,7 +1,7 @@
 # app/routers/auth.py
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
-from app.database import fetchrow, fetch, execute
+from app.database import fetchrow, fetch, execute, fetchval
 from app.services.auth import (
     verify_password, hash_password, make_access_token,
     make_refresh_token, get_current_user
@@ -46,6 +46,17 @@ class ChangePwReq(BaseModel):
 @router.post("/login")
 async def login(body: LoginReq, req: Request):
     ip = req.client.host if req.client else None
+
+    recent_failures = await fetchval(
+        """SELECT COUNT(*) FROM audit_log
+           WHERE action='auth.login_failed' AND username=$1
+             AND occurred_at > NOW() - INTERVAL '15 minutes'""",
+        body.username)
+    if recent_failures >= 5:
+        await log_event("auth.login_blocked", username=body.username, ip_address=ip,
+                        success=False, error_message="Previse neuspesnih pokusaja prijave")
+        raise HTTPException(429, "Previse neuspesnih pokusaja prijave. Pokusaj ponovo za 15 minuta.")
+
     user = await fetchrow(
         "SELECT id, username, password_hash, full_name, role, auth_type, active FROM users WHERE username=$1",
         body.username)

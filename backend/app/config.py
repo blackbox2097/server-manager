@@ -1,5 +1,6 @@
 # app/config.py
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from functools import lru_cache
 
 
@@ -39,6 +40,26 @@ class Settings(BaseSettings):
     module_script_exec: bool = True
     module_winrm:       bool = True
     module_ldap:        bool = False
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def check_jwt_secret(cls, v):
+        if not v or len(v) < 32:
+            raise ValueError(
+                "JWT_SECRET mora biti postavljen i imati bar 32 karaktera "
+                "(proveri /etc/servermanager/.env) -- kritican bezbednosni parametar."
+            )
+        return v
+
+    @field_validator("encryption_key")
+    @classmethod
+    def check_encryption_key(cls, v):
+        if not v or len(v) != 64:
+            raise ValueError(
+                "ENCRYPTION_KEY mora biti postavljen i imati tacno 64 hex karaktera "
+                "(proveri /etc/servermanager/.env) -- kritican bezbednosni parametar."
+            )
+        return v
 
     class Config:
         env_file = "/etc/servermanager/.env"

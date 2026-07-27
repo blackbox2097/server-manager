@@ -31,6 +31,12 @@ async def terminal_ws(ws: WebSocket, tenant_id: str, server_id: str, token: str 
     user = {"id": payload["sub"], "role": payload.get("role")}
     username = payload.get("name")
 
+    user_row = await fetchrow("SELECT active FROM users WHERE id=$1", user["id"])
+    if not user_row or not user_row["active"]:
+        logger.warning(f"Terminal WS: korisnik ne postoji ili je deaktiviran (user={user['id']})")
+        await ws.close(code=1008)
+        return
+
     try:
         await check_tenant_perm(tenant_id, user, "perm_scripts_run")
     except Exception as e:

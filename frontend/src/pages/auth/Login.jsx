@@ -21,7 +21,7 @@ export default function Login() {
       await login(form.username, form.password);
       navigate('/dashboard');
     } catch (err) {
-      setError(err.response?.data?.error || 'Greška pri prijavi');
+      setError(err.response?.data?.detail || 'Greška pri prijavi');
     } finally {
       setLoading(false);
     }
