@@ -29,6 +29,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
     winrmPort: 5985, winrmHttps: false, winrmAuthType: 'local',
     winrmUser: 'Administrator', winrmPassword: '',
     connectionMethod: 'auto',
+    hvApiHost: '', hvApiPort: 8006, hvAuthId: '', hvSecret: '', hvVerifyTls: true,
     ...(server ? {
       name:          server.name          || '',
       description:   server.description   || '',
@@ -48,6 +49,10 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
       winrmAuthType: server.winrm_auth_type || 'local',
       winrmUser:     server.winrm_user    || '',
       connectionMethod: server.connection_method || 'auto',
+      hvApiHost: server.hv_api_host || '',
+      hvApiPort: server.hv_api_port || 8006,
+      hvAuthId:  server.hv_auth_id  || '',
+      hvVerifyTls: server.hv_verify_tls ?? true,
     } : {}),
   }));
 
@@ -73,6 +78,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
         sshPassword:   form.sshPassword   || undefined,
         sudoPassword:  form.sudoPassword  || undefined,
         winrmPassword: form.winrmPassword || undefined,
+        hvSecret:      form.hvSecret      || undefined,
       };
       if (isEdit) await api.put(`/tenants/${tenantId}/servers/${server.id}`, payload);
       else        await api.post(`/tenants/${tenantId}/servers`, payload);
@@ -109,6 +115,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
             onChange={e => set('osType', e.target.value)}>
             <option value="linux">Linux</option>
             <option value="windows">Windows</option>
+            <option value="proxmox">Proxmox (hipervizor)</option>
           </select>
         </F>
         <F label="OS naziv">
@@ -135,6 +142,39 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
         </F>
       </div>
 
+      {form.osType === 'proxmox' && (
+        <div className="border border-gray-800 rounded-lg p-3 space-y-3">
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+            Proxmox API pristup
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <F label="API host">
+              <input className="input" value={form.hvApiHost}
+                onChange={e => set('hvApiHost', e.target.value)}
+                placeholder="10.0.0.5" />
+            </F>
+            <F label="Port">
+              <input className="input" type="number" value={form.hvApiPort}
+                onChange={e => set('hvApiPort', parseInt(e.target.value) || 8006)} />
+            </F>
+          </div>
+          <F label="Token ID">
+            <input className="input" value={form.hvAuthId}
+              onChange={e => set('hvAuthId', e.target.value)}
+              placeholder="root@pam!servermanager" />
+          </F>
+          <F label="Token secret">
+            <input className="input" type="password" value={form.hvSecret}
+              onChange={e => set('hvSecret', e.target.value)}
+              placeholder={isEdit ? '(ostavi prazno da zadržiš stari)' : ''} />
+          </F>
+          <label className="flex items-center gap-2 text-sm text-gray-300">
+            <input type="checkbox" checked={form.hvVerifyTls}
+              onChange={e => set('hvVerifyTls', e.target.checked)} />
+            Verifikuj TLS sertifikat
+          </label>
+        </div>
+      )}
       {(form.osType === 'linux' || form.osType === 'windows') && (
         <div className="border border-gray-800 rounded-lg p-3 space-y-3">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -335,6 +375,108 @@ export default function Servers() {
 
   const openProcesses = (server) => setProcModalServer(server);
 
+  const hypervisors    = servers.filter(s => s.os_type === 'proxmox');
+  const regularServers = servers.filter(s => s.os_type !== 'proxmox');
+
+  const columns = [
+    { key: 'name', label: 'Server', render: s => (
+      <div>
+        <div className="font-medium text-gray-200 flex items-center gap-2">
+          {s.name}
+          {s.os_type === 'proxmox' && (
+            <span className="text-xs bg-purple-900/40 text-purple-300 px-1.5 py-0.5 rounded">Proxmox</span>
+          )}
+        </div>
+        <div className="text-xs text-gray-500">
+          {s.ip_address} · {s.os_type === 'windows' ? '🪟 Windows' : s.os_type === 'proxmox' ? '🖥️ Hipervizor' : '🐧 Linux'}
+        </div>
+      </div>
+    )},
+    { key: 'vms', label: 'VM', sortable: false, render: s => (
+      s.os_type === 'proxmox' ? (
+        <button className="btn-secondary text-xs py-1 px-2 flex items-center gap-1.5"
+          onClick={() => navigate(`/servers/${s.id}/vms`)} title="Prikazi VM listu">
+          <Server size={12} />
+          {s.vm_count ?? 0} VM
+        </button>
+      ) : null
+    )},
+    { key: 'status', label: 'Status',   sortKey: 'status', render: s => <StatusBadge status={s.status} /> },
+    { key: 'cpu',    label: 'CPU',       sortValue: s => s.cpu_percent, render: s => <MetricCell value={s.cpu_percent}  label="CPU"  /> },
+    { key: 'ram',    label: 'RAM',       sortValue: s => s.ram_percent, render: s => <MetricCell value={s.ram_percent}  label="RAM"  /> },
+    { key: 'disk',   label: 'Disk',      sortValue: s => s.disk_percent, render: s => <DiskCell value={s.disk_percent} disks={s.disks} /> },
+    { key: 'uptime', label: 'Uptime',    sortValue: s => s.uptime_seconds, render: s => <span className="text-xs text-gray-500">{formatUptime(s.uptime_seconds)}</span> },
+    { key: 'net',    label: 'Mreza',     sortable: false, render: s => (
+      <div className="text-xs text-gray-500 space-y-0.5">
+        <div className="flex items-center gap-1">
+          <ArrowDown size={10} className="text-green-500" />
+          {formatNetSpeed(s.net_rx_kbps)}
+        </div>
+        <div className="flex items-center gap-1">
+          <ArrowUp size={10} className="text-blue-500" />
+          {formatNetSpeed(s.net_tx_kbps)}
+        </div>
+      </div>
+    )},
+    { key: 'procs',  label: 'Procesi',   sortable: false, render: s => (
+      s.os_type === 'proxmox' ? null : (
+        <button
+          className="text-xs text-gray-500 hover:text-brand-400 hover:underline flex items-center gap-1 transition-colors disabled:cursor-not-allowed disabled:no-underline disabled:hover:text-gray-500"
+          onClick={() => openProcesses(s)}
+          disabled={s.process_count == null}
+          title={s.process_count == null ? 'Nema podataka' : 'Prikazi procese'}>
+          <Cpu size={11} />
+          {s.process_count ?? '—'}
+        </button>
+      )
+    )},
+    { key: 'test',   label: 'Konekcija', sortable: false, render: s => (
+      <div className="flex items-center gap-2">
+        <button className="btn-ghost text-xs py-1 px-2"
+          onClick={() => handleTest(s)} disabled={testing === s.id}>
+          {testing === s.id ? <Spinner size={12} /> : <Plug size={12} />}
+          <span className="ml-1">Test</span>
+        </button>
+        {testResult[s.id] && (
+          <span className={testResult[s.id].ok ? 'text-green-400 text-xs' : 'text-red-400 text-xs'}>
+            {testResult[s.id].ok ? '✓ OK' : '✗ Fail'}
+          </span>
+        )}
+      </div>
+    )},
+    ...(canTerminal ? [{
+      key: 'terminal', label: '', sortable: false, render: s => (
+        s.os_type === 'proxmox' ? null : (
+          <button className="btn-ghost py-1 px-2 text-brand-400 hover:text-brand-300"
+            onClick={() => navigate(`/servers/${s.id}/terminal`)} title="Otvori terminal">
+            <TerminalSquare size={14} />
+          </button>
+        )
+      )
+    }] : []),
+    ...(canManage ? [{
+      key: 'actions', label: '', sortable: false, render: s => (
+        <div className="flex items-center gap-1">
+          {s.os_type !== 'proxmox' && (
+            <button className="btn-ghost py-1 px-2 text-yellow-500 hover:text-yellow-400"
+              onClick={() => setRestartConfirm(s)} disabled={restarting === s.id} title="Restartuj server">
+              {restarting === s.id ? <Spinner size={14} /> : <RotateCw size={14} />}
+            </button>
+          )}
+          <button className="btn-ghost py-1 px-2" onClick={() => openEdit(s)} title="Uredi">
+            <Edit size={14} />
+          </button>
+          <button className="btn-ghost py-1 px-2 text-red-500 hover:text-red-400"
+            onClick={() => setDelConfirm(s)} title="Obriši">
+            <Trash2 size={14} />
+          </button>
+        </div>
+      )
+    }] : []),
+  ];
+
+  const hypervisorColumns = columns.filter(c => c.key !== 'procs');
+
   if (!tenantId) return <div className="text-gray-500 text-sm p-4">Odaberi tenant.</div>;
   if (loading)   return <div className="flex justify-center py-12"><Spinner size={28} className="text-brand-500" /></div>;
 
@@ -361,84 +503,25 @@ export default function Servers() {
             </button>
           )} />
       ) : (
-        <div className="card p-0 overflow-hidden">
-          <Table
-            columns={[
-              { key: 'name', label: 'Server', render: s => (
-                <div>
-                  <div className="font-medium text-gray-200">{s.name}</div>
-                  <div className="text-xs text-gray-500">{s.ip_address} · {s.os_type === 'windows' ? '🪟 Windows' : '🐧 Linux'}</div>
-                </div>
-              )},
-              { key: 'status', label: 'Status',   sortKey: 'status', render: s => <StatusBadge status={s.status} /> },
-              { key: 'cpu',    label: 'CPU',       sortValue: s => s.cpu_percent, render: s => <MetricCell value={s.cpu_percent}  label="CPU"  /> },
-              { key: 'ram',    label: 'RAM',       sortValue: s => s.ram_percent, render: s => <MetricCell value={s.ram_percent}  label="RAM"  /> },
-              { key: 'disk',   label: 'Disk',      sortValue: s => s.disk_percent, render: s => <DiskCell value={s.disk_percent} disks={s.disks} /> },
-              { key: 'uptime', label: 'Uptime',    sortValue: s => s.uptime_seconds, render: s => <span className="text-xs text-gray-500">{formatUptime(s.uptime_seconds)}</span> },
-              { key: 'net',    label: 'Mreza',     sortable: false, render: s => (
-                <div className="text-xs text-gray-500 space-y-0.5">
-                  <div className="flex items-center gap-1">
-                    <ArrowDown size={10} className="text-green-500" />
-                    {formatNetSpeed(s.net_rx_kbps)}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <ArrowUp size={10} className="text-blue-500" />
-                    {formatNetSpeed(s.net_tx_kbps)}
-                  </div>
-                </div>
-              )},
-              { key: 'procs',  label: 'Procesi',   sortable: false, render: s => (
-                <button
-                  className="text-xs text-gray-500 hover:text-brand-400 hover:underline flex items-center gap-1 transition-colors disabled:cursor-not-allowed disabled:no-underline disabled:hover:text-gray-500"
-                  onClick={() => openProcesses(s)}
-                  disabled={s.process_count == null}
-                  title={s.process_count == null ? 'Nema podataka' : 'Prikazi procese'}>
-                  <Cpu size={11} />
-                  {s.process_count ?? '—'}
-                </button>
-              )},
-              { key: 'test',   label: 'Konekcija', sortable: false, render: s => (
-                <div className="flex items-center gap-2">
-                  <button className="btn-ghost text-xs py-1 px-2"
-                    onClick={() => handleTest(s)} disabled={testing === s.id}>
-                    {testing === s.id ? <Spinner size={12} /> : <Plug size={12} />}
-                    <span className="ml-1">Test</span>
-                  </button>
-                  {testResult[s.id] && (
-                    <span className={testResult[s.id].ok ? 'text-green-400 text-xs' : 'text-red-400 text-xs'}>
-                      {testResult[s.id].ok ? '✓ OK' : '✗ Fail'}
-                    </span>
-                  )}
-                </div>
-              )},
-              ...(canTerminal ? [{
-                key: 'terminal', label: '', sortable: false, render: s => (
-                  <button className="btn-ghost py-1 px-2 text-brand-400 hover:text-brand-300"
-                    onClick={() => navigate(`/servers/${s.id}/terminal`)} title="Otvori terminal">
-                    <TerminalSquare size={14} />
-                  </button>
-                )
-              }] : []),
-              ...(canManage ? [{
-                key: 'actions', label: '', sortable: false, render: s => (
-                  <div className="flex items-center gap-1">
-                    <button className="btn-ghost py-1 px-2 text-yellow-500 hover:text-yellow-400"
-                      onClick={() => setRestartConfirm(s)} disabled={restarting === s.id} title="Restartuj server">
-                      {restarting === s.id ? <Spinner size={14} /> : <RotateCw size={14} />}
-                    </button>
-                    <button className="btn-ghost py-1 px-2" onClick={() => openEdit(s)} title="Uredi">
-                      <Edit size={14} />
-                    </button>
-                    <button className="btn-ghost py-1 px-2 text-red-500 hover:text-red-400"
-                      onClick={() => setDelConfirm(s)} title="Obriši">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                )
-              }] : []),
-            ]}
-            rows={servers}
-          />
+        <div className="space-y-4">
+          {hypervisors.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Hipervizori</p>
+              <div className="card p-0 overflow-hidden">
+                <Table columns={hypervisorColumns} rows={hypervisors} />
+              </div>
+            </div>
+          )}
+          {regularServers.length > 0 && (
+            <div>
+              {hypervisors.length > 0 && (
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Serveri</p>
+              )}
+              <div className="card p-0 overflow-hidden">
+                <Table columns={columns} rows={regularServers} />
+              </div>
+            </div>
+          )}
         </div>
       )}
 

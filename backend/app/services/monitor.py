@@ -126,6 +126,7 @@ async def _poll(server: dict):
     if srv.get("ssh_password"):    srv["_ssh_password"]   = decrypt(srv["ssh_password"])
     if srv.get("sudo_password"):   srv["_sudo_password"]  = decrypt(srv["sudo_password"])
     if srv.get("winrm_password"):  srv["_winrm_password"] = decrypt(srv["winrm_password"])
+    if srv.get("hv_secret_enc"):   srv["_hv_secret"]      = decrypt(srv["hv_secret_enc"])
     try:
         # SSH primarno, auto-fallback na WinRM za Windows ako SSH konekcija ne uspe
         from app.services.conn_dispatch import get_metrics
@@ -155,8 +156,12 @@ async def _poll(server: dict):
         display_status = confirmed or old_status or raw_status
 
         await execute(
-            "UPDATE servers SET status=$1, last_seen_at=NOW(), last_error=NULL, os_name=COALESCE($2,os_name) WHERE id=$3",
-            display_status, m.get("osName"), srv["id"]
+            """UPDATE servers SET status=$1, last_seen_at=NOW(), last_error=NULL, os_name=COALESCE($2,os_name),
+                 total_cpu_cores=COALESCE($4,total_cpu_cores), total_ram_mb=COALESCE($5,total_ram_mb),
+                 total_disk_gb=COALESCE($6,total_disk_gb)
+               WHERE id=$3""",
+            display_status, m.get("osName"), srv["id"],
+            m.get("totalCpuCores"), m.get("totalRamMb"), m.get("totalDiskGb")
         )
         await ws_manager.broadcast("metrics", {
             "serverId": str(srv["id"]), "tenantId": str(srv["tenant_id"]),
@@ -221,6 +226,39 @@ async def cleanup_metrics():
     logger.info(f"Metrike ociscene: {r}")
 
 
+async def sync_vms():
+    """Sinhronizuje VM inventar sa svih hipervizora (trenutno samo Proxmox).
+    Full-replace po hipervizoru -- jednostavnije od diff-a, prihvatljivo za
+    ocekivan broj VM-ova po hostu."""
+    rows = await fetch(
+        """SELECT * FROM servers WHERE active=true AND os_type IN ('proxmox')"""
+    )
+    for row in rows:
+        srv = dict(row)
+        if srv.get("hv_secret_enc"): srv["_hv_secret"] = decrypt(srv["hv_secret_enc"])
+        try:
+            from app.services.proxmox import list_vms
+            vms = await list_vms(srv)
+        except Exception as e:
+            logger.warning(f"VM sync neuspesan za {srv['name']}: {e}")
+            continue
+        try:
+            await execute("DELETE FROM virtual_machines WHERE hypervisor_id=$1", srv["id"])
+            for vm in vms:
+                await execute(
+                    """INSERT INTO virtual_machines
+                         (hypervisor_id, tenant_id, vm_id_on_host, name, power_state,
+                          cpu_cores, ram_mb, disk_gb, guest_os, ip_address, last_seen_at)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())""",
+                    srv["id"], srv["tenant_id"], vm["vmIdOnHost"], vm["name"], vm["powerState"],
+                    vm.get("cpuCores"), vm.get("ramMb"), vm.get("diskGb"),
+                    vm.get("guestOs"), vm.get("ipAddress"),
+                )
+            logger.info(f"VM sync: {srv['name']} -- {len(vms)} VM/kontejnera")
+        except Exception as e:
+            logger.error(f"VM upis u bazu neuspesan za {srv['name']}: {e}")
+
+
 async def get_latest(tenant_id: str) -> list:
     rows = await fetch(
         """SELECT s.id, s.name, s.hostname, s.ip_address, s.os_type, s.os_name,
@@ -254,9 +292,11 @@ def start():
         return
     scheduler.add_job(poll_all, "interval", seconds=cfg.monitor_interval_sec, id="poll")
     scheduler.add_job(cleanup_metrics, "cron", hour=3, minute=0, id="cleanup")
+    scheduler.add_job(sync_vms, "interval", seconds=300, id="sync_vms")
 
     from app.services.audit import cleanup_old_logs
     scheduler.add_job(cleanup_old_logs, "cron", hour=3, minute=15, id="cleanup_logs")
     scheduler.start()
     logger.info(f"Monitoring pokrenut (interval: {cfg.monitor_interval_sec}s, debounce: {cfg.status_debounce_polls} poll-a)")
     asyncio.get_event_loop().create_task(poll_all())
+    asyncio.get_event_loop().create_task(sync_vms())

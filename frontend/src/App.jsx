@@ -9,6 +9,7 @@ import Dashboard from './pages/dashboard/Dashboard';
 import Monitoring from './pages/dashboard/Monitoring';
 import Servers   from './pages/servers/Servers';
 import TerminalPage from './pages/servers/Terminal';
+import VmList from './pages/servers/VmList';
 import SshKeys   from './pages/servers/SshKeys';
 import Alerts    from './pages/servers/Alerts';
 import Logs      from './pages/servers/Logs';
@@ -52,6 +53,7 @@ export default function App() {
       <Route path="/monitoring"    element={<Page component={Monitoring} />} />
       <Route path="/servers"       element={<Page component={Servers}    />} />
       <Route path="/servers/:serverId/terminal" element={<Page component={TerminalPage} />} />
+      <Route path="/servers/:serverId/vms" element={<Page component={VmList} />} />
       <Route path="/ssh-keys"      element={<Page component={SshKeys}    />} />
       <Route path="/alerts"        element={<Page component={Alerts}     />} />
       <Route path="/logs"          element={<Page component={Logs}       />} />

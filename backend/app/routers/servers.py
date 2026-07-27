@@ -23,11 +23,14 @@ class ServerIn(BaseModel):
     winrmPort: int = 5985; winrmHttps: bool = False; winrmAuthType: str = "local"
     winrmUser: str | None = None; winrmPassword: str | None = None
     connectionMethod: str = "auto"
+    hvApiHost: str | None = None; hvApiPort: int = 8006; hvAuthId: str | None = None
+    hvSecret: str | None = None; hvVerifyTls: bool = True
 
     @field_validator("osType")
     @classmethod
     def check_os(cls, v):
-        if v not in ("linux", "windows"): raise ValueError("linux ili windows")
+        if v not in ("linux", "windows", "proxmox", "esxi", "hyperv"):
+            raise ValueError("linux, windows, proxmox, esxi ili hyperv")
         return v
 
     @field_validator("connectionMethod")
@@ -37,7 +40,8 @@ class ServerIn(BaseModel):
         return v
 
     @field_validator("sshKeyId", "sshPassword", "sudoPassword", "winrmPassword",
-                     "winrmUser", "sshUser", "hostname", "description", "osName", mode="before")
+                     "winrmUser", "sshUser", "hostname", "description", "osName",
+                     "hvApiHost", "hvAuthId", "hvSecret", mode="before")
     @classmethod
     def empty_to_none(cls, v): return None if v == "" else v
 
@@ -51,6 +55,8 @@ class ServerUp(BaseModel):
     winrmPort: int | None = None; winrmHttps: bool | None = None; winrmAuthType: str | None = None
     winrmUser: str | None = None; winrmPassword: str | None = None
     connectionMethod: str | None = None
+    hvApiHost: str | None = None; hvApiPort: int | None = None; hvAuthId: str | None = None
+    hvSecret: str | None = None; hvVerifyTls: bool | None = None
 
     @field_validator("connectionMethod")
     @classmethod
@@ -60,7 +66,8 @@ class ServerUp(BaseModel):
 
     @field_validator("sshKeyId", "sshPassword", "sudoPassword", "winrmPassword",
                      "winrmUser", "sshUser", "hostname", "description", "osName",
-                     "ipAddress", "sshAuthType", "winrmAuthType", "environment", "name", mode="before")
+                     "ipAddress", "sshAuthType", "winrmAuthType", "environment", "name",
+                     "hvApiHost", "hvAuthId", "hvSecret", mode="before")
     @classmethod
     def empty_to_none(cls, v): return None if v == "" else v
 
@@ -76,9 +83,13 @@ async def list_servers(tid: str, user=Depends(get_current_user)):
                   s.ssh_port, s.ssh_user, s.ssh_auth_type, s.ssh_key_id,
                   s.winrm_port, s.winrm_https, s.winrm_auth_type, s.winrm_user,
                   s.connection_method,
+                  s.hv_api_host, s.hv_api_port, s.hv_auth_id, s.hv_verify_tls,
+                  s.total_cpu_cores, s.total_ram_mb, s.total_disk_gb,
                   s.status, s.last_seen_at, s.last_error, s.active, s.created_at,
                   sk.name AS ssh_key_name,
                   (s.sudo_password IS NOT NULL) AS has_sudo_password,
+                  (s.hv_secret_enc IS NOT NULL) AS has_hv_secret,
+                  (SELECT COUNT(*) FROM virtual_machines vm WHERE vm.hypervisor_id=s.id) AS vm_count,
                   m.cpu_percent, m.ram_percent, m.disk_percent, m.disks, m.uptime_seconds, m.collected_at,
                   m.net_rx_kbps, m.net_tx_kbps, m.process_count
            FROM servers s
@@ -101,8 +112,11 @@ async def create_server(tid: str, body: ServerIn, req: Request, user=Depends(get
                  (tenant_id, name, description, hostname, ip_address, os_type, os_name,
                   tags, environment, ssh_port, ssh_user, ssh_auth_type, ssh_key_id,
                   ssh_password, sudo_password, winrm_port, winrm_https, winrm_auth_type,
-                  winrm_user, winrm_password, connection_method, created_by)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+                  winrm_user, winrm_password, connection_method,
+                  hv_api_host, hv_api_port, hv_auth_id, hv_secret_enc, hv_verify_tls,
+                  created_by)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
+                       $22,$23,$24,$25,$26,$27)
                RETURNING id, name, ip_address, os_type, status""",
             tid, body.name, _n(body.description), _n(body.hostname), body.ipAddress,
             body.osType, _n(body.osName), body.tags, body.environment,
@@ -113,6 +127,9 @@ async def create_server(tid: str, body: ServerIn, req: Request, user=Depends(get
             _n(body.winrmUser),
             encrypt(body.winrmPassword) if body.winrmPassword else None,
             body.connectionMethod,
+            _n(body.hvApiHost), body.hvApiPort, _n(body.hvAuthId),
+            encrypt(body.hvSecret) if body.hvSecret else None,
+            body.hvVerifyTls,
             user["id"])
         await log_event("server.create", user_id=user["id"], username=user.get("username"),
                         tenant_id=tid, ip_address=_ip(req),
@@ -140,8 +157,12 @@ async def update_server(tid: str, sid: str, body: ServerUp, req: Request, user=D
              winrm_port=COALESCE($14,winrm_port), winrm_https=COALESCE($15,winrm_https),
              winrm_auth_type=COALESCE($16,winrm_auth_type), winrm_user=COALESCE($17,winrm_user),
              winrm_password = CASE WHEN $18::text IS NOT NULL THEN $18 ELSE winrm_password END,
-             connection_method=COALESCE($19,connection_method)
-           WHERE id=$20 AND tenant_id=$21 AND active=true
+             connection_method=COALESCE($19,connection_method),
+             hv_api_host=COALESCE($20,hv_api_host), hv_api_port=COALESCE($21,hv_api_port),
+             hv_auth_id=COALESCE($22,hv_auth_id),
+             hv_secret_enc = CASE WHEN $23::text IS NOT NULL THEN $23 ELSE hv_secret_enc END,
+             hv_verify_tls=COALESCE($24,hv_verify_tls)
+           WHERE id=$25 AND tenant_id=$26 AND active=true
            RETURNING id, name, ip_address, os_type""",
         _n(body.name), _n(body.description), _n(body.hostname), _n(body.ipAddress),
         _n(body.osName), body.tags, _n(body.environment),
@@ -151,12 +172,15 @@ async def update_server(tid: str, sid: str, body: ServerUp, req: Request, user=D
         body.winrmPort, body.winrmHttps, _n(body.winrmAuthType), _n(body.winrmUser),
         encrypt(body.winrmPassword) if body.winrmPassword else None,
         _n(body.connectionMethod),
+        _n(body.hvApiHost), body.hvApiPort, _n(body.hvAuthId),
+        encrypt(body.hvSecret) if body.hvSecret else None,
+        body.hvVerifyTls,
         sid, tid)
     if not row: raise HTTPException(404, "Server nije pronadjen")
     await log_event("server.update", user_id=user["id"], username=user.get("username"),
                     tenant_id=tid, ip_address=_ip(req),
                     resource_type="server", resource_id=sid,
-                    details=body.model_dump(exclude={"sshPassword", "sudoPassword", "winrmPassword"}, exclude_none=True))
+                    details=body.model_dump(exclude={"sshPassword", "sudoPassword", "winrmPassword", "hvSecret"}, exclude_none=True))
     return dict(row)
 
 
@@ -185,6 +209,7 @@ async def test_server(tid: str, sid: str, user=Depends(get_current_user)):
     if srv.get("ssh_password"):    srv["_ssh_password"]   = decrypt(srv["ssh_password"])
     if srv.get("sudo_password"):   srv["_sudo_password"]  = decrypt(srv["sudo_password"])
     if srv.get("winrm_password"):  srv["_winrm_password"] = decrypt(srv["winrm_password"])
+    if srv.get("hv_secret_enc"):   srv["_hv_secret"]      = decrypt(srv["hv_secret_enc"])
     # SSH primarno, auto-fallback na WinRM za Windows ako SSH konekcija ne uspe
     from app.services.conn_dispatch import test_connection
     return await test_connection(srv)
@@ -203,6 +228,7 @@ async def restart_server(tid: str, sid: str, req: Request, user=Depends(get_curr
     if srv.get("ssh_password"):    srv["_ssh_password"]   = decrypt(srv["ssh_password"])
     if srv.get("sudo_password"):   srv["_sudo_password"]  = decrypt(srv["sudo_password"])
     if srv.get("winrm_password"):  srv["_winrm_password"] = decrypt(srv["winrm_password"])
+    if srv.get("hv_secret_enc"):   srv["_hv_secret"]      = decrypt(srv["hv_secret_enc"])
 
     # Odlozena komanda — vraca odgovor PRE nego sto se konekcija prekine usled restarta
     # SSH primarno, auto-fallback na WinRM za Windows ako SSH konekcija ne uspe
@@ -245,6 +271,7 @@ async def server_processes(tid: str, sid: str, user=Depends(get_current_user)):
     if srv.get("ssh_password"):    srv["_ssh_password"]   = decrypt(srv["ssh_password"])
     if srv.get("sudo_password"):   srv["_sudo_password"]  = decrypt(srv["sudo_password"])
     if srv.get("winrm_password"):  srv["_winrm_password"] = decrypt(srv["winrm_password"])
+    if srv.get("hv_secret_enc"):   srv["_hv_secret"]      = decrypt(srv["hv_secret_enc"])
     try:
         # SSH primarno, auto-fallback na WinRM za Windows ako SSH konekcija ne uspe
         from app.services.conn_dispatch import list_processes
@@ -252,6 +279,20 @@ async def server_processes(tid: str, sid: str, user=Depends(get_current_user)):
         return {"osType": srv["os_type"], "processes": procs}
     except Exception as e:
         raise HTTPException(502, f"Ne mogu da dobijem listu procesa: {e}")
+
+
+@router.get("/{tid}/servers/{sid}/vms")
+async def server_vms(tid: str, sid: str, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user)
+    srv = await fetchrow(
+        "SELECT id, name FROM servers WHERE id=$1 AND tenant_id=$2 AND active=true", sid, tid)
+    if not srv:
+        raise HTTPException(404, "Server nije pronadjen")
+    rows = await fetch(
+        """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
+                  guest_os, ip_address, linked_server_id, last_seen_at
+           FROM virtual_machines WHERE hypervisor_id=$1 ORDER BY name""", sid)
+    return {"hypervisorName": srv["name"], "vms": [dict(r) for r in rows]}
 
 
 # ── SSH kljucevi ──────────────────────────────────────────────────────────────
