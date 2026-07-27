@@ -26,3 +26,5 @@ logs/
 .vscode/
 .idea/
 *.swp
+*.bak
+*.bak.*
