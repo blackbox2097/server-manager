@@ -122,10 +122,20 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
         </F>
         <F label="OS tip">
           <select className="input" value={form.osType}
-            onChange={e => set('osType', e.target.value)}>
+            onChange={e => {
+              const newType = e.target.value;
+              setForm(f => {
+                let hvApiPort = f.hvApiPort;
+                if (newType === 'esxi' && f.hvApiPort === 8006) hvApiPort = 443;
+                if (newType === 'proxmox' && f.hvApiPort === 443) hvApiPort = 8006;
+                return { ...f, osType: newType, hvApiPort: hvApiPort };
+              });
+            }}>
             <option value="linux">Linux</option>
             <option value="windows">Windows</option>
             <option value="proxmox">Proxmox (hipervizor)</option>
+            <option value="hyperv">Hyper-V (hipervizor)</option>
+            <option value="esxi">ESXi (hipervizor)</option>
           </select>
         </F>
         <F label="OS naziv">
@@ -152,10 +162,10 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
         </F>
       </div>
 
-      {form.osType === 'proxmox' && (
+      {(form.osType === 'proxmox' || form.osType === 'esxi') && (
         <div className="border border-gray-800 rounded-lg p-3 space-y-3">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
-            Proxmox API pristup
+            {form.osType === 'proxmox' ? 'Proxmox API pristup' : 'ESXi API pristup'}
           </p>
           <div className="grid grid-cols-2 gap-3">
             <F label="API host">
@@ -165,15 +175,15 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
             </F>
             <F label="Port">
               <input className="input" type="number" value={form.hvApiPort}
-                onChange={e => set('hvApiPort', parseInt(e.target.value) || 8006)} />
+                onChange={e => set('hvApiPort', parseInt(e.target.value) || (form.osType === 'proxmox' ? 8006 : 443))} />
             </F>
           </div>
-          <F label="Token ID">
+          <F label={form.osType === 'proxmox' ? 'Token ID' : 'Korisnik'}>
             <input className="input" value={form.hvAuthId}
               onChange={e => set('hvAuthId', e.target.value)}
-              placeholder="root@pam!servermanager" />
+              placeholder={form.osType === 'proxmox' ? 'root@pam!servermanager' : 'root'} />
           </F>
-          <F label="Token secret">
+          <F label={form.osType === 'proxmox' ? 'Token secret' : 'Lozinka'}>
             <input className="input" type="password" value={form.hvSecret}
               onChange={e => set('hvSecret', e.target.value)}
               placeholder={isEdit ? '(ostavi prazno da zadržiš stari)' : ''} />
@@ -185,10 +195,10 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
           </label>
         </div>
       )}
-      {(form.osType === 'linux' || form.osType === 'windows') && (
+      {(form.osType === 'linux' || form.osType === 'windows' || form.osType === 'hyperv') && (
         <div className="border border-gray-800 rounded-lg p-3 space-y-3">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
-            SSH konfiguracija{form.osType === 'windows' ? ' (za terminal — zahteva OpenSSH Server na Windows mašini)' : ''}
+            SSH konfiguracija{(form.osType === 'windows' || form.osType === 'hyperv') ? ' (zahteva OpenSSH Server na Windows mašini)' : ''}
           </p>
           <div className="grid grid-cols-3 gap-3">
             <F label="Port">
@@ -385,8 +395,8 @@ export default function Servers() {
 
   const openProcesses = (server) => setProcModalServer(server);
 
-  const hypervisors    = servers.filter(s => s.os_type === 'proxmox');
-  const regularServers = servers.filter(s => s.os_type !== 'proxmox');
+  const hypervisors    = servers.filter(s => ['proxmox', 'hyperv', 'esxi'].includes(s.os_type));
+  const regularServers = servers.filter(s => !['proxmox', 'hyperv', 'esxi'].includes(s.os_type));
 
   const columns = [
     { key: 'name', label: 'Server', render: s => (
@@ -396,10 +406,16 @@ export default function Servers() {
           {s.os_type === 'proxmox' && (
             <span className="text-xs bg-purple-900/40 text-purple-300 px-1.5 py-0.5 rounded">Proxmox</span>
           )}
+          {s.os_type === 'hyperv' && (
+            <span className="text-xs bg-blue-900/40 text-blue-300 px-1.5 py-0.5 rounded">Hyper-V</span>
+          )}
+          {s.os_type === 'esxi' && (
+            <span className="text-xs bg-orange-900/40 text-orange-300 px-1.5 py-0.5 rounded">ESXi</span>
+          )}
         </div>
         <div className="text-xs text-gray-500">
-          {s.ip_address} · {s.os_type === 'windows' ? '🪟 Windows' : s.os_type === 'proxmox' ? '🖥️ Hipervizor' : '🐧 Linux'}
-          {s.os_type !== 'proxmox' && s.virt_type && (
+          {s.ip_address} · {s.os_type === 'windows' ? '🪟 Windows' : s.os_type === 'proxmox' ? '🖥️ Hipervizor' : s.os_type === 'hyperv' ? '🖥️ Hipervizor (Hyper-V)' : s.os_type === 'esxi' ? '🖥️ Hipervizor (ESXi)' : '🐧 Linux'}
+          {!['proxmox', 'hyperv', 'esxi'].includes(s.os_type) && s.virt_type && (
             <> · <span className={s.virt_type === 'none' ? 'text-gray-600' : 'text-blue-400'}>
               {VIRT_LABELS[s.virt_type] || s.virt_type}
             </span></>
@@ -408,7 +424,7 @@ export default function Servers() {
       </div>
     )},
     { key: 'vms', label: 'VM', sortable: false, render: s => (
-      s.os_type === 'proxmox' ? (
+      ['proxmox', 'hyperv', 'esxi'].includes(s.os_type) ? (
         <button className="btn-secondary text-xs py-1 px-2 flex items-center gap-1.5"
           onClick={() => navigate(`/servers/${s.id}/vms`)} title="Prikazi VM listu">
           <Server size={12} />

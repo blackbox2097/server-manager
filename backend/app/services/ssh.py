@@ -365,8 +365,8 @@ async def _get_metrics_windows(server: dict) -> dict:
 
 
 async def get_metrics(server: dict) -> dict:
-    """Dispatch po os_type -- Linux i Windows sada oba idu preko SSH (paramiko)."""
-    if server.get("os_type") == "windows":
+    """Dispatch po os_type -- Linux, Windows i Hyper-V (host je Windows) idu preko SSH (paramiko)."""
+    if server.get("os_type") in ("windows", "hyperv"):
         return await _get_metrics_windows(server)
     return await _get_metrics_linux(server)
 
@@ -468,22 +468,79 @@ async def _test_connection_windows(server: dict) -> dict:
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
+async def list_vms_hyperv(server: dict) -> list[dict]:
+    """Lista Hyper-V VM-ova preko SSH (Get-VM cmdlet). Disk velicina i IP
+    adresa nisu ukljucene u prvoj verziji -- zahtevaju dodatne pozive
+    (Get-VHD / KVP), isto ogranicenje kao Proxmox VM lista."""
+    ps_lines = [
+        "$ErrorActionPreference='SilentlyContinue'",
+        "Get-VM | ForEach-Object {",
+        "  $vm=$_",
+        "  $mem=Get-VMMemory -VM $vm",
+        "  $ram=[math]::Round($mem.Startup/1MB)",
+        "  Write-Output \"$($vm.VMId)|$($vm.Name)|$($vm.State)|$($vm.ProcessorCount)|$ram\"",
+        "}",
+    ]
+    ps_script = "\r\n".join(ps_lines) + "\r\n"
+
+    def _run():
+        client = _connect(server)
+        try:
+            rand = "".join(random.choices(string.ascii_lowercase, k=8))
+            ts   = int(time.time() * 1000)
+            tmp  = f"C:/Windows/Temp/.sm_{ts}_{rand}.ps1"
+            _write_remote(client, tmp, ps_script, mode=0o700)
+            cmd = f'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{tmp}"'
+            stdout, stderr, code = _exec(client, cmd, timeout=30)
+            try:
+                sftp = client.open_sftp()
+                sftp.remove(tmp)
+                sftp.close()
+            except Exception:
+                pass
+
+            state_map = {"running": "running", "off": "stopped", "paused": "paused", "saved": "stopped"}
+            vms = []
+            for line in stdout.strip().split("\n"):
+                parts = line.strip().split("|")
+                if len(parts) < 5:
+                    continue
+                vmid, name, state, cpus, ram_mb = parts[:5]
+                try:
+                    vms.append({
+                        "vmIdOnHost": vmid.strip().strip("{}"),
+                        "name": name.strip(),
+                        "powerState": state_map.get(state.strip().lower(), "unknown"),
+                        "cpuCores": int(cpus.strip()) if cpus.strip().isdigit() else None,
+                        "ramMb": int(float(ram_mb.strip())) if ram_mb.strip() else None,
+                        "diskGb": None,
+                        "guestOs": None,
+                        "ipAddress": None,
+                    })
+                except ValueError:
+                    continue
+            return vms
+        finally:
+            client.close()
+    return await asyncio.get_event_loop().run_in_executor(None, _run)
+
+
 async def execute_script(server: dict, script_content: str) -> dict:
     """Dispatch po os_type -- izvrsavanje skripti sad uvek preko SSH."""
-    if server.get("os_type") == "windows":
+    if server.get("os_type") in ("windows", "hyperv"):
         return await _execute_script_windows(server, script_content)
     return await _execute_script_linux(server, script_content)
 
 
 async def list_processes(server: dict, limit: int = 50) -> list[dict]:
     """Dispatch po os_type -- lista procesa sad uvek preko SSH."""
-    if server.get("os_type") == "windows":
+    if server.get("os_type") in ("windows", "hyperv"):
         return await _list_processes_windows(server, limit)
     return await _list_processes_linux(server, limit)
 
 
 async def test_connection(server: dict) -> dict:
     """Dispatch po os_type -- test konekcije sad uvek preko SSH."""
-    if server.get("os_type") == "windows":
+    if server.get("os_type") in ("windows", "hyperv"):
         return await _test_connection_windows(server)
     return await _test_connection_linux(server)

@@ -231,13 +231,20 @@ async def sync_vms():
     Full-replace po hipervizoru -- jednostavnije od diff-a, prihvatljivo za
     ocekivan broj VM-ova po hostu."""
     rows = await fetch(
-        """SELECT * FROM servers WHERE active=true AND os_type IN ('proxmox')"""
+        """SELECT * FROM servers WHERE active=true AND os_type IN ('proxmox', 'hyperv', 'esxi')"""
     )
     for row in rows:
         srv = dict(row)
         if srv.get("hv_secret_enc"): srv["_hv_secret"] = decrypt(srv["hv_secret_enc"])
+        if srv.get("private_key_enc"): srv["_private_key"]  = decrypt(srv["private_key_enc"])
+        if srv.get("ssh_password"):    srv["_ssh_password"] = decrypt(srv["ssh_password"])
         try:
-            from app.services.proxmox import list_vms
+            if srv["os_type"] == "proxmox":
+                from app.services.proxmox import list_vms
+            elif srv["os_type"] == "esxi":
+                from app.services.esxi import list_vms
+            else:
+                from app.services.ssh import list_vms_hyperv as list_vms
             vms = await list_vms(srv)
         except Exception as e:
             logger.warning(f"VM sync neuspesan za {srv['name']}: {e}")

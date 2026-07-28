@@ -233,7 +233,7 @@ async def restart_server(tid: str, sid: str, req: Request, user=Depends(get_curr
     # Odlozena komanda — vraca odgovor PRE nego sto se konekcija prekine usled restarta
     # SSH primarno, auto-fallback na WinRM za Windows ako SSH konekcija ne uspe
     from app.services.conn_dispatch import execute_script
-    if srv["os_type"] == "windows":
+    if srv["os_type"] in ("windows", "hyperv"):
         cmd = 'shutdown /r /t 5 /f; Write-Output "RESTART_INITIATED"'
     else:
         cmd = "nohup bash -c 'sleep 1 && reboot' >/dev/null 2>&1 & disown; echo RESTART_INITIATED"

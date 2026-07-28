@@ -32,6 +32,9 @@ async def get_metrics(server: dict) -> dict:
     if server.get("os_type") == "proxmox":
         from app.services.proxmox import get_metrics as proxmox_get_metrics
         return await proxmox_get_metrics(server)
+    if server.get("os_type") == "esxi":
+        from app.services.esxi import get_metrics as esxi_get_metrics
+        return await esxi_get_metrics(server)
 
     method = _method(server)
     if method == "winrm":
@@ -49,7 +52,7 @@ async def get_metrics(server: dict) -> dict:
 
 
 async def execute_script(server: dict, script_content: str) -> dict:
-    if server.get("os_type") in ("proxmox", "esxi", "hyperv"):
+    if server.get("os_type") in ("proxmox", "esxi"):
         return {"exitCode": -1, "stdout": "", "stderr": _UNSUPPORTED_MSG, "durationMs": 0}
 
     method = _method(server)
@@ -71,6 +74,9 @@ async def test_connection(server: dict) -> dict:
     if server.get("os_type") == "proxmox":
         from app.services.proxmox import test_connection as proxmox_test_connection
         return await proxmox_test_connection(server)
+    if server.get("os_type") == "esxi":
+        from app.services.esxi import test_connection as esxi_test_connection
+        return await esxi_test_connection(server)
 
     method = _method(server)
     if method == "winrm":
@@ -88,7 +94,7 @@ async def test_connection(server: dict) -> dict:
 
 
 async def list_processes(server: dict, limit: int = 50) -> list[dict]:
-    if server.get("os_type") in ("proxmox", "esxi", "hyperv"):
+    if server.get("os_type") in ("proxmox", "esxi"):
         raise RuntimeError(_UNSUPPORTED_MSG)
 
     method = _method(server)
