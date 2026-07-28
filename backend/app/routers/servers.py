@@ -84,7 +84,7 @@ async def list_servers(tid: str, user=Depends(get_current_user)):
                   s.winrm_port, s.winrm_https, s.winrm_auth_type, s.winrm_user,
                   s.connection_method,
                   s.hv_api_host, s.hv_api_port, s.hv_auth_id, s.hv_verify_tls,
-                  s.total_cpu_cores, s.total_ram_mb, s.total_disk_gb,
+                  s.total_cpu_cores, s.total_ram_mb, s.total_disk_gb, s.virt_type,
                   s.status, s.last_seen_at, s.last_error, s.active, s.created_at,
                   sk.name AS ssh_key_name,
                   (s.sudo_password IS NOT NULL) AS has_sudo_password,

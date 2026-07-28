@@ -158,10 +158,10 @@ async def _poll(server: dict):
         await execute(
             """UPDATE servers SET status=$1, last_seen_at=NOW(), last_error=NULL, os_name=COALESCE($2,os_name),
                  total_cpu_cores=COALESCE($4,total_cpu_cores), total_ram_mb=COALESCE($5,total_ram_mb),
-                 total_disk_gb=COALESCE($6,total_disk_gb)
+                 total_disk_gb=COALESCE($6,total_disk_gb), virt_type=COALESCE($7,virt_type)
                WHERE id=$3""",
             display_status, m.get("osName"), srv["id"],
-            m.get("totalCpuCores"), m.get("totalRamMb"), m.get("totalDiskGb")
+            m.get("totalCpuCores"), m.get("totalRamMb"), m.get("totalDiskGb"), m.get("virtType")
         )
         await ws_manager.broadcast("metrics", {
             "serverId": str(srv["id"]), "tenantId": str(srv["tenant_id"]),

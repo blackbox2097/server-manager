@@ -107,6 +107,8 @@ async def _get_metrics_linux(server: dict) -> dict:
                 "ps -e --no-headers | wc -l",
                 'echo "---OSNAME---"',
                 ". /etc/os-release 2>/dev/null && echo \"$PRETTY_NAME\" || uname -sr",
+                'echo "---VIRT---"',
+                "systemd-detect-virt 2>/dev/null || echo none",
             ])
             stdout, stderr, code = _exec(client, cmd)
             if code != 0 and stderr and not stdout:
@@ -156,6 +158,7 @@ async def _get_metrics_linux(server: dict) -> dict:
                 "netTxBytes":    int(net_parts[1]) if len(net_parts) > 1 and net_parts[1].isdigit() else 0,
                 "processCount":  int(first("PROCS") or 0),
                 "osName":        first("OSNAME") or "Linux",
+                "virtType":      first("VIRT", "unknown"),
             }
         finally:
             client.close()
@@ -288,7 +291,10 @@ async def _get_metrics_windows(server: dict) -> dict:
         "$rx=($netStats | Measure-Object -Property ReceivedBytes -Sum).Sum",
         "$tx=($netStats | Measure-Object -Property SentBytes -Sum).Sum",
         "if (-not $rx) {$rx=0}; if (-not $tx) {$tx=0}",
-        "Write-Output \"SM_CPU:$cpu|SM_RAM:$ram|SM_DISK:$diskMax|SM_DISKS:$disksStr|SM_UP:$up|SM_PROCS:$procs|SM_RX:$rx|SM_TX:$tx|SM_OS:$($os.Caption)\"",
+        "$cs=Get-CimInstance Win32_ComputerSystem",
+        "$model=$cs.Model",
+        "$mfg=$cs.Manufacturer",
+        "Write-Output \"SM_CPU:$cpu|SM_RAM:$ram|SM_DISK:$diskMax|SM_DISKS:$disksStr|SM_UP:$up|SM_PROCS:$procs|SM_RX:$rx|SM_TX:$tx|SM_OS:$($os.Caption)|SM_MODEL:$model|SM_MFG:$mfg\"",
     ]
     ps_script = "\r\n".join(ps_lines) + "\r\n"
 
@@ -327,6 +333,19 @@ async def _get_metrics_windows(server: dict) -> dict:
                         disks.append({"name": name, "percent": min(100, max(0, float(pct)))})
                     except ValueError:
                         continue
+            model_str = f"{g('MFG') or ''} {g('MODEL') or ''}".lower()
+            if "qemu" in model_str or "kvm" in model_str:
+                virt_type = "kvm"
+            elif "vmware" in model_str:
+                virt_type = "vmware"
+            elif "virtual machine" in model_str:
+                virt_type = "microsoft"
+            elif "virtualbox" in model_str or "innotek" in model_str:
+                virt_type = "oracle"
+            elif "xen" in model_str:
+                virt_type = "xen"
+            else:
+                virt_type = "none"
             return {
                 "cpuPercent": min(100, int(g("CPU") or 0)),
                 "ramPercent": min(100, int(g("RAM") or 0)),
@@ -338,6 +357,7 @@ async def _get_metrics_windows(server: dict) -> dict:
                 "netTxBytes": int(g("TX") or 0),
                 "processCount": int(g("PROCS") or 0),
                 "osName": g("OS") or "Windows",
+                "virtType": virt_type,
             }
         finally:
             client.close()

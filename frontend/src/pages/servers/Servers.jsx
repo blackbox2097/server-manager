@@ -1,13 +1,23 @@
 // src/pages/servers/Servers.jsx
 import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit, Trash2, Plug, Server, TerminalSquare, ArrowDown, ArrowUp, Cpu, RotateCw } from 'lucide-react';
+import { Plus, Edit, Trash2, Plug, Server, TerminalSquare, ArrowDown, ArrowUp, Cpu, RotateCw, ExternalLink } from 'lucide-react';
 import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import {
   StatusBadge, MetricCell, DiskCell, Modal, ConfirmDialog,
   Alert, Spinner, Empty, Table, formatUptime, formatNetSpeed
 } from '../../components/ui';
+
+const VIRT_LABELS = {
+  none: 'Fizička',
+  kvm: 'Proxmox/KVM',
+  vmware: 'VMware',
+  microsoft: 'Hyper-V',
+  oracle: 'VirtualBox',
+  xen: 'Xen',
+  unknown: 'Nepoznato',
+};
 import ProcessListModal from '../../components/ProcessListModal';
 
 // ── ServerForm je na nivou modula — nikad se ne re-kreira
@@ -389,6 +399,11 @@ export default function Servers() {
         </div>
         <div className="text-xs text-gray-500">
           {s.ip_address} · {s.os_type === 'windows' ? '🪟 Windows' : s.os_type === 'proxmox' ? '🖥️ Hipervizor' : '🐧 Linux'}
+          {s.os_type !== 'proxmox' && s.virt_type && (
+            <> · <span className={s.virt_type === 'none' ? 'text-gray-600' : 'text-blue-400'}>
+              {VIRT_LABELS[s.virt_type] || s.virt_type}
+            </span></>
+          )}
         </div>
       </div>
     )},
@@ -461,6 +476,14 @@ export default function Servers() {
             <button className="btn-ghost py-1 px-2 text-yellow-500 hover:text-yellow-400"
               onClick={() => setRestartConfirm(s)} disabled={restarting === s.id} title="Restartuj server">
               {restarting === s.id ? <Spinner size={14} /> : <RotateCw size={14} />}
+            </button>
+          )}
+          {['proxmox', 'esxi'].includes(s.os_type) && s.hv_api_host && (
+            <button className="btn-ghost text-xs py-1 px-2 text-purple-400 hover:text-purple-300 flex items-center"
+              onClick={() => window.open(`https://${s.hv_api_host}:${s.hv_api_port || 8006}`, '_blank', 'noopener,noreferrer')}
+              title="Otvori management konzolu">
+              <ExternalLink size={12} />
+              <span className="ml-1">Manage</span>
             </button>
           )}
           <button className="btn-ghost py-1 px-2" onClick={() => openEdit(s)} title="Uredi">
