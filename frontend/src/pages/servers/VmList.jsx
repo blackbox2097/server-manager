@@ -102,7 +102,11 @@ export default function VmList() {
                 <span className="text-xs text-gray-400">{formatMb(v.ram_mb)}</span>
               )},
               { key: 'disk', label: 'Disk', sortValue: v => v.disk_gb, render: v => (
-                <span className="text-xs text-gray-400">{v.disk_gb != null ? `${v.disk_gb} GB` : '—'}</span>
+                <span className="text-xs text-gray-400">
+                  {v.disk_sizes_gb && v.disk_sizes_gb.length > 1
+                    ? v.disk_sizes_gb.map(d => `${d}GB`).join(', ')
+                    : (v.disk_gb != null ? `${v.disk_gb} GB` : '—')}
+                </span>
               )},
               { key: 'ip', label: 'IP adresa', sortable: false, render: v => (
                 <span className="text-xs text-gray-500">{v.ip_address || '—'}</span>

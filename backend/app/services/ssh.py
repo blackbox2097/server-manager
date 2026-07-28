@@ -469,16 +469,26 @@ async def _test_connection_windows(server: dict) -> dict:
 
 
 async def list_vms_hyperv(server: dict) -> list[dict]:
-    """Lista Hyper-V VM-ova preko SSH (Get-VM cmdlet). Disk velicina i IP
-    adresa nisu ukljucene u prvoj verziji -- zahtevaju dodatne pozive
-    (Get-VHD / KVP), isto ogranicenje kao Proxmox VM lista."""
+    """Lista Hyper-V VM-ova preko SSH (Get-VM cmdlet). IP adresa preko
+    Get-VMNetworkAdapter (zahteva Hyper-V Integration Services u gostu,
+    isti preduslov kao VMware Tools/QEMU Guest Agent). Velicina diska po
+    disku preko Get-VMHardDiskDrive + Get-VHD (konfigurisana/logicka
+    velicina, ne fizicka velicina fajla na disku)."""
     ps_lines = [
         "$ErrorActionPreference='SilentlyContinue'",
         "Get-VM | ForEach-Object {",
         "  $vm=$_",
         "  $mem=Get-VMMemory -VM $vm",
         "  $ram=[math]::Round($mem.Startup/1MB)",
-        "  Write-Output \"$($vm.VMId)|$($vm.Name)|$($vm.State)|$($vm.ProcessorCount)|$ram\"",
+        "  $ips=(Get-VMNetworkAdapter -VM $vm | Select-Object -ExpandProperty IPAddresses) -join ','",
+        "  if (-not $ips) { $ips='NONE' }",
+        "  $diskSizes=@()",
+        "  Get-VMHardDiskDrive -VM $vm | ForEach-Object {",
+        "    $vhd=Get-VHD -Path $_.Path -ErrorAction SilentlyContinue",
+        "    if ($vhd) { $diskSizes += [math]::Round($vhd.Size/1GB) }",
+        "  }",
+        "  $diskStr=($diskSizes -join ';'); if (-not $diskStr) { $diskStr='NONE' }",
+        "  Write-Output \"$($vm.VMId)|$($vm.Name)|$($vm.State)|$($vm.ProcessorCount)|$ram|$diskStr|$ips\"",
         "}",
     ]
     ps_script = "\r\n".join(ps_lines) + "\r\n"
@@ -491,7 +501,7 @@ async def list_vms_hyperv(server: dict) -> list[dict]:
             tmp  = f"C:/Windows/Temp/.sm_{ts}_{rand}.ps1"
             _write_remote(client, tmp, ps_script, mode=0o700)
             cmd = f'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{tmp}"'
-            stdout, stderr, code = _exec(client, cmd, timeout=30)
+            stdout, stderr, code = _exec(client, cmd, timeout=45)
             try:
                 sftp = client.open_sftp()
                 sftp.remove(tmp)
@@ -503,9 +513,25 @@ async def list_vms_hyperv(server: dict) -> list[dict]:
             vms = []
             for line in stdout.strip().split("\n"):
                 parts = line.strip().split("|")
-                if len(parts) < 5:
+                if len(parts) < 7:
                     continue
-                vmid, name, state, cpus, ram_mb = parts[:5]
+                vmid, name, state, cpus, ram_mb, disk_str, ips_str = parts[:7]
+
+                disk_sizes = []
+                if disk_str.strip() and disk_str.strip() != "NONE":
+                    for d in disk_str.strip().split(";"):
+                        try:
+                            disk_sizes.append(int(float(d)))
+                        except ValueError:
+                            continue
+                disk_gb = sum(disk_sizes) if disk_sizes else None
+
+                ip_address = None
+                if ips_str.strip() and ips_str.strip() != "NONE":
+                    ip_list = [ip.strip() for ip in ips_str.strip().split(",") if ip.strip()]
+                    ipv4s = [ip for ip in ip_list if "." in ip and ":" not in ip]
+                    ip_address = (ipv4s[0] if ipv4s else ip_list[0]) if ip_list else None
+
                 try:
                     vms.append({
                         "vmIdOnHost": vmid.strip().strip("{}"),
@@ -513,9 +539,10 @@ async def list_vms_hyperv(server: dict) -> list[dict]:
                         "powerState": state_map.get(state.strip().lower(), "unknown"),
                         "cpuCores": int(cpus.strip()) if cpus.strip().isdigit() else None,
                         "ramMb": int(float(ram_mb.strip())) if ram_mb.strip() else None,
-                        "diskGb": None,
+                        "diskGb": disk_gb,
+                        "diskSizesGb": disk_sizes or None,
                         "guestOs": None,
-                        "ipAddress": None,
+                        "ipAddress": ip_address,
                     })
                 except ValueError:
                     continue

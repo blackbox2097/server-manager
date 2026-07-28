@@ -167,14 +167,18 @@ async def list_vms(server: dict) -> list[dict]:
                     runtime = summary.runtime
                     guest = summary.guest
                     disk_gb = None
+                    disk_sizes_gb = None
                     try:
-                        disk_kb = sum(
+                        disk_sizes_kb = [
                             d.capacityInKB for d in vm.config.hardware.device
                             if isinstance(d, vim.vm.device.VirtualDisk)
-                        )
-                        disk_gb = round(disk_kb / (1024 ** 2)) if disk_kb else None
+                        ]
+                        if disk_sizes_kb:
+                            disk_sizes_gb = [round(kb / (1024 ** 2)) for kb in disk_sizes_kb]
+                            disk_gb = sum(disk_sizes_gb)
                     except Exception:
                         disk_gb = None
+                        disk_sizes_gb = None
                     vms.append({
                         "vmIdOnHost": str(cfg.instanceUuid or cfg.uuid or vm._moId),
                         "name": cfg.name,
@@ -182,6 +186,7 @@ async def list_vms(server: dict) -> list[dict]:
                         "cpuCores": cfg.numCpu,
                         "ramMb": cfg.memorySizeMB,
                         "diskGb": disk_gb,
+                        "diskSizesGb": disk_sizes_gb,
                         "guestOs": cfg.guestFullName,
                         "ipAddress": guest.ipAddress if guest else None,
                     })

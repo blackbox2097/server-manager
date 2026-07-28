@@ -290,7 +290,7 @@ async def server_vms(tid: str, sid: str, user=Depends(get_current_user)):
         raise HTTPException(404, "Server nije pronadjen")
     rows = await fetch(
         """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
-                  guest_os, ip_address, linked_server_id, last_seen_at
+                  disk_sizes_gb, guest_os, ip_address, linked_server_id, last_seen_at
            FROM virtual_machines WHERE hypervisor_id=$1 ORDER BY name""", sid)
     return {"hypervisorName": srv["name"], "vms": [dict(r) for r in rows]}
 
