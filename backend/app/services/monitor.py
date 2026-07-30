@@ -116,7 +116,7 @@ async def _log_status_transition(srv: dict, old_status: str, new_status: str,
     notify_srv = dict(srv)
     if error:
         notify_srv["last_error"] = error
-    asyncio.create_task(notify_server_status(notify_srv, old_status, new_status))
+    asyncio.create_task(notify_server_status(notify_srv, old_status, new_status, metrics=metrics))
 
 
 async def _poll(server: dict):
@@ -255,11 +255,12 @@ async def sync_vms():
                 await execute(
                     """INSERT INTO virtual_machines
                          (hypervisor_id, tenant_id, vm_id_on_host, name, power_state,
-                          cpu_cores, ram_mb, disk_gb, disk_sizes_gb, guest_os, ip_address, last_seen_at)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())""",
+                          cpu_cores, ram_mb, disk_gb, disk_sizes_gb, guest_os, ip_address,
+                          vm_type, last_seen_at)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())""",
                     srv["id"], srv["tenant_id"], vm["vmIdOnHost"], vm["name"], vm["powerState"],
                     vm.get("cpuCores"), vm.get("ramMb"), vm.get("diskGb"), vm.get("diskSizesGb"),
-                    vm.get("guestOs"), vm.get("ipAddress"),
+                    vm.get("guestOs"), vm.get("ipAddress"), vm.get("vmType", "vm"),
                 )
             logger.info(f"VM sync: {srv['name']} -- {len(vms)} VM/kontejnera")
         except Exception as e:

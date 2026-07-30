@@ -53,6 +53,8 @@
   .badge-yellow { @apply badge bg-yellow-900/50 text-yellow-400 border border-yellow-800/50; }
   .badge-gray   { @apply badge bg-gray-800 text-gray-400 border border-gray-700; }
   .badge-blue   { @apply badge bg-blue-900/50 text-blue-400 border border-blue-800/50; }
+  .badge-purple { @apply badge bg-purple-900/50 text-purple-400 border border-purple-800/50; }
+  .badge-orange { @apply badge bg-orange-900/50 text-orange-400 border border-orange-800/50; }
 
   .meter-bar {
     @apply h-1.5 rounded-full bg-gray-700 overflow-hidden;

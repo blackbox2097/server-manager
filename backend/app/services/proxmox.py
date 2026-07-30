@@ -124,6 +124,7 @@ async def list_vms(server: dict) -> list[dict]:
                     "diskGb": round(vm["maxdisk"] / (1024 ** 3)) if vm.get("maxdisk") else None,
                     "guestOs": None,
                     "ipAddress": None,
+                    "vmType": "vm",
                 })
 
             r = await client.get(f"/nodes/{node}/lxc")
@@ -138,6 +139,7 @@ async def list_vms(server: dict) -> list[dict]:
                     "diskGb": round(ct["maxdisk"] / (1024 ** 3)) if ct.get("maxdisk") else None,
                     "guestOs": "LXC",
                     "ipAddress": None,
+                    "vmType": "container",
                 })
 
             return vms

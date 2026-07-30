@@ -5,18 +5,27 @@ import { Plus, Edit, Trash2, Plug, Server, TerminalSquare, ArrowDown, ArrowUp, C
 import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import {
-  StatusBadge, MetricCell, DiskCell, Modal, ConfirmDialog,
+  StatusBadge, Badge, MetricCell, DiskCell, Modal, ConfirmDialog,
   Alert, Spinner, Empty, Table, formatUptime, formatNetSpeed
 } from '../../components/ui';
 
 const VIRT_LABELS = {
   none: 'Fizička',
-  kvm: 'Proxmox/KVM',
-  vmware: 'VMware',
-  microsoft: 'Hyper-V',
-  oracle: 'VirtualBox',
-  xen: 'Xen',
+  kvm: 'ProxMox VM',
+  vmware: 'ESXi VM',
+  microsoft: 'HyperV VM',
+  oracle: 'VirtualBox VM',
+  xen: 'Xen VM',
   unknown: 'Nepoznato',
+};
+
+const VIRT_COLORS = {
+  kvm: 'purple',
+  vmware: 'orange',
+  microsoft: 'blue',
+  oracle: 'gray',
+  xen: 'gray',
+  unknown: 'gray',
 };
 import ProcessListModal from '../../components/ProcessListModal';
 
@@ -403,33 +412,34 @@ export default function Servers() {
       <div>
         <div className="font-medium text-gray-200 flex items-center gap-2">
           {s.name}
-          {s.os_type === 'proxmox' && (
-            <span className="text-xs bg-purple-900/40 text-purple-300 px-1.5 py-0.5 rounded">Proxmox</span>
-          )}
-          {s.os_type === 'hyperv' && (
-            <span className="text-xs bg-blue-900/40 text-blue-300 px-1.5 py-0.5 rounded">Hyper-V</span>
-          )}
-          {s.os_type === 'esxi' && (
-            <span className="text-xs bg-orange-900/40 text-orange-300 px-1.5 py-0.5 rounded">ESXi</span>
+          {s.os_type === 'proxmox' && <Badge color="purple">Proxmox</Badge>}
+          {s.os_type === 'hyperv' && <Badge color="blue">Hyper-V</Badge>}
+          {s.os_type === 'esxi' && <Badge color="orange">ESXi</Badge>}
+          {!['proxmox', 'hyperv', 'esxi'].includes(s.os_type) && s.virt_type && s.virt_type !== 'none' && (
+            <Badge color={VIRT_COLORS[s.virt_type] || 'gray'}>{VIRT_LABELS[s.virt_type] || s.virt_type}</Badge>
           )}
         </div>
         <div className="text-xs text-gray-500">
           {s.ip_address} · {s.os_type === 'windows' ? '🪟 Windows' : s.os_type === 'proxmox' ? '🖥️ Hipervizor' : s.os_type === 'hyperv' ? '🖥️ Hipervizor (Hyper-V)' : s.os_type === 'esxi' ? '🖥️ Hipervizor (ESXi)' : '🐧 Linux'}
-          {!['proxmox', 'hyperv', 'esxi'].includes(s.os_type) && s.virt_type && (
-            <> · <span className={s.virt_type === 'none' ? 'text-gray-600' : 'text-blue-400'}>
-              {VIRT_LABELS[s.virt_type] || s.virt_type}
-            </span></>
-          )}
         </div>
       </div>
     )},
     { key: 'vms', label: 'VM', sortable: false, render: s => (
       ['proxmox', 'hyperv', 'esxi'].includes(s.os_type) ? (
-        <button className="btn-secondary text-xs py-1 px-2 flex items-center gap-1.5"
-          onClick={() => navigate(`/servers/${s.id}/vms`)} title="Prikazi VM listu">
-          <Server size={12} />
-          {s.vm_count ?? 0} VM
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button className="btn-secondary text-xs py-1 px-2 flex items-center gap-1.5"
+            onClick={() => navigate(`/servers/${s.id}/vms?type=vm`)} title="Prikazi VM listu">
+            <Server size={12} />
+            {s.vm_count ?? 0} VM
+          </button>
+          {s.os_type === 'proxmox' && (
+            <button className="btn-secondary text-xs py-1 px-2 flex items-center gap-1.5"
+              onClick={() => navigate(`/servers/${s.id}/vms?type=container`)} title="Prikazi listu kontejnera">
+              <Server size={12} />
+              {s.container_count ?? 0} LXC
+            </button>
+          )}
+        </div>
       ) : null
     )},
     { key: 'status', label: 'Status',   sortKey: 'status', render: s => <StatusBadge status={s.status} /> },
@@ -469,9 +479,9 @@ export default function Servers() {
           <span className="ml-1">Test</span>
         </button>
         {testResult[s.id] && (
-          <span className={testResult[s.id].ok ? 'text-green-400 text-xs' : 'text-red-400 text-xs'}>
+          <Badge color={testResult[s.id].ok ? 'green' : 'red'}>
             {testResult[s.id].ok ? '✓ OK' : '✗ Fail'}
-          </span>
+          </Badge>
         )}
       </div>
     )},
@@ -515,6 +525,7 @@ export default function Servers() {
   ];
 
   const hypervisorColumns = columns.filter(c => c.key !== 'procs');
+  const regularColumns = columns.filter(c => c.key !== 'vms');
 
   if (!tenantId) return <div className="text-gray-500 text-sm p-4">Odaberi tenant.</div>;
   if (loading)   return <div className="flex justify-center py-12"><Spinner size={28} className="text-brand-500" /></div>;
@@ -557,7 +568,7 @@ export default function Servers() {
                 <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Serveri</p>
               )}
               <div className="card p-0 overflow-hidden">
-                <Table columns={columns} rows={regularServers} />
+                <Table columns={regularColumns} rows={regularServers} />
               </div>
             </div>
           )}

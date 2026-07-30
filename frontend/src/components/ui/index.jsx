@@ -28,6 +28,15 @@ export function StatusBadge({ status }) {
   );
 }
 
+// ── Generički badge (pill) — isti .badge-* sistem kao StatusBadge ────────────
+const BADGE_CLASS = {
+  green: 'badge-green', red: 'badge-red', yellow: 'badge-yellow',
+  gray: 'badge-gray', blue: 'badge-blue', purple: 'badge-purple', orange: 'badge-orange',
+};
+export function Badge({ color = 'gray', children }) {
+  return <span className={BADGE_CLASS[color] || 'badge-gray'}>{children}</span>;
+}
+
 // ── Meter bar (CPU/RAM/Disk) ──────────────────────────────────────────────────
 export function MeterBar({ value, className }) {
   const color = value >= 90 ? 'bg-red-500'

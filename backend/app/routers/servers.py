@@ -89,7 +89,8 @@ async def list_servers(tid: str, user=Depends(get_current_user)):
                   sk.name AS ssh_key_name,
                   (s.sudo_password IS NOT NULL) AS has_sudo_password,
                   (s.hv_secret_enc IS NOT NULL) AS has_hv_secret,
-                  (SELECT COUNT(*) FROM virtual_machines vm WHERE vm.hypervisor_id=s.id) AS vm_count,
+                  (SELECT COUNT(*) FROM virtual_machines vm WHERE vm.hypervisor_id=s.id AND vm.vm_type='vm') AS vm_count,
+                  (SELECT COUNT(*) FROM virtual_machines vm WHERE vm.hypervisor_id=s.id AND vm.vm_type='container') AS container_count,
                   m.cpu_percent, m.ram_percent, m.disk_percent, m.disks, m.uptime_seconds, m.collected_at,
                   m.net_rx_kbps, m.net_tx_kbps, m.process_count
            FROM servers s
@@ -282,16 +283,22 @@ async def server_processes(tid: str, sid: str, user=Depends(get_current_user)):
 
 
 @router.get("/{tid}/servers/{sid}/vms")
-async def server_vms(tid: str, sid: str, user=Depends(get_current_user)):
+async def server_vms(tid: str, sid: str, vm_type: str | None = None, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user)
     srv = await fetchrow(
         "SELECT id, name FROM servers WHERE id=$1 AND tenant_id=$2 AND active=true", sid, tid)
     if not srv:
         raise HTTPException(404, "Server nije pronadjen")
-    rows = await fetch(
-        """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
-                  disk_sizes_gb, guest_os, ip_address, linked_server_id, last_seen_at
-           FROM virtual_machines WHERE hypervisor_id=$1 ORDER BY name""", sid)
+    if vm_type in ("vm", "container"):
+        rows = await fetch(
+            """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
+                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at
+               FROM virtual_machines WHERE hypervisor_id=$1 AND vm_type=$2 ORDER BY name""", sid, vm_type)
+    else:
+        rows = await fetch(
+            """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
+                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at
+               FROM virtual_machines WHERE hypervisor_id=$1 ORDER BY name""", sid)
     return {"hypervisorName": srv["name"], "vms": [dict(r) for r in rows]}
 
 
