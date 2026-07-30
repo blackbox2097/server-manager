@@ -504,7 +504,20 @@ async def list_vms_hyperv(server: dict) -> list[dict]:
         "    if ($vhd) { $diskSizes += [math]::Round($vhd.Size/1GB) }",
         "  }",
         "  $diskStr=($diskSizes -join ';'); if (-not $diskStr) { $diskStr='NONE' }",
-        "  Write-Output \"$($vm.VMId)|$($vm.Name)|$($vm.State)|$($vm.ProcessorCount)|$ram|$diskStr|$ips\"",
+        "  $osName=$null",
+        "  try {",
+        "    $kvp=Get-CimInstance -Namespace root\\virtualization\\v2 -ClassName Msvm_KvpExchangeComponent -Filter \"SystemName='$($vm.Id)'\" -ErrorAction SilentlyContinue",
+        "    foreach ($item in $kvp.GuestIntrinsicExchangeItems) {",
+        "      $xml=[xml]$item",
+        "      $nameProp=$xml.INSTANCE.PROPERTY | Where-Object { $_.NAME -eq 'Name' -and $_.VALUE -eq 'OSName' }",
+        "      if ($nameProp) {",
+        "        $dataProp=$xml.INSTANCE.PROPERTY | Where-Object { $_.NAME -eq 'Data' }",
+        "        $osName=$dataProp.VALUE",
+        "      }",
+        "    }",
+        "  } catch {}",
+        "  if (-not $osName) { $osName='NONE' }",
+        "  Write-Output \"$($vm.VMId)|$($vm.Name)|$($vm.State)|$($vm.ProcessorCount)|$ram|$diskStr|$ips|$osName\"",
         "}",
     ]
     ps_script = "\r\n".join(ps_lines) + "\r\n"
@@ -532,6 +545,7 @@ async def list_vms_hyperv(server: dict) -> list[dict]:
                 if len(parts) < 7:
                     continue
                 vmid, name, state, cpus, ram_mb, disk_str, ips_str = parts[:7]
+                os_name_str = parts[7].strip() if len(parts) > 7 else "NONE"
 
                 disk_sizes = []
                 if disk_str.strip() and disk_str.strip() != "NONE":
@@ -557,7 +571,7 @@ async def list_vms_hyperv(server: dict) -> list[dict]:
                         "ramMb": int(float(ram_mb.strip())) if ram_mb.strip() else None,
                         "diskGb": disk_gb,
                         "diskSizesGb": disk_sizes or None,
-                        "guestOs": None,
+                        "guestOs": os_name_str if os_name_str and os_name_str != "NONE" else None,
                         "ipAddress": ip_address,
                     })
                 except ValueError:

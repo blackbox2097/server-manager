@@ -1,7 +1,7 @@
 // src/pages/servers/VmList.jsx
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Server } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Server, Plus } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 import api from '../../services/api';
 import { Table, Spinner, Empty } from '../../components/ui';
@@ -24,8 +24,17 @@ export default function VmList() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const vmType = searchParams.get('type'); // 'vm' | 'container' | null (sve)
-  const { activeTenant } = useAuthStore();
+  const { activeTenant, hasPerm } = useAuthStore();
   const tenantId = activeTenant?.id;
+  const canManage = hasPerm('perm_servers_manage');
+
+  const handleAddAsServer = (vm) => {
+    const params = new URLSearchParams();
+    params.set('addName', vm.name);
+    if (vm.ip_address) params.set('addIp', vm.ip_address);
+    if (vm.guest_os) params.set('addOs', vm.guest_os);
+    navigate(`/servers?${params.toString()}`);
+  };
 
   const [hypervisorName, setHypervisorName] = useState('');
   const [vms, setVms] = useState([]);
@@ -117,6 +126,19 @@ export default function VmList() {
               { key: 'ip', label: 'IP adresa', sortable: false, render: v => (
                 <span className="text-xs text-gray-500">{v.ip_address || '—'}</span>
               )},
+              ...(canManage ? [{
+                key: 'actions', label: '', sortable: false, render: v => (
+                  v.linked_server_id ? (
+                    <span className="text-xs text-gray-600" title="Već povezan sa serverom">Povezan</span>
+                  ) : (
+                    <button className="btn-ghost text-xs py-1 px-2 flex items-center gap-1 flex-shrink-0"
+                      onClick={() => handleAddAsServer(v)} title="Dodaj kao server">
+                      <Plus size={12} />
+                      Dodaj kao server
+                    </button>
+                  )
+                )
+              }] : []),
             ]}
             rows={vms}
           />

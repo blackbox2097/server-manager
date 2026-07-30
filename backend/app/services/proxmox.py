@@ -104,6 +104,32 @@ async def get_metrics(server: dict) -> dict:
         raise ProxmoxConnectionError(f"Proxmox API konekcija neuspesna: {e}") from e
 
 
+_QEMU_OSTYPE_LABELS = {
+    "l26": "Linux", "l24": "Linux (starije jezgro)",
+    "win11": "Windows 11", "win10": "Windows 10", "win8": "Windows 8",
+    "win7": "Windows 7", "w2k8": "Windows Server 2008", "w2k3": "Windows Server 2003",
+    "w2k": "Windows 2000", "wxp": "Windows XP", "wvista": "Windows Vista",
+    "solaris": "Solaris", "other": "Nepoznato",
+}
+_LXC_OSTYPE_LABELS = {
+    "ubuntu": "Ubuntu", "debian": "Debian", "alpine": "Alpine",
+    "centos": "CentOS", "fedora": "Fedora", "opensuse": "openSUSE",
+    "archlinux": "Arch Linux", "gentoo": "Gentoo", "unmanaged": "Nepoznato",
+}
+
+
+async def _get_ostype(client, node: str, kind: str, vmid) -> str | None:
+    """Dodatni poziv po VM-u za citanje ostype iz config-a (namerno prihvacen
+    trosak -- isti kompromis kao sto je ranije odbijen disk_sizes_gb za
+    Proxmox, ali OS tip je vredniji podatak operateru)."""
+    try:
+        r = await client.get(f"/nodes/{node}/{kind}/{vmid}/config")
+        r.raise_for_status()
+        return r.json().get("data", {}).get("ostype")
+    except Exception:
+        return None
+
+
 async def list_vms(server: dict) -> list[dict]:
     """Lista VM-ova (qemu) i kontejnera (lxc) na Proxmox node-u.
     Vraca listu dict-ova spremnih za upis u virtual_machines tabelu."""
@@ -115,6 +141,7 @@ async def list_vms(server: dict) -> list[dict]:
             r = await client.get(f"/nodes/{node}/qemu")
             r.raise_for_status()
             for vm in r.json().get("data", []):
+                ostype = await _get_ostype(client, node, "qemu", vm["vmid"])
                 vms.append({
                     "vmIdOnHost": str(vm["vmid"]),
                     "name": vm.get("name") or f"vm-{vm['vmid']}",
@@ -122,7 +149,7 @@ async def list_vms(server: dict) -> list[dict]:
                     "cpuCores": vm.get("cpus"),
                     "ramMb": round(vm["maxmem"] / (1024 * 1024)) if vm.get("maxmem") else None,
                     "diskGb": round(vm["maxdisk"] / (1024 ** 3)) if vm.get("maxdisk") else None,
-                    "guestOs": None,
+                    "guestOs": _QEMU_OSTYPE_LABELS.get(ostype, ostype),
                     "ipAddress": None,
                     "vmType": "vm",
                 })
@@ -130,6 +157,7 @@ async def list_vms(server: dict) -> list[dict]:
             r = await client.get(f"/nodes/{node}/lxc")
             r.raise_for_status()
             for ct in r.json().get("data", []):
+                ostype = await _get_ostype(client, node, "lxc", ct["vmid"])
                 vms.append({
                     "vmIdOnHost": str(ct["vmid"]),
                     "name": ct.get("name") or f"ct-{ct['vmid']}",
@@ -137,7 +165,7 @@ async def list_vms(server: dict) -> list[dict]:
                     "cpuCores": ct.get("cpus"),
                     "ramMb": round(ct["maxmem"] / (1024 * 1024)) if ct.get("maxmem") else None,
                     "diskGb": round(ct["maxdisk"] / (1024 ** 3)) if ct.get("maxdisk") else None,
-                    "guestOs": "LXC",
+                    "guestOs": _LXC_OSTYPE_LABELS.get(ostype, ostype.capitalize() if ostype else None),
                     "ipAddress": None,
                     "vmType": "container",
                 })

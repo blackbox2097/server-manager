@@ -1,6 +1,6 @@
 // src/pages/servers/Servers.jsx
 import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Edit, Trash2, Plug, Server, TerminalSquare, ArrowDown, ArrowUp, Cpu, RotateCw, ExternalLink } from 'lucide-react';
 import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
@@ -36,7 +36,7 @@ function F({ label, children }) {
   return <div><label className="label">{label}</label>{children}</div>;
 }
 
-const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClose }) {
+const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClose, existingServers = [] }) {
   const server = serverRef.current;
   const isEdit = !!server?.id;
 
@@ -87,6 +87,11 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  // Meko upozorenje (ne blokira cuvanje) — vec postoji server sa istom IP adresom
+  const ipDuplicateServer = form.ipAddress
+    ? existingServers.find(s => s.ip_address === form.ipAddress && s.id !== server?.id)
+    : null;
+
   const handleSave = async () => {
     if (!form.name || !form.ipAddress) { setError('Naziv i IP adresa su obavezni'); return; }
     setSaving(true); setError('');
@@ -123,6 +128,11 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
           <input className="input" value={form.ipAddress}
             onChange={e => set('ipAddress', e.target.value)}
             placeholder="10.0.1.10" />
+          {ipDuplicateServer && (
+            <p className="text-xs text-yellow-500 mt-1">
+              ⚠ IP adresa već postoji na serveru "{ipDuplicateServer.name}" — dozvoljeno, ali proveri da nije greška.
+            </p>
+          )}
         </F>
         <F label="Hostname">
           <input className="input" value={form.hostname}
@@ -326,6 +336,7 @@ export default function Servers() {
   const tenantId  = activeTenant?.id;
   const canManage = hasPerm('perm_servers_manage');
   const canTerminal = hasPerm('perm_scripts_run');
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [servers,    setServers]    = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -352,8 +363,28 @@ export default function Servers() {
 
   useEffect(() => { fetchServers(); }, [fetchServers]);
 
+  // Prefil "Dodaj server" forme kad se stigne sa VM liste ("Dodaj kao server" dugme)
+  useEffect(() => {
+    const addName = searchParams.get('addName');
+    if (!addName || !canManage) return;
+    const addOs = searchParams.get('addOs') || '';
+    openAddPrefilled({
+      name: addName,
+      ip_address: searchParams.get('addIp') || '',
+      os_type: /win/i.test(addOs) ? 'windows' : 'linux',
+    });
+    setSearchParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, canManage]);
+
   const openAdd = useCallback(() => {
     editServerRef.current = null;
+    setModalTitle('Dodaj server');
+    setModalOpen(true);
+  }, []);
+
+  const openAddPrefilled = useCallback((prefill) => {
+    editServerRef.current = prefill;
     setModalTitle('Dodaj server');
     setModalOpen(true);
   }, []);
@@ -581,6 +612,7 @@ export default function Servers() {
           tenantId={tenantId}
           onSave={handleSave}
           onClose={closeModal}
+          existingServers={servers}
         />
       </Modal>
 
