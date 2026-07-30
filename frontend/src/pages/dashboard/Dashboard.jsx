@@ -2,13 +2,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Server, Wifi, WifiOff, AlertTriangle, PlayCircle,
-  CheckCircle2, XCircle, Loader2, Terminal as TerminalIcon, Mail, FileText
+  Server, Wifi, WifiOff, AlertTriangle, PlayCircle, CheckCircle2,
+  XCircle, Loader2, Terminal as TerminalIcon, Mail, FileText, X
 } from 'lucide-react';
 import api from '../../services/api';
 import ws from '../../services/ws';
 import useAuthStore from '../../store/authStore';
-import { StatusBadge, MeterBar, DiskCell, Spinner, formatUptime } from '../../components/ui';
+import { MeterBar, DiskCell, Spinner, formatUptime } from '../../components/ui';
 import { LogRow } from '../servers/Logs';
 
 function StatCard({ icon: Icon, label, value, color = 'text-gray-100' }) {
@@ -50,47 +50,57 @@ function timeAgo(iso) {
   return `pre ${Math.floor(diff / 86400)}d`;
 }
 
-// Redosled prioriteta pri sortiranju servera — problemi na vrhu
-const STATUS_PRIORITY = { offline: 0, warning: 1, unknown: 2, online: 3 };
-
 export default function Dashboard() {
-  const { activeTenant, accessToken, user, hasPerm } = useAuthStore();
+  const { accessToken, user, hasPerm } = useAuthStore();
   const navigate = useNavigate();
 
-  const [servers,    setServers]    = useState([]);
-  const [executions, setExecutions] = useState([]);
-  const [recentLogs, setRecentLogs] = useState([]);
+  const [stats,       setStats]       = useState({ total: 0, online: 0, warning: 0, offline: 0, envCounts: {}, osCounts: {} });
+  const [problems,    setProblems]    = useState([]);
+  const [executions,  setExecutions]  = useState([]);
+  const [recentLogs,  setRecentLogs]  = useState([]);
   const [sendingReport, setSendingReport] = useState(null);
-  const [loading,    setLoading]    = useState(true);
-  const [liveData,   setLiveData]   = useState({});  // serverId -> latest metrics
+  const [dismissing,  setDismissing]  = useState(null);
+  const [loading,     setLoading]     = useState(true);
 
-  const tenantId = activeTenant?.id || (user?.role === 'superadmin' ? '__admin__' : null);
   const canRunScripts = hasPerm('perm_scripts_run');
 
-  const fetchData = useCallback(async () => {
-    if (!tenantId || tenantId === '__admin__') { setLoading(false); return; }
+  const fetchProblems = useCallback(async () => {
     try {
-      const [monRes, execRes, logRes] = await Promise.all([
-        api.get(`/tenants/${tenantId}/monitoring`),
-        api.get(`/tenants/${tenantId}/executions?limit=5`).catch(() => ({ data: [] })),
-        api.get(`/tenants/${tenantId}/logs?limit=6`).catch(() => ({ data: [] })),
+      const { data } = await api.get('/dashboard/problems');
+      setProblems(data);
+    } catch {}
+  }, []);
+
+  const fetchAll = useCallback(async () => {
+    try {
+      const [statsRes, probRes, execRes, logRes] = await Promise.all([
+        api.get('/dashboard/stats').catch(() => ({ data: null })),
+        api.get('/dashboard/problems').catch(() => ({ data: [] })),
+        api.get('/dashboard/executions?limit=5').catch(() => ({ data: [] })),
+        api.get('/dashboard/logs?limit=6').catch(() => ({ data: [] })),
       ]);
-      setServers(monRes.data);
+      if (statsRes.data) setStats(statsRes.data);
+      setProblems(probRes.data);
       setExecutions(execRes.data);
       setRecentLogs(logRes.data);
-
-      const init = {};
-      monRes.data.forEach(s => {
-        if (s.cpu_percent != null) {
-          init[s.id] = { cpu: s.cpu_percent, ram: s.ram_percent, disk: s.disk_percent, disks: s.disks, uptime: s.uptime_seconds };
-        }
-      });
-      setLiveData(init);
     } catch {}
     setLoading(false);
-  }, [tenantId]);
+  }, []);
 
-  const handleSendReport = async (execId) => {
+  const handleDismiss = async (serverId) => {
+    setDismissing(serverId);
+    const prevProblems = problems;
+    setProblems(prev => prev.filter(p => p.id !== serverId)); // optimisticno
+    try {
+      await api.post(`/dashboard/dismiss/${serverId}`);
+    } catch {
+      setProblems(prevProblems); // vrati ako je dismiss neuspesan
+    } finally {
+      setDismissing(null);
+    }
+  };
+
+  const handleSendReport = async (execId, tenantId) => {
     setSendingReport(execId);
     try {
       await api.post(`/tenants/${tenantId}/executions/${execId}/send-report`);
@@ -102,28 +112,45 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    fetchData();
+    fetchAll();
 
     const unsub = ws.on('metrics', (data) => {
-      if (data.tenantId !== tenantId) return;
-      setServers(prev => prev.map(s =>
-        s.id === data.serverId ? { ...s, status: data.status, last_seen_at: new Date().toISOString() } : s
-      ));
-      if (data.metrics) {
-        setLiveData(prev => ({ ...prev, [data.serverId]: data.metrics }));
-      }
+      setProblems(prev => {
+        const idx = prev.findIndex(p => p.id === data.serverId);
+        if (data.status === 'online') {
+          // oporavak — vise nije problem, ukloni ako je bio prikazan
+          return idx === -1 ? prev : prev.filter(p => p.id !== data.serverId);
+        }
+        if (data.status === 'warning' || data.status === 'offline') {
+          if (idx === -1) {
+            // nov problem koji lista jos nema (treba nam ime/tenant/itd.) — dovuci ceo spisak
+            fetchProblems();
+            return prev;
+          }
+          const next = [...prev];
+          next[idx] = {
+            ...next[idx], status: data.status, last_error: data.error || null,
+            cpu_percent: data.metrics?.cpu ?? next[idx].cpu_percent,
+            ram_percent: data.metrics?.ram ?? next[idx].ram_percent,
+            disk_percent: data.metrics?.disk ?? next[idx].disk_percent,
+            disks: data.metrics?.disks ?? next[idx].disks,
+            uptime_seconds: data.metrics?.uptime ?? next[idx].uptime_seconds,
+          };
+          return next;
+        }
+        return prev;
+      });
     });
 
-    const unsubExec = ws.on('exec_finished', (data) => {
-      if (data.tenantId !== tenantId) return;
-      fetchData();
+    const unsubExec = ws.on('exec_finished', () => {
+      api.get('/dashboard/executions?limit=5').then(r => setExecutions(r.data)).catch(() => {});
     });
 
     if (accessToken) ws.connect(accessToken);
 
     return () => { unsub(); unsubExec(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, accessToken]);
+  }, [accessToken]);
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">
@@ -131,120 +158,123 @@ export default function Dashboard() {
     </div>
   );
 
-  if (!activeTenant && user?.role !== 'superadmin') return (
-    <div className="flex flex-col items-center justify-center h-64 text-center">
-      <Server size={40} className="text-gray-700 mb-3" />
-      <p className="text-gray-400">Nemaš dodeljenih tenanata.</p>
-      <p className="text-sm text-gray-600 mt-1">Kontaktiraj superadmina.</p>
-    </div>
-  );
+  if (!user) return null;
 
-  const online  = servers.filter(s => s.status === 'online').length;
-  const warning = servers.filter(s => s.status === 'warning').length;
-  const offline = servers.filter(s => s.status === 'offline').length;
-  const total   = servers.length;
-
-  // Serveri sa problemima na vrhu liste
-  const sortedServers = [...servers].sort((a, b) =>
-    (STATUS_PRIORITY[a.status] ?? 2) - (STATUS_PRIORITY[b.status] ?? 2)
-  );
-
-  // Pregled po okruzenju i OS-u
-  const envCounts = servers.reduce((acc, s) => {
-    acc[s.environment] = (acc[s.environment] || 0) + 1;
-    return acc;
-  }, {});
-  const osCounts = servers.reduce((acc, s) => {
-    acc[s.os_type] = (acc[s.os_type] || 0) + 1;
-    return acc;
-  }, {});
+  // Grupisanje problema po tenantu, ocuvavajuci redosled sa backend-a
+  const groups = [];
+  const groupIndex = new Map();
+  for (const p of problems) {
+    if (!groupIndex.has(p.tenant_id)) {
+      groupIndex.set(p.tenant_id, groups.length);
+      groups.push({ tenantId: p.tenant_id, tenantName: p.tenant_name, items: [] });
+    }
+    groups[groupIndex.get(p.tenant_id)].items.push(p);
+  }
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-lg font-semibold text-gray-100">
-          {activeTenant?.name || 'Dashboard'}
-        </h1>
-        <p className="text-sm text-gray-500 mt-0.5">Pregled infrastrukture</p>
+        <h1 className="text-lg font-semibold text-gray-100">Dashboard</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Pregled infrastrukture — svi tenanti</p>
       </div>
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard icon={Server}        label="Ukupno servera"  value={total}   />
-        <StatCard icon={Wifi}          label="Online"          value={online}   color="text-green-400" />
-        <StatCard icon={AlertTriangle} label="Upozorenje"      value={warning}  color="text-yellow-400" />
-        <StatCard icon={WifiOff}       label="Offline"         value={offline}  color="text-red-400" />
+        <StatCard icon={Server}        label="Ukupno servera"  value={stats.total}   />
+        <StatCard icon={Wifi}          label="Online"          value={stats.online}   color="text-green-400" />
+        <StatCard icon={AlertTriangle} label="Upozorenje"      value={stats.warning}  color="text-yellow-400" />
+        <StatCard icon={WifiOff}       label="Offline"         value={stats.offline}  color="text-red-400" />
       </div>
 
       {/* Okruzenje / OS pregled */}
-      {total > 0 && (
+      {stats.total > 0 && (
         <div className="flex flex-wrap gap-2">
-          {Object.entries(envCounts).map(([env, count]) => (
+          {Object.entries(stats.envCounts).map(([env, count]) => (
             <span key={env} className="badge-gray">
               {env === 'production' ? 'Production' : env === 'staging' ? 'Staging' : 'Dev'}: {count}
             </span>
           ))}
-          {Object.entries(osCounts).map(([os, count]) => (
+          {Object.entries(stats.osCounts).map(([os, count]) => (
             <span key={os} className="badge-gray">
-              {os === 'windows' ? '🪟 Windows' : '🐧 Linux'}: {count}
+              {os === 'windows' ? '🪟 Windows' : os === 'proxmox' ? '🖥️ Proxmox' : os === 'hyperv' ? '🖥️ Hyper-V' : os === 'esxi' ? '🖥️ ESXi' : '🐧 Linux'}: {count}
             </span>
           ))}
         </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Server lista — problemi na vrhu */}
+        {/* Problematicni serveri — cross-tenant, grupisano */}
         <div className="lg:col-span-2 card p-0 overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-800">
-            <h2 className="text-sm font-medium text-gray-300">Serveri</h2>
+            <h2 className="text-sm font-medium text-gray-300">Problematični serveri</h2>
           </div>
-          {sortedServers.length === 0 ? (
-            <div className="py-12 text-center text-gray-600 text-sm">Nema servera u ovom tenantu</div>
+          {groups.length === 0 ? (
+            <div className="py-12 text-center text-gray-600 text-sm flex flex-col items-center gap-2">
+              <CheckCircle2 size={28} className="text-green-600" />
+              Sve je u redu — nema aktivnih problema
+            </div>
           ) : (
-            <div className="divide-y divide-gray-800/50">
-              {sortedServers.map(server => {
-                const live = liveData[server.id];
-                return (
-                  <div key={server.id} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800/30 transition-colors">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-gray-200 truncate">{server.name}</span>
-                        <span className="text-xs text-gray-600">{server.ip_address}</span>
-                      </div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <StatusBadge status={server.status} />
-                        <span className="text-xs text-gray-600">{server.os_type === 'windows' ? '🪟 Windows' : '🐧 Linux'}</span>
-                        {live?.uptime && <span className="text-xs text-gray-600">↑ {formatUptime(live.uptime)}</span>}
-                      </div>
-                    </div>
-                    {live && server.status !== 'offline' && (
-                      <div className="hidden sm:flex items-center gap-4">
-                        {[['CPU', live.cpu], ['RAM', live.ram]].map(([lbl, val]) => (
-                          <div key={lbl} className="w-20">
-                            <div className="flex justify-between text-xs text-gray-500 mb-1">
-                              <span>{lbl}</span><span>{Math.round(val || 0)}%</span>
-                            </div>
-                            <MeterBar value={val} />
-                          </div>
-                        ))}
-                        <div className="w-20">
-                          <DiskCell value={live.disk} disks={live.disks} />
-                        </div>
-                      </div>
-                    )}
-                    {server.status === 'offline' && (
-                      <span className="text-xs text-gray-600 hidden sm:block">
-                        {server.last_error?.slice(0, 40) || 'Nedostupan'}
-                      </span>
-                    )}
+            <div>
+              {groups.map(group => (
+                <div key={group.tenantId}>
+                  <div className="px-4 py-1.5 bg-gray-900/50 text-[11px] font-medium text-gray-500 uppercase tracking-wider">
+                    {group.tenantName}
                   </div>
-                );
-              })}
+                  <div className="divide-y divide-gray-800/50">
+                    {group.items.map(server => (
+                      <div key={server.id} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800/30 transition-colors">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-200 truncate">{server.name}</span>
+                            <span className="text-xs text-gray-600">{server.ip_address}</span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className={server.status === 'offline' ? 'badge-red' : 'badge-yellow'}>
+                              <span className="w-1.5 h-1.5 rounded-full bg-current inline-block mr-1" />
+                              {server.status === 'offline' ? 'Offline' : 'Upozorenje'}
+                            </span>
+                            <span className="text-xs text-gray-600">{server.os_type === 'windows' ? '🪟 Windows' : '🐧 Linux'}</span>
+                            {server.uptime_seconds != null && server.status !== 'offline' && (
+                              <span className="text-xs text-gray-600">↑ {formatUptime(server.uptime_seconds)}</span>
+                            )}
+                          </div>
+                        </div>
+                        {server.status !== 'offline' ? (
+                          <div className="hidden sm:flex items-center gap-4">
+                            {[['CPU', server.cpu_percent], ['RAM', server.ram_percent]].map(([lbl, val]) => (
+                              <div key={lbl} className="w-20">
+                                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                                  <span>{lbl}</span><span>{Math.round(val || 0)}%</span>
+                                </div>
+                                <MeterBar value={val} />
+                              </div>
+                            ))}
+                            <div className="w-20">
+                              <DiskCell value={server.disk_percent} disks={server.disks} />
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-600 hidden sm:block max-w-[200px] truncate">
+                            {server.last_error?.slice(0, 40) || 'Nedostupan'}
+                          </span>
+                        )}
+                        <button
+                          className="btn-ghost py-1.5 px-1.5 text-gray-600 hover:text-gray-300 flex-shrink-0"
+                          disabled={dismissing === server.id}
+                          onClick={() => handleDismiss(server.id)}
+                          title="Sakrij (ponovo se pojavljuje pri sledecoj promeni statusa)">
+                          {dismissing === server.id ? <Spinner size={14} /> : <X size={14} />}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
 
-        {/* Poslednja izvrsavanja + Poslednje aktivnosti */}
+        {/* Poslednja izvrsavanja + Poslednje aktivnosti — cross-tenant */}
         <div className="space-y-4">
         <div className="card p-0 overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
@@ -270,6 +300,9 @@ export default function Dashboard() {
                     <span className="text-sm text-gray-200 truncate">{exec.script_name}</span>
                     <ExecStatusBadge status={exec.status} />
                   </div>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="badge-gray text-xs">{exec.tenant_name}</span>
+                  </div>
                   <div className="flex items-center justify-between mt-1">
                     <span className="text-xs text-gray-600">
                       {exec.server_count} server{exec.server_count === 1 ? '' : 'a'}
@@ -287,7 +320,7 @@ export default function Dashboard() {
                     <button
                       className="text-xs text-brand-400 hover:text-brand-300 hover:underline mt-1 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                       disabled={sendingReport === exec.id}
-                      onClick={() => handleSendReport(exec.id)}>
+                      onClick={() => handleSendReport(exec.id, exec.tenant_id)}>
                       {sendingReport === exec.id ? <Loader2 size={11} className="animate-spin" /> : <Mail size={11} />}
                       Pošalji izveštaj mejlom
                     </button>
@@ -298,7 +331,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Poslednje aktivnosti (audit log) */}
+        {/* Poslednje aktivnosti (audit log) — cross-tenant */}
         <div className="card p-0 overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
             <h2 className="text-sm font-medium text-gray-300 flex items-center gap-1.5">
@@ -315,7 +348,7 @@ export default function Dashboard() {
             </div>
           ) : (
             <div>
-              {recentLogs.map(log => <LogRow key={log.id} log={log} />)}
+              {recentLogs.map(log => <LogRow key={log.id} log={log} showTenant />)}
             </div>
           )}
         </div>

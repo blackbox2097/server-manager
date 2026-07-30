@@ -1,6 +1,6 @@
 // src/components/layout/Layout.jsx
 import React, { useState, useEffect } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
   Server, Activity, Terminal, BookOpen, Users,
   ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail, FileText, Database, Zap
@@ -101,34 +101,27 @@ function ChangePasswordModal({ open, onClose }) {
 }
 
 // ── Tenant selector ───────────────────────────────────────────────────────────
-function TenantSelector({ tenants, activeTenant, setActiveTenant, onRefresh, loading }) {
+function TopTenantSelector({ tenants, activeTenant, setActiveTenant, onRefresh, loading }) {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="px-3 py-3 border-b border-gray-800">
-      <div className="flex items-center justify-between mb-1.5 px-1">
-        <p className="text-xs text-gray-600">Aktivni tenant</p>
-        <button onClick={onRefresh} className="text-gray-700 hover:text-gray-400 transition-colors" title="Osvezi listu tenanata">
-          <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
-        </button>
-      </div>
+    <div className="flex items-center gap-2 px-4 lg:px-6 py-2.5 border-b border-gray-800 flex-shrink-0">
+      <span className="text-xs text-gray-600 flex-shrink-0">Tenant:</span>
       <div className="relative">
         <button
           onClick={() => setOpen(o => !o)}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm transition-colors">
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-sm transition-colors">
           {activeTenant ? (
             <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: activeTenant.color || '#6366f1' }} />
           ) : (
             <span className="w-2 h-2 rounded-full flex-shrink-0 bg-gray-600" />
           )}
-          <span className="flex-1 text-left text-gray-100 truncate">
-            {activeTenant?.name || '— Odaberi tenant —'}
-          </span>
+          <span className="text-gray-100">{activeTenant?.name || '— Odaberi tenant —'}</span>
           <ChevronDown size={14} className="text-gray-500 flex-shrink-0" />
         </button>
 
         {open && (
-          <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg overflow-hidden z-20 max-h-48 overflow-y-auto">
+          <div className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-lg overflow-hidden z-20 max-h-48 overflow-y-auto min-w-[200px]">
             {tenants.length === 0 ? (
               <div className="px-3 py-2 text-xs text-gray-600">Nema tenanata — kreiraj u Admin panelu</div>
             ) : (
@@ -148,6 +141,9 @@ function TenantSelector({ tenants, activeTenant, setActiveTenant, onRefresh, loa
           </div>
         )}
       </div>
+      <button onClick={onRefresh} className="text-gray-700 hover:text-gray-400 transition-colors flex-shrink-0" title="Osvezi listu tenanata">
+        <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+      </button>
     </div>
   );
 }
@@ -163,6 +159,8 @@ export default function Layout({ children }) {
   const [refreshing,   setRefreshing]   = useState(false);
 
   const isSuperadmin = user?.role === 'superadmin';
+  const location = useLocation();
+  const hideTenantSelector = location.pathname === '/dashboard' || location.pathname.startsWith('/admin');
 
   // Osvezi listu tenanata (korisno kad superadmin doda novi tenant)
   const refreshTenants = async () => {
@@ -230,15 +228,6 @@ export default function Layout({ children }) {
           </button>
         </div>
 
-        {/* Tenant selector — prikazuje se i superadminu i operateru */}
-        <TenantSelector
-          tenants={tenants}
-          activeTenant={activeTenant}
-          setActiveTenant={setActiveTenant}
-          onRefresh={refreshTenants}
-          loading={refreshing}
-        />
-
         {/* Navigacija */}
         <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
           {navItems.map(item => <NavItem key={item.to} {...item} />)}
@@ -298,6 +287,15 @@ export default function Layout({ children }) {
           </button>
           <span className="font-medium text-sm">Server Manager</span>
         </div>
+        {!hideTenantSelector && (
+          <TopTenantSelector
+            tenants={tenants}
+            activeTenant={activeTenant}
+            setActiveTenant={setActiveTenant}
+            onRefresh={refreshTenants}
+            loading={refreshing}
+          />
+        )}
         <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 lg:p-6 min-w-0">
           {children}
         </main>
