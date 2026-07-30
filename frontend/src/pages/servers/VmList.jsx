@@ -1,6 +1,6 @@
 // src/pages/servers/VmList.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Server } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 import api from '../../services/api';
@@ -22,6 +22,8 @@ const POWER_LABELS = {
 export default function VmList() {
   const { serverId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const vmType = searchParams.get('type'); // 'vm' | 'container' | null (sve)
   const { activeTenant } = useAuthStore();
   const tenantId = activeTenant?.id;
 
@@ -34,16 +36,18 @@ export default function VmList() {
     if (!tenantId) return;
     setLoading(true);
     try {
-      const { data } = await api.get(`/tenants/${tenantId}/servers/${serverId}/vms`);
+      const { data } = await api.get(`/tenants/${tenantId}/servers/${serverId}/vms`, {
+        params: vmType ? { vm_type: vmType } : {},
+      });
       setHypervisorName(data.hypervisorName);
       setVms(data.vms);
       setError('');
     } catch (err) {
-      setError(err.response?.data?.detail || 'Greška pri učitavanju VM liste');
+      setError(err.response?.data?.detail || 'Greška pri učitavanju liste');
     } finally {
       setLoading(false);
     }
-  }, [tenantId, serverId]);
+  }, [tenantId, serverId, vmType]);
 
   useEffect(() => { fetchVms(); }, [fetchVms]);
 
@@ -58,9 +62,11 @@ export default function VmList() {
           </button>
           <div className="min-w-0">
             <h1 className="text-lg font-semibold text-gray-100 truncate">
-              Virtuelne mašine {hypervisorName && `— ${hypervisorName}`}
+              {vmType === 'container' ? 'Kontejneri' : vmType === 'vm' ? 'Virtuelne mašine' : 'Virtuelne mašine'} {hypervisorName && `— ${hypervisorName}`}
             </h1>
-            <p className="text-xs text-gray-500">{vms.length} VM/kontejnera</p>
+            <p className="text-xs text-gray-500">
+              {vms.length} {vmType === 'container' ? 'kontejnera' : vmType === 'vm' ? 'VM' : 'VM/kontejnera'}
+            </p>
           </div>
         </div>
         <button className="btn-ghost py-1.5 px-2" onClick={fetchVms} title="Osveži" disabled={loading}>
@@ -73,8 +79,8 @@ export default function VmList() {
       ) : error ? (
         <div className="text-red-400 text-sm p-4">{error}</div>
       ) : vms.length === 0 ? (
-        <Empty icon={Server} title="Nema VM-ova"
-          subtitle="Ovaj hipervizor trenutno nema VM-ova ili kontejnera, ili sinhronizacija još nije prošla (osvežava se svakih 5 min)." />
+        <Empty icon={Server} title={vmType === 'container' ? 'Nema kontejnera' : 'Nema VM-ova'}
+          subtitle="Ovaj hipervizor trenutno nema stavki ovog tipa, ili sinhronizacija još nije prošla (osvežava se svakih 5 min)." />
       ) : (
         <div className="card p-0 overflow-hidden">
           <Table

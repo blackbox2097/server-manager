@@ -103,6 +103,108 @@ function detailsSummary(log) {
   return null;
 }
 
+function detailsExpanded(log) {
+  const d = log.details;
+  if (!d) return null;
+  const STATUS_LABELS = { unknown: 'nepoznato', online: 'online', warning: 'upozorenje', offline: 'offline' };
+
+  if (log.action === 'server.status_warning' || log.action === 'server.status_offline') {
+    return (
+      <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
+        {d.name && <div>Server: <span className="text-gray-300">{d.name}</span></div>}
+        {(d.from || d.to) && (
+          <div>Status: {STATUS_LABELS[d.from] || d.from} -&gt; {STATUS_LABELS[d.to] || d.to}</div>
+        )}
+        {d.cpuPercent != null && (
+          <div className={d.cpuPercent >= 90 ? 'text-red-400 font-medium' : ''}>
+            CPU: {Math.round(d.cpuPercent)}%{d.cpuPercent >= 90 ? ' (prag prekoracen)' : ''}
+          </div>
+        )}
+        {d.ramPercent != null && (
+          <div className={d.ramPercent >= 90 ? 'text-red-400 font-medium' : ''}>
+            RAM: {Math.round(d.ramPercent)}%{d.ramPercent >= 90 ? ' (prag prekoracen)' : ''}
+          </div>
+        )}
+        {d.diskPercent != null && (
+          <div className={d.diskPercent >= 90 ? 'text-red-400 font-medium' : ''}>
+            Disk: {Math.round(d.diskPercent)}%{d.diskPercent >= 90 ? ' (prag prekoracen)' : ''}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (log.action === 'server.recovery' || (log.action === 'server.status_online' && d.from && d.from !== 'unknown')) {
+    const duration = formatDuration(d.durationSeconds);
+    return (
+      <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
+        {d.name && (
+          <div>
+            Server: <span className="text-gray-300">{d.name}</span>
+            {d.from && <> - bio u stanju "{d.from === 'warning' ? 'upozorenje' : 'offline'}"</>}
+          </div>
+        )}
+        {duration && <div>Trajanje problema: {duration}</div>}
+      </div>
+    );
+  }
+
+  if (log.action === 'script.execute') {
+    const servers = (d.serverNames || []).join(', ');
+    return (
+      <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
+        {d.scriptName && <div>Skripta: <span className="text-gray-300">{d.scriptName}</span></div>}
+        {servers && <div>Server{d.serverNames?.length > 1 ? 'i' : ''}: {servers}</div>}
+        {(d.successCount != null || d.errorCount != null) && (
+          <div>
+            Rezultat: <span className="text-green-400">{d.successCount ?? 0} uspesno</span>
+            {d.errorCount > 0 && <span className="text-red-400">, {d.errorCount} neuspesno</span>}
+          </div>
+        )}
+        {d.contentPreview && (
+          <div className="font-mono text-gray-500 whitespace-pre-wrap break-all mt-1">$ {d.contentPreview}</div>
+        )}
+      </div>
+    );
+  }
+
+  if (['server.create', 'server.update', 'server.delete', 'server.restart'].includes(log.action) && d.name) {
+    return (
+      <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
+        <div>Server: <span className="text-gray-300">{d.name}</span></div>
+        {d.ipAddress && <div>IP adresa: {d.ipAddress}</div>}
+        {d.osType && <div>OS tip: {d.osType}</div>}
+      </div>
+    );
+  }
+
+  if (log.action.startsWith('server.status_') && d.name) {
+    return (
+      <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
+        <div>Server: <span className="text-gray-300">{d.name}</span> ({STATUS_LABELS[d.from] || d.from} -&gt; {STATUS_LABELS[d.to] || d.to})</div>
+      </div>
+    );
+  }
+
+  if (log.action.startsWith('schedule.') && d.name) {
+    return (
+      <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
+        <div>Zakazivanje: <span className="text-gray-300">{d.name}</span></div>
+      </div>
+    );
+  }
+
+  if (log.action.startsWith('script.') && log.action !== 'script.execute' && d.name) {
+    return (
+      <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
+        <div>Skripta: <span className="text-gray-300">{d.name}</span></div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 export function LogRow({ log, showTenant = false }) {
   const [expanded, setExpanded] = useState(false);
   const hasDetails = log.details && Object.keys(log.details).length > 0;
@@ -136,9 +238,11 @@ export function LogRow({ log, showTenant = false }) {
       </div>
       {expanded && hasDetails && (
         <div className="px-4 pb-3 pl-10">
-          <pre className="text-xs text-gray-500 bg-gray-900 rounded-lg p-2 overflow-x-auto">
-            {JSON.stringify(log.details, null, 2)}
-          </pre>
+          {detailsExpanded(log) || (
+            <pre className="text-xs text-gray-500 bg-gray-900 rounded-lg p-2 overflow-x-auto">
+              {JSON.stringify(log.details, null, 2)}
+            </pre>
+          )}
         </div>
       )}
     </div>

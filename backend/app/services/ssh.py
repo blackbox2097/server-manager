@@ -405,23 +405,39 @@ async def _execute_script_windows(server: dict, script_content: str) -> dict:
 
 
 async def _list_processes_windows(server: dict, limit: int = 50) -> list[dict]:
-    """Lista Windows procesa preko SSH (PowerShell). Zamena za winrm.list_processes."""
+    """Lista Windows procesa preko SSH (PowerShell). Zamena za winrm.list_processes.
+    Koristi .ps1-preko-SFTP izvrsavanje (isti obrazac kao ostale Windows funkcije)
+    umesto inline -Command stringa -- izbegava sudar navodnika koji je lomio
+    PowerShell parsiranje ("Expressions are only allowed as the first element
+    of a pipeline")."""
+    ps_lines = [
+        "$ErrorActionPreference='SilentlyContinue'",
+        "$os=Get-CimInstance Win32_OperatingSystem",
+        "$totalKB=$os.TotalVisibleMemorySize",
+        f"Get-Process | Sort-Object CPU -Descending | Select-Object -First {int(limit)} | ForEach-Object {{",
+        "  $rssKb=[math]::Round($_.WorkingSet64/1KB)",
+        "  $memPct=if($totalKB -gt 0){[math]::Round(($rssKb/$totalKB)*100,1)}else{0}",
+        "  $cpuVal=if($_.CPU){[math]::Round($_.CPU,1)}else{0}",
+        "  Write-Output \"$($_.Id)|$($_.ProcessName)|$cpuVal|$memPct|$rssKb\"",
+        "}",
+    ]
+    ps_script = "\r\n".join(ps_lines) + "\r\n"
+
     def _run():
         client = _connect(server)
         try:
-            ps = (
-                "$ErrorActionPreference='SilentlyContinue'\n"
-                "$os=Get-CimInstance Win32_OperatingSystem\n"
-                "$totalKB=$os.TotalVisibleMemorySize\n"
-                f"Get-Process | Sort-Object CPU -Descending | Select-Object -First {int(limit)} | ForEach-Object {{\n"
-                "  $rssKb=[math]::Round($_.WorkingSet64/1KB)\n"
-                "  $memPct=if($totalKB -gt 0){[math]::Round(($rssKb/$totalKB)*100,1)}else{0}\n"
-                "  $cpuVal=if($_.CPU){[math]::Round($_.CPU,1)}else{0}\n"
-                "  \"$($_.Id)|$($_.ProcessName)|$cpuVal|$memPct|$rssKb\"\n"
-                "}\n"
-            )
-            cmd = f'powershell -NoProfile -NonInteractive -Command "{ps}"'
+            rand = "".join(random.choices(string.ascii_lowercase, k=8))
+            ts   = int(time.time() * 1000)
+            tmp  = f"C:/Windows/Temp/.sm_{ts}_{rand}.ps1"
+            _write_remote(client, tmp, ps_script, mode=0o700)
+            cmd = f'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{tmp}"'
             stdout, stderr, code = _exec(client, cmd, timeout=15)
+            try:
+                sftp = client.open_sftp()
+                sftp.remove(tmp)
+                sftp.close()
+            except Exception:
+                pass
             if code != 0 and stderr and not stdout:
                 raise RuntimeError(stderr[:200])
             procs = []

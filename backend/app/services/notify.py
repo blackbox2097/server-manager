@@ -70,7 +70,7 @@ def _status_label(s: str) -> str:
     return {"online": "ONLINE", "offline": "OFFLINE", "warning": "UPOZORENJE", "unknown": "NEPOZNATO"}.get(s, s)
 
 
-async def notify_server_status(server: dict, old_status: str, new_status: str):
+async def notify_server_status(server: dict, old_status: str, new_status: str, metrics: dict | None = None):
     """Poziva se iz monitor.py pri promeni statusa servera."""
     if old_status == new_status:
         return
@@ -101,12 +101,27 @@ async def notify_server_status(server: dict, old_status: str, new_status: str):
     kind = "OFFLINE" if is_offline else ("OPORAVAK" if is_recovery else "UPOZORENJE")
     color = "#ef4444" if is_offline else ("#22c55e" if is_recovery else "#eab308")
 
+    metrics_html = ""
+    if metrics:
+        parts = []
+        for label, key in (("CPU", "cpuPercent"), ("RAM", "ramPercent"), ("Disk", "diskPercent")):
+            val = metrics.get(key)
+            if val is None:
+                continue
+            is_high = val >= 90
+            style = "color:#ef4444; font-weight:600;" if is_high else "color:#374151;"
+            marker = " \u26a0" if is_high else ""
+            parts.append(f'<span style="{style}">{label}: {round(val)}%{marker}</span>')
+        if parts:
+            metrics_html = f'<p><strong>Metrike:</strong> {" &nbsp;|&nbsp; ".join(parts)}</p>'
+
     subject = f"[Server Manager] {kind}: {server['name']}"
     body = f"""
     <div style="font-family: -apple-system, sans-serif; max-width: 500px;">
       <h2 style="color:{color};">{kind}: {server['name']}</h2>
       <p><strong>Server:</strong> {server['name']} ({server['ip_address']})</p>
       <p><strong>Status:</strong> {_status_label(old_status)} → {_status_label(new_status)}</p>
+      {metrics_html}
       {f"<p><strong>Greška:</strong> {server.get('last_error', '')[:300]}</p>" if is_offline and server.get('last_error') else ""}
       <p style="color:#888; font-size:12px; margin-top:20px;">Server Manager — automatska obavest</p>
     </div>
