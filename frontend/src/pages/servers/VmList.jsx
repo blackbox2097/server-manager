@@ -1,5 +1,5 @@
 // src/pages/servers/VmList.jsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Server, Plus } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
@@ -27,6 +27,15 @@ export default function VmList() {
   const { activeTenant, hasPerm } = useAuthStore();
   const tenantId = activeTenant?.id;
   const canManage = hasPerm('perm_servers_manage');
+
+  // Ako operater promeni tenant dok je na VM listi, server sa ove stranice
+  // ne pripada novom tenantu -- vrati na listu servera umesto greske.
+  const initialTenantId = useRef(tenantId);
+  useEffect(() => {
+    if (tenantId !== initialTenantId.current) {
+      navigate('/servers');
+    }
+  }, [tenantId, navigate]);
 
   const handleAddAsServer = (vm) => {
     const params = new URLSearchParams();
