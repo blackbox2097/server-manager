@@ -18,12 +18,26 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+# Paramiko na INFO nivou loguje svaku SSH konekciju/autentifikaciju/sftp
+# sesiju -- sa vise desetina servera na 30s poll intervalu ovo generise
+# ogromnu kolicinu suma i gusi stvarno korisne poruke. Nasa app i dalje
+# loguje sve svoje INFO poruke normalno.
+logging.getLogger("paramiko").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Server Manager pokrenut")
+    # Python-ov podrazumevani thread pool (min(32, cpu_count()+4)) je premali
+    # za nas obim paralelnih blokirajucih poziva (SSH/WinRM/ESXi monitoring +
+    # terminal sesije + notify/backup, svi dele run_in_executor(None, ...)).
+    # Eksplicitno podesi veci dedicated pool pre nego sto bilo sta krene.
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=cfg.executor_max_workers))
+    logger.info(f"Thread pool podesen na {cfg.executor_max_workers} worker-a")
     await init_db()
     logger.info("Baza dostupna")
     from app.services.monitor import start

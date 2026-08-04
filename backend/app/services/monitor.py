@@ -191,6 +191,33 @@ async def _poll(server: dict):
             await _log_status_transition(srv, old_status, "offline", error=err)
 
 
+async def _poll_guarded(server: dict):
+    """Omotac oko _poll() sa tvrdim watchdog timeout-om. Ako _poll() ikad
+    zaglavi bez bacanja izuzetka (npr. mrezni "crni otvor" koji konfigurisani
+    connect/exec timeout-i nisu pokrili), ovo garantuje da ce taj SERVER biti
+    markiran offline i da ce batch/ciklus nastaviti dalje -- umesto da ceo
+    scheduler posao ostane "zauvek zauzet" i da APScheduler tiho preskace sve
+    naredne pokusaje (max_instances=1 podrazumevano)."""
+    cfg = get_settings()
+    try:
+        await asyncio.wait_for(_poll(server), timeout=cfg.poll_watchdog_sec)
+    except asyncio.TimeoutError:
+        err = f"Watchdog timeout ({cfg.poll_watchdog_sec}s) -- poll nije zavrsen na vreme"
+        logger.error(f"{server.get('name', server.get('id'))}: {err}")
+        try:
+            old_status = server.get("status")
+            confirmed = _confirm_status(server["id"], old_status, "offline")
+            display_status = confirmed or old_status or "offline"
+            await execute("UPDATE servers SET status=$1, last_error=$2 WHERE id=$3",
+                          display_status, err, server["id"])
+            await ws_manager.broadcast("metrics", {
+                "serverId": str(server["id"]), "tenantId": str(server["tenant_id"]),
+                "status": display_status, "error": err,
+            }, tenant_id=str(server["tenant_id"]))
+        except Exception:
+            logger.exception(f"Greska pri obradi watchdog timeout-a za {server.get('name')}")
+
+
 async def poll_all():
     cfg = get_settings()
     try:
@@ -206,7 +233,7 @@ async def poll_all():
         return
     mp = cfg.monitor_max_parallel
     for i in range(0, len(rows), mp):
-        await asyncio.gather(*[_poll(dict(r)) for r in rows[i:i+mp]], return_exceptions=True)
+        await asyncio.gather(*[_poll_guarded(dict(r)) for r in rows[i:i+mp]], return_exceptions=True)
 
 
 async def poll_single(server_id: str):

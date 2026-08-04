@@ -22,6 +22,8 @@ class Settings(BaseSettings):
 
     monitor_interval_sec:   int = 30
     monitor_max_parallel:   int = 20
+    poll_watchdog_sec:      int = 120  # tvrdi limit po serveru -- sprecava da jedan zaglavljeni
+                                        # poll (bez bacenog izuzetka) zamrzne ceo monitoring ciklus
     metrics_retention_days: int = 7
     log_retention_days:     int = 30
     status_debounce_polls:  int = 2
@@ -33,6 +35,11 @@ class Settings(BaseSettings):
     ssh_exec_timeout_ms:      int = 300000
     winrm_connect_timeout_ms: int = 15000
     winrm_exec_timeout_ms:    int = 300000
+
+    # Dedicated thread pool za sve blokirajuce pozive (SSH/WinRM/ESXi, terminal
+    # sesije, notify) -- Python-ov podrazumevani pool (min(32, cpu+4)) je
+    # premali za monitor_max_parallel + otvorene terminal sesije istovremeno.
+    executor_max_workers: int = 50
 
     data_dir:     str = "/var/lib/servermanager"
     log_dir:      str = "/var/log/servermanager"
