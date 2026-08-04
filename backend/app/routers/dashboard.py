@@ -2,11 +2,26 @@
 # Cross-tenant "samo problemi" dashboard -- agregira stanje preko svih tenanta
 # na koje ulogovan operater ima pristup (superadmin = svi tenanti).
 
+import socket
+from datetime import datetime, timezone
+import psutil
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.database import fetch, fetchrow, execute
 from app.services.auth import get_current_user
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+
+@router.get("/host-status")
+async def host_status(user=Depends(get_current_user)):
+    """Sat + CPU/RAM zauzece masine na kojoj SAMA APLIKACIJA radi (ne
+    monitorisanih servera -- za to postoji /problems)."""
+    return {
+        "time": datetime.now(timezone.utc).isoformat(),
+        "cpuPercent": psutil.cpu_percent(interval=None),
+        "ramPercent": psutil.virtual_memory().percent,
+        "hostname": socket.gethostname(),
+    }
 
 
 async def _accessible_tenant_ids(user: dict) -> list[str] | None:

@@ -11,6 +11,51 @@ import useAuthStore from '../../store/authStore';
 import { MeterBar, DiskCell, Spinner, formatUptime } from '../../components/ui';
 import { LogRow } from '../servers/Logs';
 
+function HostStatusBar() {
+  const [now, setNow] = useState(new Date());
+  const [host, setHost] = useState(null);
+
+  useEffect(() => {
+    const clockTimer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(clockTimer);
+  }, []);
+
+  useEffect(() => {
+    const fetchHost = () => api.get('/dashboard/host-status').then(r => setHost(r.data)).catch(() => {});
+    fetchHost();
+    const t = setInterval(fetchHost, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  const timeStr = now.toLocaleTimeString('sr-RS');
+  const dateStr = now.toLocaleDateString('sr-RS', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  return (
+    <div className="card flex items-center justify-between flex-wrap gap-4 py-3">
+      <div>
+        <p className="text-2xl font-semibold text-gray-100 tabular-nums">{timeStr}</p>
+        <p className="text-xs text-gray-500 capitalize">{dateStr}</p>
+      </div>
+      {host && (
+        <div className="flex items-center gap-4">
+          <div className="w-28">
+            <div className="flex justify-between text-xs text-gray-500 mb-1">
+              <span>CPU (app server)</span><span>{Math.round(host.cpuPercent)}%</span>
+            </div>
+            <MeterBar value={host.cpuPercent} />
+          </div>
+          <div className="w-28">
+            <div className="flex justify-between text-xs text-gray-500 mb-1">
+              <span>RAM (app server)</span><span>{Math.round(host.ramPercent)}%</span>
+            </div>
+            <MeterBar value={host.ramPercent} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatCard({ icon: Icon, label, value, color = 'text-gray-100' }) {
   return (
     <div className="card flex items-center gap-4">
@@ -177,6 +222,8 @@ export default function Dashboard() {
         <h1 className="text-lg font-semibold text-gray-100">Dashboard</h1>
         <p className="text-sm text-gray-500 mt-0.5">Pregled infrastrukture — svi tenanti</p>
       </div>
+
+      <HostStatusBar />
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

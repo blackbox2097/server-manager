@@ -38,6 +38,11 @@ async def lifespan(app: FastAPI):
     asyncio.get_running_loop().set_default_executor(
         ThreadPoolExecutor(max_workers=cfg.executor_max_workers))
     logger.info(f"Thread pool podesen na {cfg.executor_max_workers} worker-a")
+    # "Zagrej" psutil.cpu_percent -- prvi poziv sa interval=None UVEK vraca 0.0
+    # (nema prethodnog uzorka za poredjenje), naredni pozivi su tacni i brzi
+    # (ne blokiraju, nema sleep-a).
+    import psutil
+    psutil.cpu_percent(interval=None)
     await init_db()
     logger.info("Baza dostupna")
     from app.services.monitor import start

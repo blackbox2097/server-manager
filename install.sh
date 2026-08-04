@@ -467,7 +467,8 @@ setup_python() {
         aiohttp==3.9.5 \
         apscheduler==3.10.4 \
         requests==2.31.0 \
-        requests-ntlm==1.3.0
+        requests-ntlm==1.3.0 \
+        psutil==5.9.8
 
     # Provjeri
     "${VENV_DIR}/bin/python" -c "
