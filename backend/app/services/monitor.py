@@ -15,6 +15,12 @@ scheduler = AsyncIOScheduler()
 # server_id -> {"rx": int, "tx": int, "ts": float}
 _net_prev: dict[str, dict] = {}
 
+# Vreme (time.time()) poslednjeg POKUSAJA poll-a po serveru (uspesnog ili ne) --
+# koristi se za per-server interval gating u poll_all(). Odvojeno od last_seen_at
+# u bazi (koje pamti samo poslednji USPESAN poll) da ne bi neuspesni/offline
+# server bio gadjan na svaki tick umesto na svoj interval.
+_last_polled: dict[str, float] = {}
+
 # Debounce kes za promene statusa — izbegava "flapping" alarme za kratke skokove.
 # Promena statusa se potvrdjuje tek posle N uzastopnih poll-ova sa istim novim stanjem.
 # server_id -> {"candidate": status_str, "count": int}
@@ -199,6 +205,7 @@ async def _poll_guarded(server: dict):
     scheduler posao ostane "zauvek zauzet" i da APScheduler tiho preskace sve
     naredne pokusaje (max_instances=1 podrazumevano)."""
     cfg = get_settings()
+    _last_polled[str(server["id"])] = time.time()
     try:
         await asyncio.wait_for(_poll(server), timeout=cfg.poll_watchdog_sec)
     except asyncio.TimeoutError:
@@ -219,6 +226,9 @@ async def _poll_guarded(server: dict):
 
 
 async def poll_all():
+    """Scheduler 'tik' -- zove se cesto (cfg.poll_tick_sec), ali stvarno
+    poll-uje SAMO servere kojima je istekao njihov sopstveni poll_interval_sec
+    (ili globalni monitor_interval_sec ako custom interval nije podesen)."""
     cfg = get_settings()
     try:
         rows = await fetch(
@@ -231,9 +241,21 @@ async def poll_all():
         return
     if not rows:
         return
+
+    now = time.time()
+    due = []
+    for r in rows:
+        sid = str(r["id"])
+        interval = r["poll_interval_sec"] or cfg.monitor_interval_sec
+        last = _last_polled.get(sid)
+        if last is None or (now - last) >= interval:
+            due.append(dict(r))
+    if not due:
+        return
+
     mp = cfg.monitor_max_parallel
-    for i in range(0, len(rows), mp):
-        await asyncio.gather(*[_poll_guarded(dict(r)) for r in rows[i:i+mp]], return_exceptions=True)
+    for i in range(0, len(due), mp):
+        await asyncio.gather(*[_poll_guarded(r) for r in due[i:i+mp]], return_exceptions=True)
 
 
 async def poll_single(server_id: str):
@@ -243,7 +265,7 @@ async def poll_single(server_id: str):
            WHERE s.id=$1 AND s.active=true""", server_id)
     if not rows:
         raise ValueError("Server nije pronadjen")
-    await _poll(dict(rows[0]))
+    await _poll_guarded(dict(rows[0]))
     return {"ok": True}
 
 
@@ -325,13 +347,13 @@ def start():
     if not cfg.module_monitoring:
         logger.info("Monitoring ISKLJUCEN")
         return
-    scheduler.add_job(poll_all, "interval", seconds=cfg.monitor_interval_sec, id="poll")
+    scheduler.add_job(poll_all, "interval", seconds=cfg.poll_tick_sec, id="poll")
     scheduler.add_job(cleanup_metrics, "cron", hour=3, minute=0, id="cleanup")
     scheduler.add_job(sync_vms, "interval", seconds=300, id="sync_vms")
 
     from app.services.audit import cleanup_old_logs
     scheduler.add_job(cleanup_old_logs, "cron", hour=3, minute=15, id="cleanup_logs")
     scheduler.start()
-    logger.info(f"Monitoring pokrenut (interval: {cfg.monitor_interval_sec}s, debounce: {cfg.status_debounce_polls} poll-a)")
+    logger.info(f"Monitoring pokrenut (tick: {cfg.poll_tick_sec}s, default interval: {cfg.monitor_interval_sec}s, debounce: {cfg.status_debounce_polls} poll-a)")
     asyncio.get_event_loop().create_task(poll_all())
     asyncio.get_event_loop().create_task(sync_vms())

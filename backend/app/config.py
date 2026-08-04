@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     monitor_interval_sec:   int = 30
     monitor_max_parallel:   int = 20
+    poll_tick_sec:          int = 5   # koliko cesto scheduler proverava koji serveri su "dospeli"
     poll_watchdog_sec:      int = 120  # tvrdi limit po serveru -- sprecava da jedan zaglavljeni
                                         # poll (bez bacenog izuzetka) zamrzne ceo monitoring ciklus
     metrics_retention_days: int = 7

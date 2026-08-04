@@ -49,6 +49,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
     winrmUser: 'Administrator', winrmPassword: '',
     connectionMethod: 'auto',
     hvApiHost: '', hvApiPort: 8006, hvAuthId: '', hvSecret: '', hvVerifyTls: true,
+    pollIntervalSec: '',
     ...(server ? {
       name:          server.name          || '',
       description:   server.description   || '',
@@ -72,6 +73,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
       hvApiPort: server.hv_api_port || 8006,
       hvAuthId:  server.hv_auth_id  || '',
       hvVerifyTls: server.hv_verify_tls ?? true,
+      pollIntervalSec: server.poll_interval_sec ?? '',
     } : {}),
   }));
 
@@ -103,6 +105,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
         sudoPassword:  form.sudoPassword  || undefined,
         winrmPassword: form.winrmPassword || undefined,
         hvSecret:      form.hvSecret      || undefined,
+        pollIntervalSec: form.pollIntervalSec ? parseInt(form.pollIntervalSec, 10) : null,
       };
       if (isEdit) await api.put(`/tenants/${tenantId}/servers/${server.id}`, payload);
       else        await api.post(`/tenants/${tenantId}/servers`, payload);
@@ -174,6 +177,11 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
           <input className="input" value={form.tags}
             onChange={e => set('tags', e.target.value)}
             placeholder="web, nginx, prod" />
+        </F>
+        <F label="Interval osvežavanja (s)">
+          <input type="number" min="10" className="input" value={form.pollIntervalSec}
+            onChange={e => set('pollIntervalSec', e.target.value)}
+            placeholder="podrazumevano (30s)" />
         </F>
         <F label="Opis">
           <input className="input" value={form.description}
