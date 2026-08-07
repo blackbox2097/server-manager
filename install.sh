@@ -141,7 +141,11 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_by      UUID        REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT users_role_check CHECK (role IN ('superadmin', 'operator')),
-    CONSTRAINT users_auth_type_check CHECK (auth_type IN ('local', 'ldap'))
+    CONSTRAINT users_auth_type_check CHECK (auth_type IN ('local', 'ldap')),
+    CONSTRAINT users_password_or_ldap CHECK (
+        (auth_type = 'local' AND password_hash IS NOT NULL) OR
+        (auth_type = 'ldap'  AND ldap_dn IS NOT NULL)
+    )
 );
 
 CREATE TABLE IF NOT EXISTS operator_tenants (
@@ -171,6 +175,8 @@ CREATE TABLE IF NOT EXISTS ldap_configs (
     tls_enabled     BOOLEAN     NOT NULL DEFAULT FALSE,
     tls_verify_cert BOOLEAN     NOT NULL DEFAULT TRUE,
     active          BOOLEAN     NOT NULL DEFAULT TRUE,
+    last_tested_at  TIMESTAMPTZ,
+    last_test_ok    BOOLEAN,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -181,7 +187,7 @@ CREATE TABLE IF NOT EXISTS ssh_keys (
     name            TEXT        NOT NULL,
     description     TEXT,
     public_key      TEXT,
-    private_key_enc TEXT,
+    private_key_enc TEXT        NOT NULL,
     key_type        TEXT        NOT NULL DEFAULT 'ed25519',
     fingerprint     TEXT,
     key_file_path   TEXT,
@@ -190,42 +196,60 @@ CREATE TABLE IF NOT EXISTS ssh_keys (
     created_by      UUID        REFERENCES users(id) ON DELETE SET NULL,
     last_used_at    TIMESTAMPTZ,
     CONSTRAINT ssh_keys_name_tenant_unique UNIQUE (tenant_id, name),
-    CONSTRAINT ssh_keys_type_check CHECK (key_type IN ('ed25519', 'rsa', 'ecdsa'))
+    CONSTRAINT ssh_keys_type_check CHECK (key_type IN ('ed25519', 'rsa', 'ecdsa')),
+    CONSTRAINT ssh_keys_source_check CHECK (private_key_enc IS NOT NULL OR key_file_path IS NOT NULL)
 );
 
 CREATE TABLE IF NOT EXISTS servers (
-    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    name            TEXT        NOT NULL,
-    description     TEXT,
-    hostname        TEXT,
-    ip_address      TEXT        NOT NULL,
-    os_type         TEXT        NOT NULL DEFAULT 'linux',
-    os_name         TEXT,
-    tags            TEXT[]      NOT NULL DEFAULT '{}',
-    environment     TEXT        NOT NULL DEFAULT 'production',
-    ssh_port        INTEGER     NOT NULL DEFAULT 22,
-    ssh_user        TEXT,
-    ssh_auth_type   TEXT        DEFAULT 'key',
-    ssh_key_id      UUID        REFERENCES ssh_keys(id) ON DELETE SET NULL,
-    ssh_password    TEXT,
-    sudo_password   TEXT,
-    winrm_port      INTEGER     NOT NULL DEFAULT 5985,
-    winrm_https     BOOLEAN     NOT NULL DEFAULT FALSE,
-    winrm_auth_type TEXT        DEFAULT 'local',
-    winrm_user      TEXT,
-    winrm_password  TEXT,
-    status          TEXT        NOT NULL DEFAULT 'unknown',
-    last_seen_at    TIMESTAMPTZ,
-    last_error      TEXT,
-    active          BOOLEAN     NOT NULL DEFAULT TRUE,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_by      UUID        REFERENCES users(id) ON DELETE SET NULL,
-    CONSTRAINT servers_os_type_check  CHECK (os_type IN ('linux', 'windows')),
+    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id         UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name              TEXT        NOT NULL,
+    description       TEXT,
+    hostname          TEXT,
+    ip_address        INET        NOT NULL,
+    os_type           TEXT        NOT NULL DEFAULT 'linux',
+    os_name           TEXT,
+    tags              TEXT[]      NOT NULL DEFAULT '{}',
+    environment       TEXT        NOT NULL DEFAULT 'production',
+    ssh_port          INTEGER     NOT NULL DEFAULT 22,
+    ssh_user          TEXT,
+    ssh_auth_type     TEXT        DEFAULT 'key',
+    ssh_key_id        UUID,
+    ssh_password      TEXT,
+    winrm_port        INTEGER     NOT NULL DEFAULT 5985,
+    winrm_https       BOOLEAN     NOT NULL DEFAULT FALSE,
+    winrm_auth_type   TEXT        DEFAULT 'local',
+    winrm_user        TEXT,
+    winrm_password    TEXT,
+    status            TEXT        NOT NULL DEFAULT 'unknown',
+    last_seen_at      TIMESTAMPTZ,
+    last_error        TEXT,
+    active            BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by        UUID        REFERENCES users(id) ON DELETE SET NULL,
+    sudo_password     TEXT,
+    connection_method TEXT        NOT NULL DEFAULT 'auto',
+    hv_api_host       TEXT,
+    hv_api_port       INTEGER,
+    hv_auth_id        TEXT,
+    hv_secret_enc     TEXT,
+    hv_verify_tls     BOOLEAN     NOT NULL DEFAULT TRUE,
+    total_cpu_cores   INTEGER,
+    total_ram_mb      INTEGER,
+    total_disk_gb     INTEGER,
+    virt_type         TEXT,
+    poll_interval_sec INTEGER,
+    CONSTRAINT servers_os_type_check  CHECK (os_type IN ('linux', 'windows', 'proxmox', 'esxi', 'hyperv')),
     CONSTRAINT servers_status_check   CHECK (status IN ('online', 'offline', 'warning', 'unknown')),
-    CONSTRAINT servers_env_check      CHECK (environment IN ('production', 'staging', 'dev'))
+    CONSTRAINT servers_env_check      CHECK (environment IN ('production', 'staging', 'dev')),
+    CONSTRAINT servers_poll_interval_check CHECK (poll_interval_sec IS NULL OR poll_interval_sec >= 10),
+    CONSTRAINT servers_ssh_auth_check CHECK (os_type <> 'linux' OR ssh_auth_type IN ('key', 'password', 'key_and_password')),
+    CONSTRAINT servers_winrm_auth_check CHECK (os_type <> 'windows' OR winrm_auth_type IN ('local', 'domain'))
 );
+ALTER TABLE servers DROP CONSTRAINT IF EXISTS servers_ssh_key_fk;
+ALTER TABLE servers
+    ADD CONSTRAINT servers_ssh_key_fk FOREIGN KEY (ssh_key_id) REFERENCES ssh_keys(id) ON DELETE SET NULL NOT VALID;
 
 CREATE TABLE IF NOT EXISTS metrics (
     id              BIGSERIAL   PRIMARY KEY,
@@ -280,6 +304,8 @@ CREATE TABLE IF NOT EXISTS executions (
     server_count    INTEGER     NOT NULL DEFAULT 0,
     success_count   INTEGER     NOT NULL DEFAULT 0,
     error_count     INTEGER     NOT NULL DEFAULT 0,
+    rule_id         UUID,
+    trigger_source  TEXT        NOT NULL DEFAULT 'manual',
     CONSTRAINT executions_status_check CHECK (status IN ('running','done','failed','cancelled'))
 );
 
@@ -326,7 +352,7 @@ CREATE TABLE IF NOT EXISTS smtp_settings (
 );
 INSERT INTO smtp_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
-
+CREATE TABLE IF NOT EXISTS execution_results (
     id              BIGSERIAL   PRIMARY KEY,
     execution_id    UUID        NOT NULL REFERENCES executions(id) ON DELETE CASCADE,
     server_id       UUID        REFERENCES servers(id) ON DELETE SET NULL,
@@ -359,6 +385,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_occurred ON audit_log (occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_user     ON audit_log (user_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_tenant   ON audit_log (tenant_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_action   ON audit_log (action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_login_failed ON audit_log (username, occurred_at) WHERE action = 'auth.login_failed';
 
 CREATE TABLE IF NOT EXISTS user_sessions (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -368,11 +396,74 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     user_agent      TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at      TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 days'),
-    revoked_at      TIMESTAMPTZ
+    revoked_at      TIMESTAMPTZ,
+    CONSTRAINT sessions_not_expired CHECK (expires_at > created_at)
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_token   ON user_sessions (refresh_token);
 CREATE INDEX IF NOT EXISTS idx_sessions_user    ON user_sessions (user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON user_sessions (expires_at);
+
+CREATE TABLE IF NOT EXISTS automation_rules (
+    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id           UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    operator_id         UUID        NOT NULL REFERENCES users(id),
+    server_id           UUID        REFERENCES servers(id) ON DELETE CASCADE,
+    name                TEXT        NOT NULL,
+    trigger_type        TEXT        NOT NULL,
+    threshold_percent   INTEGER,
+    script_id           UUID        NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+    cooldown_minutes    INTEGER     NOT NULL DEFAULT 15,
+    enabled             BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT automation_rules_trigger_type_check CHECK (
+        trigger_type IN ('offline','recovery','cpu_high','ram_high','disk_high','exec_failed','scheduled_exec_failed')
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_automation_rules_tenant ON automation_rules (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_automation_rules_server ON automation_rules (server_id);
+
+ALTER TABLE executions DROP CONSTRAINT IF EXISTS executions_rule_id_fkey;
+ALTER TABLE executions
+    ADD CONSTRAINT executions_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES automation_rules(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS automation_last_run (
+    rule_id      UUID        NOT NULL REFERENCES automation_rules(id) ON DELETE CASCADE,
+    server_id    UUID        NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    last_run_at  TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (rule_id, server_id)
+);
+
+CREATE TABLE IF NOT EXISTS dashboard_dismissals (
+    id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    operator_id   UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    server_id     UUID        NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    dismissed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT dashboard_dismissals_unique UNIQUE (operator_id, server_id)
+);
+CREATE INDEX IF NOT EXISTS idx_dismissals_operator ON dashboard_dismissals (operator_id);
+
+CREATE TABLE IF NOT EXISTS virtual_machines (
+    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    hypervisor_id     UUID        NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    tenant_id         UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    vm_id_on_host     TEXT        NOT NULL,
+    name              TEXT        NOT NULL,
+    power_state       TEXT        NOT NULL DEFAULT 'unknown',
+    cpu_cores         INTEGER,
+    ram_mb            INTEGER,
+    disk_gb           INTEGER,
+    guest_os          TEXT,
+    ip_address        TEXT,
+    linked_server_id  UUID        REFERENCES servers(id) ON DELETE SET NULL,
+    last_seen_at      TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    disk_sizes_gb     INTEGER[],
+    vm_type           VARCHAR(20) NOT NULL DEFAULT 'vm',
+    CONSTRAINT virtual_machines_hypervisor_id_vm_id_on_host_key UNIQUE (hypervisor_id, vm_id_on_host),
+    CONSTRAINT virtual_machines_vm_type_check CHECK (vm_type IN ('vm', 'container'))
+);
+CREATE INDEX IF NOT EXISTS idx_vm_hypervisor ON virtual_machines (hypervisor_id);
+CREATE INDEX IF NOT EXISTS idx_vm_tenant     ON virtual_machines (tenant_id);
 
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$
 BEGIN NEW.updated_at = NOW(); RETURN NEW; END;
@@ -396,6 +487,127 @@ CREATE UNIQUE INDEX IF NOT EXISTS tenants_name_active_unique  ON tenants (name) 
 CREATE UNIQUE INDEX IF NOT EXISTS tenants_slug_active_unique  ON tenants (slug) WHERE active = true;
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_active_unique ON users (username) WHERE active = true;
 CREATE UNIQUE INDEX IF NOT EXISTS servers_name_tenant_active_unique ON servers (tenant_id, name) WHERE active = true;
+
+-- ── Dozvola za upravljanje mreznim uredjajima (SNMP modul) ────────────────
+ALTER TABLE operator_tenants ADD COLUMN IF NOT EXISTS perm_network_manage BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- ── Raw+rollup retention konfiguracija po serveru (isti duh kao poll_interval_sec) ──
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS raw_retention_hours   INTEGER NOT NULL DEFAULT 72;
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS rollup_bucket_minutes INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS rollup_retention_days INTEGER NOT NULL DEFAULT 90;
+ALTER TABLE servers DROP CONSTRAINT IF EXISTS servers_retention_check;
+ALTER TABLE servers ADD CONSTRAINT servers_retention_check CHECK (
+    raw_retention_hours > 0 AND rollup_bucket_minutes > 0 AND rollup_retention_days > 0
+);
+
+CREATE TABLE IF NOT EXISTS metrics_rollup (
+    id              BIGSERIAL   PRIMARY KEY,
+    server_id       UUID        NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    bucket_start    TIMESTAMPTZ NOT NULL,
+    bucket_minutes  INTEGER     NOT NULL,
+    sample_count    INTEGER     NOT NULL,
+    cpu_avg NUMERIC(5,2), cpu_min NUMERIC(5,2), cpu_max NUMERIC(5,2),
+    ram_avg NUMERIC(5,2), ram_min NUMERIC(5,2), ram_max NUMERIC(5,2),
+    disk_avg NUMERIC(5,2), disk_min NUMERIC(5,2), disk_max NUMERIC(5,2),
+    net_rx_kbps_avg NUMERIC(12,2), net_tx_kbps_avg NUMERIC(12,2),
+    CONSTRAINT metrics_rollup_unique UNIQUE (server_id, bucket_start, bucket_minutes)
+);
+CREATE INDEX IF NOT EXISTS idx_metrics_rollup_server_time ON metrics_rollup (server_id, bucket_start DESC);
+
+-- ── SNMP: mrezni uredjaji ───────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS network_devices (
+    id                      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id               UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name                    TEXT        NOT NULL,
+    description             TEXT,
+    ip_address              INET        NOT NULL,
+    device_type             TEXT        NOT NULL DEFAULT 'other',
+    vendor                  TEXT,
+    snmp_port               INTEGER     NOT NULL DEFAULT 161,
+    snmp_version            TEXT        NOT NULL DEFAULT 'v2c',
+    community_enc           TEXT,
+    v3_username             TEXT,
+    v3_security_level       TEXT,
+    v3_auth_protocol        TEXT,
+    v3_auth_password_enc    TEXT,
+    v3_priv_protocol        TEXT,
+    v3_priv_password_enc    TEXT,
+    poll_interval_sec       INTEGER     NOT NULL DEFAULT 60,
+    raw_retention_hours     INTEGER     NOT NULL DEFAULT 72,
+    rollup_bucket_minutes   INTEGER     NOT NULL DEFAULT 1,
+    rollup_retention_days   INTEGER     NOT NULL DEFAULT 90,
+    status                  TEXT        NOT NULL DEFAULT 'unknown',
+    sys_descr               TEXT,
+    sys_uptime_ticks        BIGINT,
+    last_seen_at            TIMESTAMPTZ,
+    last_error              TEXT,
+    active                  BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by              UUID        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT network_devices_snmp_version_check CHECK (snmp_version IN ('v2c', 'v3')),
+    CONSTRAINT network_devices_status_check CHECK (status IN ('online', 'offline', 'warning', 'unknown')),
+    CONSTRAINT network_devices_poll_interval_check CHECK (poll_interval_sec >= 10),
+    CONSTRAINT network_devices_retention_check CHECK (
+        raw_retention_hours > 0 AND rollup_bucket_minutes > 0 AND rollup_retention_days > 0
+    )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS network_devices_name_tenant_active_unique
+    ON network_devices (tenant_id, name) WHERE active = true;
+
+CREATE TABLE IF NOT EXISTS network_device_interfaces (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id       UUID        NOT NULL REFERENCES network_devices(id) ON DELETE CASCADE,
+    if_index        INTEGER     NOT NULL,
+    if_name         TEXT,
+    if_descr        TEXT,
+    if_alias        TEXT,
+    if_type         TEXT,
+    if_speed_bps    BIGINT,
+    mac_address     TEXT,
+    admin_status    TEXT,
+    oper_status     TEXT,
+    last_change_at  TIMESTAMPTZ,
+    last_polled_at  TIMESTAMPTZ,
+    CONSTRAINT network_device_interfaces_unique UNIQUE (device_id, if_index)
+);
+CREATE INDEX IF NOT EXISTS idx_ndi_device ON network_device_interfaces (device_id);
+
+CREATE TABLE IF NOT EXISTS network_device_interface_metrics (
+    id              BIGSERIAL   PRIMARY KEY,
+    interface_id    UUID        NOT NULL REFERENCES network_device_interfaces(id) ON DELETE CASCADE,
+    collected_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    in_kbps         NUMERIC(12,2),
+    out_kbps        NUMERIC(12,2),
+    in_errors       BIGINT,
+    out_errors      BIGINT,
+    in_discards     BIGINT,
+    out_discards    BIGINT,
+    oper_status     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ndim_iface_time ON network_device_interface_metrics (interface_id, collected_at DESC);
+
+CREATE TABLE IF NOT EXISTS network_device_interface_metrics_rollup (
+    id              BIGSERIAL   PRIMARY KEY,
+    interface_id    UUID        NOT NULL REFERENCES network_device_interfaces(id) ON DELETE CASCADE,
+    bucket_start    TIMESTAMPTZ NOT NULL,
+    bucket_minutes  INTEGER     NOT NULL,
+    sample_count    INTEGER     NOT NULL,
+    in_kbps_avg NUMERIC(12,2), in_kbps_min NUMERIC(12,2), in_kbps_max NUMERIC(12,2),
+    out_kbps_avg NUMERIC(12,2), out_kbps_min NUMERIC(12,2), out_kbps_max NUMERIC(12,2),
+    in_errors_sum BIGINT, out_errors_sum BIGINT,
+    in_discards_sum BIGINT, out_discards_sum BIGINT,
+    CONSTRAINT ndim_rollup_unique UNIQUE (interface_id, bucket_start, bucket_minutes)
+);
+CREATE INDEX IF NOT EXISTS idx_ndim_rollup_iface_time ON network_device_interface_metrics_rollup (interface_id, bucket_start DESC);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_updated_at' AND tgrelid = 'network_devices'::regclass) THEN
+        CREATE TRIGGER trg_updated_at BEFORE UPDATE ON network_devices
+            FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+    END IF;
+END $$;
 
 GRANT USAGE ON SCHEMA public TO servermanager;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO servermanager;
