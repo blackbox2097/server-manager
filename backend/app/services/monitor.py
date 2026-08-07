@@ -269,12 +269,6 @@ async def poll_single(server_id: str):
     return {"ok": True}
 
 
-async def cleanup_metrics():
-    cfg = get_settings()
-    r = await execute(f"DELETE FROM metrics WHERE collected_at < NOW() - INTERVAL '{cfg.metrics_retention_days} days'")
-    logger.info(f"Metrike ociscene: {r}")
-
-
 async def sync_vms():
     """Sinhronizuje VM inventar sa svih hipervizora (trenutno samo Proxmox).
     Full-replace po hipervizoru -- jednostavnije od diff-a, prihvatljivo za
@@ -348,7 +342,6 @@ def start():
         logger.info("Monitoring ISKLJUCEN")
         return
     scheduler.add_job(poll_all, "interval", seconds=cfg.poll_tick_sec, id="poll")
-    scheduler.add_job(cleanup_metrics, "cron", hour=3, minute=0, id="cleanup")
     scheduler.add_job(sync_vms, "interval", seconds=300, id="sync_vms")
 
     from app.services.audit import cleanup_old_logs

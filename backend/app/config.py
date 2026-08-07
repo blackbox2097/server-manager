@@ -25,7 +25,12 @@ class Settings(BaseSettings):
     poll_tick_sec:          int = 5   # koliko cesto scheduler proverava koji serveri su "dospeli"
     poll_watchdog_sec:      int = 120  # tvrdi limit po serveru -- sprecava da jedan zaglavljeni
                                         # poll (bez bacenog izuzetka) zamrzne ceo monitoring ciklus
-    metrics_retention_days: int = 7
+    metrics_retention_days: int = 7   # NAPOMENA: vise se ne koristi za metrics cleanup
+                                        # (zamenjeno per-server raw+rollup retention engine-om
+                                        # u services/retention.py) -- ostavljeno zbog .env
+                                        # kompatibilnosti, ne brisati bez provere .env fajlova.
+    retention_tick_sec:     int = 300  # koliko cesto raw+rollup retention posao proverava
+                                        # istekle metrike (per-server pragovi, ne globalni)
     log_retention_days:     int = 30
     status_debounce_polls:  int = 2
 

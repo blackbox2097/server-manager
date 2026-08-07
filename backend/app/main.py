@@ -47,6 +47,8 @@ async def lifespan(app: FastAPI):
     logger.info("Baza dostupna")
     from app.services.monitor import start
     start()
+    from app.services.retention import start as start_retention
+    start_retention()
     from app.services.scheduler import load_all_jobs
     await load_all_jobs()
     yield
