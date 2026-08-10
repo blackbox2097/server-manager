@@ -78,7 +78,7 @@ async def check_tenant_perm(tenant_id: str, user: dict, perm: str | None = None)
         return
     row = await fetchrow(
         """SELECT perm_view, perm_scripts_run, perm_scripts_manage,
-                  perm_servers_manage, perm_keys_manage
+                  perm_servers_manage, perm_keys_manage, perm_network_manage
            FROM operator_tenants WHERE operator_id = $1 AND tenant_id = $2""",
         user["id"], tenant_id
     )

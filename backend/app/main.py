@@ -49,6 +49,8 @@ async def lifespan(app: FastAPI):
     start()
     from app.services.retention import start as start_retention
     start_retention()
+    from app.services.snmp import start as start_snmp
+    start_snmp()
     from app.services.scheduler import load_all_jobs
     await load_all_jobs()
     yield
@@ -69,7 +71,7 @@ if cfg.node_env != "production":
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
                        allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-from app.routers import auth, admin, servers, monitoring, operations, terminal, schedules, alerts, logs, backup, automation, dashboard
+from app.routers import auth, admin, servers, monitoring, operations, terminal, schedules, alerts, logs, backup, automation, dashboard, network_devices
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(servers.router)
@@ -82,6 +84,7 @@ app.include_router(logs.router)
 app.include_router(backup.router)
 app.include_router(automation.router)
 app.include_router(dashboard.router)
+app.include_router(network_devices.router)
 
 
 @app.get("/health")

@@ -22,6 +22,7 @@ import SmtpSettings from './pages/admin/SmtpSettings';
 import AdminLogs from './pages/admin/AdminLogs';
 import Backup    from './pages/admin/Backup';
 import Automation from './pages/automation/Automation';
+import NetworkDevices from './pages/network/NetworkDevices';
 
 function ProtectedRoute({ children, superadminOnly }) {
   const { user } = useAuthStore();
@@ -66,6 +67,7 @@ export default function App() {
       <Route path="/admin/logs"    element={<Page component={AdminLogs}  superadminOnly />} />
       <Route path="/admin/backup"  element={<Page component={Backup}     superadminOnly />} />
       <Route path="/automation"    element={<Page component={Automation} />} />
+      <Route path="/network-devices" element={<Page component={NetworkDevices} />} />
       <Route path="*"              element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );

@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     poll_tick_sec:          int = 5   # koliko cesto scheduler proverava koji serveri su "dospeli"
     poll_watchdog_sec:      int = 120  # tvrdi limit po serveru -- sprecava da jedan zaglavljeni
                                         # poll (bez bacenog izuzetka) zamrzne ceo monitoring ciklus
+    snmp_poll_tick_sec:     int = 5    # isti duh kao poll_tick_sec, za mrezne uredjaje
+    snmp_poll_watchdog_sec: int = 30   # SNMP je UDP, ne treba mu 120s kao SSH -- brz timeout/retry
+    snmp_max_parallel:      int = 20
     metrics_retention_days: int = 7   # NAPOMENA: vise se ne koristi za metrics cleanup
                                         # (zamenjeno per-server raw+rollup retention engine-om
                                         # u services/retention.py) -- ostavljeno zbog .env
