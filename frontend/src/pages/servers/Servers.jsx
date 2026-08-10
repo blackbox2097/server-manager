@@ -80,14 +80,34 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
   const [sshKeys, setSshKeys] = useState([]);
   const [saving,  setSaving]  = useState(false);
   const [error,   setError]   = useState('');
+  const [genKeyLoading, setGenKeyLoading] = useState(false);
+  const [genKeyMsg,     setGenKeyMsg]     = useState(null);
 
-  useEffect(() => {
+  const loadSshKeys = () => {
     api.get(`/tenants/${tenantId}/ssh-keys`)
        .then(r => setSshKeys(r.data))
        .catch(() => {});
-  }, [tenantId]);
+  };
+
+  useEffect(() => { loadSshKeys(); }, [tenantId]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const handleGenerateKey = async () => {
+    setGenKeyLoading(true); setGenKeyMsg(null);
+    try {
+      const { data } = await api.post(`/tenants/${tenantId}/servers/${server.id}/generate-ssh-key`);
+      loadSshKeys();
+      set('sshAuthType', 'key');
+      set('sshKeyId', data.sshKeyId);
+      set('sshPassword', '');
+      setGenKeyMsg({ ok: true, text: 'Kljuc generisan, instaliran i verifikovan — server je prebacen na SSH kljuc, lozinka je obrisana.' });
+    } catch (err) {
+      setGenKeyMsg({ ok: false, text: err.response?.data?.detail || 'Generisanje kljuca nije uspelo — server ostaje na lozinci.' });
+    } finally {
+      setGenKeyLoading(false);
+    }
+  };
 
   // Meko upozorenje (ne blokira cuvanje) — vec postoji server sa istom IP adresom
   const ipDuplicateServer = form.ipAddress
@@ -261,7 +281,26 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
                 placeholder={isEdit ? '(ostavi prazno da zadržiš staru)' : ''} />
             </F>
           )}
-          <F label="Sudo lozinka (opciono — za pokretanje skripti sa root pravima)">
+          {isEdit && form.osType === 'linux' &&
+           (form.sshAuthType === 'password' || form.sshAuthType === 'key_and_password') && (
+            <div className="pt-1">
+              <button type="button" className="btn btn-secondary text-sm"
+                onClick={handleGenerateKey} disabled={genKeyLoading}>
+                {genKeyLoading
+                  ? <><Spinner size={14} /> Generišem i testiram ključ…</>
+                  : 'Generiši SSH ključ automatski i pređi sa lozinke'}
+              </button>
+              <p className="text-xs text-gray-500 mt-1">
+                Generiše novi ključ, instalira ga na server i PROVERI da radi — tek onda briše lozinku.
+                Ako provera ne uspe, server ostaje netaknut na lozinci.
+              </p>
+              {genKeyMsg && (
+                <p className={`text-xs mt-1 ${genKeyMsg.ok ? 'text-green-500' : 'text-red-500'}`}>
+                  {genKeyMsg.text}
+                </p>
+              )}
+            </div>
+          )}          <F label="Sudo lozinka (opciono — za pokretanje skripti sa root pravima)">
             <input className="input" type="password" value={form.sudoPassword}
               onChange={e => set('sudoPassword', e.target.value)}
               placeholder={isEdit && server?.has_sudo_password ? '(postavljena — ostavi prazno da zadržiš)' : '(prazno = bez sudo-a)'} />

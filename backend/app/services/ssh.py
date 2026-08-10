@@ -2,6 +2,7 @@
 import asyncio
 import io
 import random
+import shlex
 import string
 import time
 import logging
@@ -9,6 +10,8 @@ from typing import Any
 
 import paramiko
 import re
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives import serialization
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -601,3 +604,90 @@ async def test_connection(server: dict) -> dict:
     if server.get("os_type") in ("windows", "hyperv"):
         return await _test_connection_windows(server)
     return await _test_connection_linux(server)
+
+
+def _push_and_verify_key(server: dict, pub_line: str, priv_pem: str, tag: str):
+    """Password konekcijom doda javni kljuc u ~/.ssh/authorized_keys, zatim
+    OTVORI NOVU konekciju iskljucivo tim kljucem da potvrdi da radi PRE nego
+    sto se ista stvar promeni u bazi. Ako verifikacija ne uspe, best-effort
+    uklanja upravo dodatu liniju i baca izuzetak -- server ostaje na password
+    auth-u, ni baza ni server se ne diraju.
+
+    Pre dodavanja nove linije, uklanja SVAKU raniju liniju sa istim `tag`
+    komentarom (npr. ako se generisanje ponovo pokrene na istom serveru) --
+    inace se stari auto-generisani kljucevi gomilaju u authorized_keys kao
+    beskorisni ostaci posle svakog ponovnog pokretanja."""
+    pw_client = _connect(server)
+    try:
+        setup_cmd = (
+            "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+            "touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && "
+            f"(grep -v {shlex.quote(chr(32) + tag)} ~/.ssh/authorized_keys || true) "
+            "> ~/.ssh/authorized_keys.sm_tmp && "
+            "chmod 600 ~/.ssh/authorized_keys.sm_tmp && "
+            "mv ~/.ssh/authorized_keys.sm_tmp ~/.ssh/authorized_keys && "
+            f"echo {shlex.quote(pub_line)} >> ~/.ssh/authorized_keys"
+        )
+        _, err, code = _exec(pw_client, setup_cmd, timeout=15)
+        if code != 0:
+            raise SSHConnectionError(f"Ne mogu da upisem authorized_keys: {err[:300]}")
+    finally:
+        pw_client.close()
+
+    verify_server = dict(server)
+    verify_server["ssh_auth_type"] = "key"
+    verify_server["_private_key"] = priv_pem
+    verify_server.pop("_ssh_password", None)
+
+    try:
+        v_client = _connect(verify_server)
+        v_client.close()
+    except Exception as e:
+        try:
+            rb_client = _connect(server)
+            try:
+                rb_cmd = (
+                    f"(grep -vxF {shlex.quote(pub_line)} ~/.ssh/authorized_keys || true) "
+                    "> ~/.ssh/authorized_keys.sm_tmp && "
+                    "chmod 600 ~/.ssh/authorized_keys.sm_tmp && "
+                    "mv ~/.ssh/authorized_keys.sm_tmp ~/.ssh/authorized_keys"
+                )
+                _exec(rb_client, rb_cmd, timeout=15)
+            finally:
+                rb_client.close()
+        except Exception:
+            pass
+        raise SSHConnectionError(
+            f"Kljuc je dodat na server ali verifikacija nove konekcije nije uspela "
+            f"(linija je uklonjena, server ostaje na lozinci): {e}"
+        ) from e
+
+
+def _generate_and_install_key(server: dict) -> dict:
+    """Generise NOVI ed25519 par (cryptography lib, paramiko sam ne ume da
+    generise ed25519), instalira javni deo preko password konekcije i
+    verifikuje ga PRE nego sto vrati rezultat pozivaocu -- pozivalac (ruter)
+    tek posle uspesnog povratka upisuje kljuc u ssh_keys i prebacuje server
+    na key auth."""
+    priv = ed25519.Ed25519PrivateKey.generate()
+    pub  = priv.public_key()
+
+    priv_pem = priv.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+
+    comment  = f"servermanager-auto-{server['id']}"
+    pub_line = pub.public_bytes(
+        encoding=serialization.Encoding.OpenSSH,
+        format=serialization.PublicFormat.OpenSSH,
+    ).decode() + f" {comment}"
+
+    _push_and_verify_key(server, pub_line, priv_pem, tag=comment)
+
+    return {"private_key_pem": priv_pem, "public_key": pub_line}
+
+
+async def generate_and_install_key(server: dict) -> dict:
+    return await asyncio.get_event_loop().run_in_executor(None, _generate_and_install_key, server)
