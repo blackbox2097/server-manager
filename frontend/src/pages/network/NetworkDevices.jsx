@@ -1,11 +1,11 @@
 // src/pages/network/NetworkDevices.jsx
 import React, { useState, useEffect, useCallback, memo } from 'react';
-import { Plus, Edit, Trash2, Plug, Router, ArrowDown, ArrowUp } from 'lucide-react';
+import { Plus, Edit, Trash2, Plug, Router, ArrowDown, ArrowUp, ChevronRight, ChevronDown } from 'lucide-react';
 import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import {
   StatusBadge, Badge, Modal, ConfirmDialog,
-  Alert, Spinner, Empty, Table, formatNetSpeed,
+  Alert, Spinner, Empty, formatNetSpeed,
 } from '../../components/ui';
 
 function F({ label, children }) {
@@ -170,46 +170,24 @@ const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, onSave, onClo
   );
 }, () => true);
 
-function InterfacesModal({ device, tenantId, onClose }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!device) return;
-    setLoading(true);
-    api.get(`/tenants/${tenantId}/network-devices/${device.id}/interfaces`)
-       .then(r => setData(r.data))
-       .catch(() => setData({ interfaces: [] }))
-       .finally(() => setLoading(false));
-  }, [device, tenantId]);
-
+function InterfaceRow({ iface }) {
   return (
-    <Modal open={!!device} onClose={onClose} title={`Interfejsi — ${device?.name || ''}`}>
-      {loading ? <Spinner /> : (
-        !data?.interfaces?.length ? <Empty title="Nema interfejsa" subtitle="Uređaj još nije uspešno poll-ovan" /> : (
-          <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-            {data.interfaces.map(i => (
-              <div key={i.id} className="border border-gray-800 rounded-lg p-3 flex items-center justify-between">
-                <div>
-                  <div className="font-medium">{i.if_name} <span className="text-gray-500 text-xs">#{i.if_index}</span></div>
-                  {i.if_alias && <div className="text-xs text-gray-500">{i.if_alias}</div>}
-                  {i.mac_address && <div className="text-xs text-gray-600">{i.mac_address}</div>}
-                </div>
-                <div className="text-right space-y-1">
-                  <StatusBadge status={i.oper_status === 'up' ? 'online' : (i.oper_status === 'down' ? 'offline' : 'unknown')} />
-                  {i.last_metric_at && (
-                    <div className="text-xs text-gray-500 flex gap-2 justify-end">
-                      <span className="flex items-center gap-1"><ArrowDown size={12} />{formatNetSpeed(i.in_kbps)}</span>
-                      <span className="flex items-center gap-1"><ArrowUp size={12} />{formatNetSpeed(i.out_kbps)}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
+    <div className="flex items-center justify-between py-2 px-3 border-b border-gray-800/30 last:border-b-0">
+      <div>
+        <div className="text-sm font-medium">{iface.if_name} <span className="text-gray-500 text-xs">#{iface.if_index}</span></div>
+        {iface.if_alias && <div className="text-xs text-gray-500">{iface.if_alias}</div>}
+        {iface.mac_address && <div className="text-xs text-gray-600">{iface.mac_address}</div>}
+      </div>
+      <div className="text-right space-y-1">
+        <StatusBadge status={iface.oper_status === 'up' ? 'online' : (iface.oper_status === 'down' ? 'offline' : 'unknown')} />
+        {iface.last_metric_at && (
+          <div className="text-xs text-gray-500 flex gap-2 justify-end">
+            <span className="flex items-center gap-1"><ArrowDown size={12} />{formatNetSpeed(iface.in_kbps)}</span>
+            <span className="flex items-center gap-1"><ArrowUp size={12} />{formatNetSpeed(iface.out_kbps)}</span>
           </div>
-        )
-      )}
-    </Modal>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -225,7 +203,9 @@ export default function NetworkDevices() {
   const [delConfirm, setDelConfirm] = useState(null);
   const [testing, setTesting] = useState(null);
   const [testResult, setTestResult] = useState({});
-  const [ifaceDevice, setIfaceDevice] = useState(null);
+  const [expanded, setExpanded] = useState(() => new Set());
+  const [ifaceCache, setIfaceCache] = useState({});
+  const [ifaceLoading, setIfaceLoading] = useState(null);
 
   const editDeviceRef = React.useRef(null);
 
@@ -239,6 +219,28 @@ export default function NetworkDevices() {
   }, [tenantId]);
 
   useEffect(() => { fetchDevices(); }, [fetchDevices]);
+
+  const toggleExpand = async (device) => {
+    const next = new Set(expanded);
+    if (next.has(device.id)) {
+      next.delete(device.id);
+      setExpanded(next);
+      return;
+    }
+    next.add(device.id);
+    setExpanded(next);
+    if (!ifaceCache[device.id]) {
+      setIfaceLoading(device.id);
+      try {
+        const { data } = await api.get(`/tenants/${tenantId}/network-devices/${device.id}/interfaces`);
+        setIfaceCache(prev => ({ ...prev, [device.id]: data.interfaces }));
+      } catch {
+        setIfaceCache(prev => ({ ...prev, [device.id]: [] }));
+      } finally {
+        setIfaceLoading(null);
+      }
+    }
+  };
 
   const openAdd = () => { editDeviceRef.current = null; setModalTitle('Dodaj uređaj'); setModalOpen(true); };
   const openEdit = (d) => { editDeviceRef.current = d; setModalTitle(`Izmeni — ${d.name}`); setModalOpen(true); };
@@ -260,37 +262,30 @@ export default function NetworkDevices() {
     } finally {
       setTesting(null);
       fetchDevices();
+      if (expanded.has(device.id)) {
+        try {
+          const { data } = await api.get(`/tenants/${tenantId}/network-devices/${device.id}/interfaces`);
+          setIfaceCache(prev => ({ ...prev, [device.id]: data.interfaces }));
+        } catch {}
+      } else {
+        setIfaceCache(prev => {
+          const next = { ...prev };
+          delete next[device.id];
+          return next;
+        });
+      }
     }
   };
 
   const columns = [
-    { key: 'name', label: 'Uređaj', render: d => (
-      <div>
-        <div className="font-medium flex items-center gap-2"><Router size={14} className="text-gray-500" />{d.name}</div>
-        <div className="text-xs text-gray-500">{d.ip_address}</div>
-      </div>
-    )},
-    { key: 'device_type', label: 'Tip', render: d => <Badge color="blue">{DEVICE_TYPES.find(t => t.value === d.device_type)?.label || d.device_type}</Badge> },
-    { key: 'vendor', label: 'Proizvođač', render: d => d.vendor || '—' },
-    { key: 'status', label: 'Status', render: d => <StatusBadge status={d.status} /> },
-    { key: 'interface_count', label: 'Interfejsi', render: d => (
-      <button className="text-blue-400 hover:underline text-sm" onClick={() => setIfaceDevice(d)}>
-        {d.interface_count}
-      </button>
-    )},
-    { key: 'poll_interval_sec', label: 'Interval', render: d => `${d.poll_interval_sec}s` },
-    { key: 'actions', label: '', render: d => (
-      <div className="flex gap-1 justify-end">
-        <button className="icon-btn" title="Testiraj" disabled={testing === d.id}
-          onClick={() => handleTest(d)}>
-          {testing === d.id ? <Spinner size={14} /> : <Plug size={14} />}
-        </button>
-        {canManage && <>
-          <button className="icon-btn" title="Izmeni" onClick={() => openEdit(d)}><Edit size={14} /></button>
-          <button className="icon-btn text-red-400" title="Obriši" onClick={() => setDelConfirm(d)}><Trash2 size={14} /></button>
-        </>}
-      </div>
-    )},
+    { key: 'expand', label: '' },
+    { key: 'name', label: 'Uređaj' },
+    { key: 'device_type', label: 'Tip' },
+    { key: 'vendor', label: 'Proizvođač' },
+    { key: 'status', label: 'Status' },
+    { key: 'interface_count', label: 'Interfejsi' },
+    { key: 'poll_interval_sec', label: 'Interval' },
+    { key: 'actions', label: '' },
   ];
 
   if (loading) return <Spinner />;
@@ -311,14 +306,78 @@ export default function NetworkDevices() {
           subtitle="Dodaj ruter, svič ili AP za SNMP monitoring"
           action={canManage && <button className="btn btn-primary" onClick={openAdd}><Plus size={16} /> Dodaj uređaj</button>} />
       ) : (
-        <Table columns={columns} rows={devices} />
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-800">
+                {columns.map(col => (
+                  <th key={col.key} className="text-left py-2.5 px-3 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {devices.map(d => {
+                const isOpen = expanded.has(d.id);
+                return (
+                  <React.Fragment key={d.id}>
+                    <tr className="border-b border-gray-800/50 cursor-pointer hover:bg-gray-800/50 transition-colors"
+                        onClick={() => toggleExpand(d)}>
+                      <td className="py-2.5 px-3 text-gray-500 w-6">
+                        {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      </td>
+                      <td className="py-2.5 px-3 text-gray-300">
+                        <div className="font-medium flex items-center gap-2"><Router size={14} className="text-gray-500" />{d.name}</div>
+                        <div className="text-xs text-gray-500">{d.ip_address}</div>
+                      </td>
+                      <td className="py-2.5 px-3 text-gray-300">
+                        <Badge color="blue">{DEVICE_TYPES.find(t => t.value === d.device_type)?.label || d.device_type}</Badge>
+                      </td>
+                      <td className="py-2.5 px-3 text-gray-300">{d.vendor || '—'}</td>
+                      <td className="py-2.5 px-3 text-gray-300"><StatusBadge status={d.status} /></td>
+                      <td className="py-2.5 px-3 text-gray-300">{d.interface_count}</td>
+                      <td className="py-2.5 px-3 text-gray-300">{d.poll_interval_sec}s</td>
+                      <td className="py-2.5 px-3 text-gray-300" onClick={e => e.stopPropagation()}>
+                        <div className="flex gap-1 justify-end">
+                          <button className="icon-btn" title="Testiraj" disabled={testing === d.id}
+                            onClick={() => handleTest(d)}>
+                            {testing === d.id ? <Spinner size={14} /> : <Plug size={14} />}
+                          </button>
+                          {canManage && <>
+                            <button className="icon-btn" title="Izmeni" onClick={() => openEdit(d)}><Edit size={14} /></button>
+                            <button className="icon-btn text-red-400" title="Obriši" onClick={() => setDelConfirm(d)}><Trash2 size={14} /></button>
+                          </>}
+                        </div>
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="border-b border-gray-800/50 bg-gray-900/40">
+                        <td></td>
+                        <td colSpan={columns.length - 1} className="py-2 px-3">
+                          {ifaceLoading === d.id ? (
+                            <div className="py-3"><Spinner size={14} /></div>
+                          ) : !ifaceCache[d.id]?.length ? (
+                            <div className="text-xs text-gray-500 py-2">Nema interfejsa — uređaj još nije uspešno poll-ovan</div>
+                          ) : (
+                            <div className="rounded-lg border border-gray-800 divide-y divide-gray-800/30 overflow-hidden">
+                              {ifaceCache[d.id].map(i => <InterfaceRow key={i.id} iface={i} />)}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
 
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={modalTitle}>
         <DeviceForm deviceRef={editDeviceRef} tenantId={tenantId} onSave={handleSaved} onClose={() => setModalOpen(false)} />
       </Modal>
-
-      <InterfacesModal device={ifaceDevice} tenantId={tenantId} onClose={() => setIfaceDevice(null)} />
 
       <ConfirmDialog open={!!delConfirm} title="Obriši uređaj"
         message={`Da li si siguran da želiš da obrišeš "${delConfirm?.name}"?`}
