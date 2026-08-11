@@ -20,19 +20,19 @@ const DEVICE_TYPES = [
   { value: 'other',   label: 'Ostalo' },
 ];
 
-const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, onSave, onClose }) {
+const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, locations, onSave, onClose }) {
   const device = deviceRef.current;
   const isEdit = !!device?.id;
 
   const [form, setForm] = useState(() => ({
-    name: '', description: '', ipAddress: '', deviceType: 'other', vendor: '',
+    name: '', description: '', ipAddress: '', deviceType: 'other', vendor: '', location: '',
     snmpPort: 161, snmpVersion: 'v2c', community: '',
     v3Username: '', v3SecurityLevel: 'authPriv', v3AuthProtocol: 'SHA', v3AuthPassword: '',
     v3PrivProtocol: 'AES', v3PrivPassword: '',
     pollIntervalSec: 60, rawRetentionHours: 72, rollupBucketMinutes: 1, rollupRetentionDays: 90,
     ...(isEdit ? {
       name: device.name, description: device.description || '', ipAddress: device.ip_address,
-      deviceType: device.device_type, vendor: device.vendor || '',
+      deviceType: device.device_type, vendor: device.vendor || '', location: device.location || '',
       snmpPort: device.snmp_port, snmpVersion: device.snmp_version,
       pollIntervalSec: device.poll_interval_sec,
     } : {}),
@@ -79,6 +79,13 @@ const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, onSave, onClo
         </F>
         <F label="Proizvođač (opciono)"><input className="input" value={form.vendor} onChange={e => set('vendor', e.target.value)} placeholder="MikroTik, Cisco, Aruba..." /></F>
       </div>
+      <F label="Lokacija (opciono)">
+        <input className="input" list="location-suggestions" value={form.location}
+          onChange={e => set('location', e.target.value)} placeholder="npr. Zemun, Banovci..." />
+        <datalist id="location-suggestions">
+          {locations.map(loc => <option key={loc} value={loc} />)}
+        </datalist>
+      </F>
 
       <div className="border border-gray-800 rounded-lg p-3 space-y-3">
         <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">SNMP konfiguracija</p>
@@ -277,6 +284,24 @@ export default function NetworkDevices() {
     }
   };
 
+  const knownLocations = React.useMemo(() => {
+    const set = new Set(devices.map(d => d.location).filter(Boolean));
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }, [devices]);
+
+  const groupedDevices = React.useMemo(() => {
+    const groups = {};
+    for (const d of devices) {
+      const key = d.location || '__none__';
+      (groups[key] ||= []).push(d);
+    }
+    const locKeys = Object.keys(groups).filter(k => k !== '__none__').sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    const ordered = locKeys.map(k => [k, groups[k]]);
+    if (groups.__none__) ordered.push(['Bez lokacije', groups.__none__]);
+    for (const [, list] of ordered) list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    return ordered;
+  }, [devices]);
+
   const columns = [
     { key: 'expand', label: '' },
     { key: 'name', label: 'Uređaj' },
@@ -318,7 +343,14 @@ export default function NetworkDevices() {
               </tr>
             </thead>
             <tbody>
-              {devices.map(d => {
+              {groupedDevices.map(([locName, list]) => (
+                <React.Fragment key={locName}>
+                  <tr className="bg-gray-900/70">
+                    <td colSpan={columns.length} className="py-1.5 px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-800">
+                      {locName} <span className="text-gray-600 font-normal normal-case">({list.length})</span>
+                    </td>
+                  </tr>
+                  {list.map(d => {
                 const isOpen = expanded.has(d.id);
                 return (
                   <React.Fragment key={d.id}>
@@ -369,14 +401,16 @@ export default function NetworkDevices() {
                     )}
                   </React.Fragment>
                 );
-              })}
+                  })}
+                </React.Fragment>
+              ))}
             </tbody>
           </table>
         </div>
       )}
 
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={modalTitle}>
-        <DeviceForm deviceRef={editDeviceRef} tenantId={tenantId} onSave={handleSaved} onClose={() => setModalOpen(false)} />
+        <DeviceForm deviceRef={editDeviceRef} tenantId={tenantId} locations={knownLocations} onSave={handleSaved} onClose={() => setModalOpen(false)} />
       </Modal>
 
       <ConfirmDialog open={!!delConfirm} title="Obriši uređaj"

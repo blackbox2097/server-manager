@@ -19,6 +19,7 @@ class NetworkDeviceIn(BaseModel):
     description: str | None = None
     deviceType: str = "other"
     vendor: str | None = None
+    location: str | None = None
     snmpPort: int = 161
     snmpVersion: str = "v2c"
     community: str | None = None
@@ -56,7 +57,7 @@ class NetworkDeviceUp(NetworkDeviceIn):
 async def list_network_devices(tid: str, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user)
     rows = await fetch(
-        """SELECT id, name, description, ip_address, device_type, vendor,
+        """SELECT id, name, description, ip_address, device_type, vendor, location,
                   snmp_port, snmp_version, poll_interval_sec, status, sys_descr,
                   sys_uptime_ticks, last_seen_at, last_error, active, created_at,
                   (SELECT COUNT(*) FROM network_device_interfaces WHERE device_id=network_devices.id) AS interface_count
@@ -71,14 +72,14 @@ async def create_network_device(tid: str, req: Request, body: NetworkDeviceIn, u
     try:
         row = await fetchrow(
             """INSERT INTO network_devices
-                 (tenant_id, name, description, ip_address, device_type, vendor,
+                 (tenant_id, name, description, ip_address, device_type, vendor, location,
                   snmp_port, snmp_version, community_enc, v3_username, v3_security_level,
                   v3_auth_protocol, v3_auth_password_enc, v3_priv_protocol, v3_priv_password_enc,
                   poll_interval_sec, raw_retention_hours, rollup_bucket_minutes,
                   rollup_retention_days, created_by)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
                RETURNING id, name, ip_address, device_type, snmp_version, status, created_at""",
-            tid, body.name, _n(body.description), body.ipAddress, body.deviceType, _n(body.vendor),
+            tid, body.name, _n(body.description), body.ipAddress, body.deviceType, _n(body.vendor), _n(body.location),
             body.snmpPort, body.snmpVersion,
             encrypt(body.community) if body.community else None,
             _n(body.v3Username), _n(body.v3SecurityLevel), _n(body.v3AuthProtocol),
@@ -102,18 +103,18 @@ async def update_network_device(tid: str, did: str, req: Request, body: NetworkD
     await check_tenant_perm(tid, user, "perm_network_manage")
     row = await fetchrow(
         """UPDATE network_devices SET
-             name=$1, description=$2, ip_address=$3, device_type=$4, vendor=$5,
-             snmp_port=$6, snmp_version=$7,
-             community_enc = COALESCE($8, community_enc),
-             v3_username=$9, v3_security_level=$10, v3_auth_protocol=$11,
-             v3_auth_password_enc = COALESCE($12, v3_auth_password_enc),
-             v3_priv_protocol=$13,
-             v3_priv_password_enc = COALESCE($14, v3_priv_password_enc),
-             poll_interval_sec=$15, raw_retention_hours=$16, rollup_bucket_minutes=$17,
-             rollup_retention_days=$18
-           WHERE id=$19 AND tenant_id=$20
+             name=$1, description=$2, ip_address=$3, device_type=$4, vendor=$5, location=$6,
+             snmp_port=$7, snmp_version=$8,
+             community_enc = COALESCE($9, community_enc),
+             v3_username=$10, v3_security_level=$11, v3_auth_protocol=$12,
+             v3_auth_password_enc = COALESCE($13, v3_auth_password_enc),
+             v3_priv_protocol=$14,
+             v3_priv_password_enc = COALESCE($15, v3_priv_password_enc),
+             poll_interval_sec=$16, raw_retention_hours=$17, rollup_bucket_minutes=$18,
+             rollup_retention_days=$19
+           WHERE id=$20 AND tenant_id=$21
            RETURNING id, name, ip_address, device_type, snmp_version, status""",
-        body.name, _n(body.description), body.ipAddress, body.deviceType, _n(body.vendor),
+        body.name, _n(body.description), body.ipAddress, body.deviceType, _n(body.vendor), _n(body.location),
         body.snmpPort, body.snmpVersion,
         encrypt(body.community) if body.community else None,
         _n(body.v3Username), _n(body.v3SecurityLevel), _n(body.v3AuthProtocol),

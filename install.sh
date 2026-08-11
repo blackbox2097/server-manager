@@ -555,6 +555,13 @@ CREATE TABLE IF NOT EXISTS network_devices (
 CREATE UNIQUE INDEX IF NOT EXISTS network_devices_name_tenant_active_unique
     ON network_devices (tenant_id, name) WHERE active = true;
 
+-- Lokacija (fizicka/logicka grupa, npr. filijala/sajt) -- prosto tekstualno
+-- polje sa autocomplete na frontend-u, ne posebna normalizovana tabela
+-- (isti duh kao vendor polje) -- odluka od 11.8.2026, moze se kasnije
+-- promoviti u posebnu tabelu ako zatreba.
+ALTER TABLE network_devices ADD COLUMN IF NOT EXISTS location TEXT;
+CREATE INDEX IF NOT EXISTS idx_network_devices_location ON network_devices (tenant_id, location);
+
 CREATE TABLE IF NOT EXISTS network_device_interfaces (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id       UUID        NOT NULL REFERENCES network_devices(id) ON DELETE CASCADE,
