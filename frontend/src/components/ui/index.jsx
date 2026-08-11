@@ -283,25 +283,60 @@ export function formatNetSpeed(kbps) {
   return `${(kbps / 1024).toFixed(1)} MB/s`;
 }
 
-// ── CSV export ───────────────────────────────────────────────────────────────
+// ── XLSX export (ExcelJS, lenjo ucitan da ne uvecava pocetni bundle) ─────────
 // columns: [{ label: 'Naziv', get: row => row.name }, ...]
-// Kolone su eksplicitne (ne "sve u redu") da izvoz uvek bude citljiv i
-// nezavisan od toga sta se trenutno prikazuje na ekranu (npr. mimo action
-// dugmica, ikonica i sl.).
-export function exportToCsv(filename, columns, rows) {
-  const esc = (val) => {
-    const s = val == null ? '' : String(val);
-    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-    return s;
-  };
-  const header = columns.map(c => esc(c.label)).join(',');
-  const lines = rows.map(row => columns.map(c => esc(c.get(row))).join(','));
-  const csv = '\uFEFF' + [header, ...lines].join('\r\n'); // BOM za ispravan UTF-8 prikaz u Excel-u
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+export async function exportToXlsx(filename, columns, rows, sheetName = 'List1') {
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(sheetName);
+
+  ws.columns = columns.map(c => ({ header: c.label, key: c.label }));
+
+  rows.forEach(row => {
+    const rowData = {};
+    columns.forEach(c => { rowData[c.label] = c.get(row) ?? ''; });
+    ws.addRow(rowData);
+  });
+
+  const headerRow = ws.getRow(1);
+  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
+  headerRow.alignment = { vertical: 'middle' };
+  headerRow.height = 20;
+
+  // Auto-sirina kolone na osnovu najduzeg sadrzaja (header ili vrednost)
+  ws.columns.forEach(col => {
+    let maxLen = col.header ? col.header.length : 10;
+    col.eachCell({ includeEmpty: true }, cell => {
+      const len = cell.value != null ? String(cell.value).length : 0;
+      if (len > maxLen) maxLen = len;
+    });
+    col.width = Math.min(50, maxLen + 3);
+  });
+
+  // Tanke linije + zebra-prugasti redovi za citljivost
+  ws.eachRow((row, rowNumber) => {
+    row.eachCell({ includeEmpty: true }, cell => {
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+        bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      };
+    });
+    if (rowNumber > 1 && rowNumber % 2 === 0) {
+      row.eachCell({ includeEmpty: true }, cell => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+      });
+    }
+  });
+
+  ws.views = [{ state: 'frozen', ySplit: 1 }]; // zamrznut header red pri skrolovanju
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+  a.download = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

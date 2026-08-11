@@ -5,7 +5,7 @@ import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import {
   StatusBadge, Badge, Modal, ConfirmDialog,
-  Alert, Spinner, Empty, formatNetSpeed, exportToCsv,
+  Alert, Spinner, Empty, formatNetSpeed, exportToXlsx,
 } from '../../components/ui';
 
 function F({ label, children }) {
@@ -315,7 +315,7 @@ export default function NetworkDevices() {
     return ordered;
   }, [filteredDevices]);
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const cols = [
       { label: 'Naziv', get: d => d.name },
       { label: 'IP adresa', get: d => d.ip_address },
@@ -327,7 +327,7 @@ export default function NetworkDevices() {
       { label: 'Broj interfejsa', get: d => d.interface_count },
       { label: 'Interval osvežavanja (s)', get: d => d.poll_interval_sec },
     ];
-    exportToCsv(`mrezni-uredjaji-${activeTenant?.name || 'export'}`, cols, filteredDevices);
+    await exportToXlsx(`mrezni-uredjaji-${activeTenant?.name || 'export'}`, cols, filteredDevices, 'Mrežni uređaji');
   };
 
   const columns = [

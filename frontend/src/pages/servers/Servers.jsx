@@ -6,7 +6,7 @@ import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import {
   StatusBadge, Badge, MetricCell, DiskCell, Modal, ConfirmDialog,
-  Alert, Spinner, Empty, Table, formatUptime, formatNetSpeed, exportToCsv
+  Alert, Spinner, Empty, Table, formatUptime, formatNetSpeed, exportToXlsx
 } from '../../components/ui';
 
 const VIRT_LABELS = {
@@ -493,7 +493,7 @@ export default function Servers() {
   const filteredHypervisors    = hypervisors.filter(matchesSearch);
   const filteredRegularServers = regularServers.filter(matchesSearch);
 
-  const handleExport = () => {
+  const handleExport = async () => {
     const cols = [
       { label: 'Naziv', get: s => s.name },
       { label: 'IP adresa', get: s => s.ip_address },
@@ -503,7 +503,7 @@ export default function Servers() {
       { label: 'Tagovi', get: s => (s.tags || []).join('; ') },
       { label: 'Opis', get: s => s.description },
     ];
-    exportToCsv(`serveri-${activeTenant?.name || 'export'}`, cols, [...filteredHypervisors, ...filteredRegularServers]);
+    await exportToXlsx(`serveri-${activeTenant?.name || 'export'}`, cols, [...filteredHypervisors, ...filteredRegularServers], 'Serveri');
   };
 
   const columns = [
