@@ -1,12 +1,12 @@
 // src/pages/servers/Servers.jsx
 import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Edit, Trash2, Plug, Server, TerminalSquare, ArrowDown, ArrowUp, Cpu, RotateCw, ExternalLink } from 'lucide-react';
+import { Plus, Edit, Trash2, Plug, Server, TerminalSquare, ArrowDown, ArrowUp, Cpu, RotateCw, ExternalLink, Search, Download } from 'lucide-react';
 import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import {
   StatusBadge, Badge, MetricCell, DiskCell, Modal, ConfirmDialog,
-  Alert, Spinner, Empty, Table, formatUptime, formatNetSpeed
+  Alert, Spinner, Empty, Table, formatUptime, formatNetSpeed, exportToCsv
 } from '../../components/ui';
 
 const VIRT_LABELS = {
@@ -81,7 +81,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
   const [saving,  setSaving]  = useState(false);
   const [error,   setError]   = useState('');
   const [genKeyLoading, setGenKeyLoading] = useState(false);
-  const [genKeyMsg,     setGenKeyMsg]     = useState(null);
+  const [genKeyMsg,     setGenKeyMsg]     = useState(null); // { ok: bool, text: string }
 
   const loadSshKeys = () => {
     api.get(`/tenants/${tenantId}/ssh-keys`)
@@ -101,9 +101,9 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
       set('sshAuthType', 'key');
       set('sshKeyId', data.sshKeyId);
       set('sshPassword', '');
-      setGenKeyMsg({ ok: true, text: 'Kljuc generisan, instaliran i verifikovan — server je prebacen na SSH kljuc, lozinka je obrisana.' });
+      setGenKeyMsg({ ok: true, text: 'Ključ generisan, instaliran i verifikovan — server je prebačen na SSH ključ, lozinka je obrisana.' });
     } catch (err) {
-      setGenKeyMsg({ ok: false, text: err.response?.data?.detail || 'Generisanje kljuca nije uspelo — server ostaje na lozinci.' });
+      setGenKeyMsg({ ok: false, text: err.response?.data?.detail || 'Generisanje ključa nije uspelo — server ostaje na lozinci.' });
     } finally {
       setGenKeyLoading(false);
     }
@@ -300,7 +300,8 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
                 </p>
               )}
             </div>
-          )}          <F label="Sudo lozinka (opciono — za pokretanje skripti sa root pravima)">
+          )}
+          <F label="Sudo lozinka (opciono — za pokretanje skripti sa root pravima)">
             <input className="input" type="password" value={form.sudoPassword}
               onChange={e => set('sudoPassword', e.target.value)}
               placeholder={isEdit && server?.has_sudo_password ? '(postavljena — ostavi prazno da zadržiš)' : '(prazno = bez sudo-a)'} />
@@ -386,6 +387,7 @@ export default function Servers() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [servers,    setServers]    = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [loading,    setLoading]    = useState(true);
   const [modalOpen,  setModalOpen]  = useState(false);
   const [modalTitle, setModalTitle] = useState('Dodaj server');
@@ -484,6 +486,25 @@ export default function Servers() {
 
   const hypervisors    = servers.filter(s => ['proxmox', 'hyperv', 'esxi'].includes(s.os_type));
   const regularServers = servers.filter(s => !['proxmox', 'hyperv', 'esxi'].includes(s.os_type));
+
+  const q = searchQuery.trim().toLowerCase();
+  const matchesSearch = (s) => !q || [s.name, s.ip_address, s.hostname, s.description, ...(s.tags || [])]
+    .filter(Boolean).some(v => String(v).toLowerCase().includes(q));
+  const filteredHypervisors    = hypervisors.filter(matchesSearch);
+  const filteredRegularServers = regularServers.filter(matchesSearch);
+
+  const handleExport = () => {
+    const cols = [
+      { label: 'Naziv', get: s => s.name },
+      { label: 'IP adresa', get: s => s.ip_address },
+      { label: 'Tip OS', get: s => s.os_type },
+      { label: 'Status', get: s => s.status },
+      { label: 'Okruženje', get: s => s.environment },
+      { label: 'Tagovi', get: s => (s.tags || []).join('; ') },
+      { label: 'Opis', get: s => s.description },
+    ];
+    exportToCsv(`serveri-${activeTenant?.name || 'export'}`, cols, [...filteredHypervisors, ...filteredRegularServers]);
+  };
 
   const columns = [
     { key: 'name', label: 'Server', render: s => (
@@ -613,13 +634,27 @@ export default function Servers() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold text-gray-100">Serveri</h1>
-          <p className="text-sm text-gray-500">{servers.length} servera u {activeTenant?.name}</p>
+          <p className="text-sm text-gray-500">
+            {q ? `${filteredHypervisors.length + filteredRegularServers.length} od ${servers.length}` : `${servers.length}`} servera u {activeTenant?.name}
+          </p>
         </div>
-        {canManage && (
-          <button className="btn-primary" onClick={openAdd}>
-            <Plus size={16} /> Dodaj server
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input className="input pl-8 py-1.5 text-sm w-48" placeholder="Pretraga..."
+              value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          </div>
+          {servers.length > 0 && (
+            <button className="btn-secondary" onClick={handleExport} title="Izvezi u CSV">
+              <Download size={16} />
+            </button>
+          )}
+          {canManage && (
+            <button className="btn-primary" onClick={openAdd}>
+              <Plus size={16} /> Dodaj server
+            </button>
+          )}
+        </div>
       </div>
 
       {servers.length === 0 ? (
@@ -630,23 +665,25 @@ export default function Servers() {
               <Plus size={14} /> Dodaj server
             </button>
           )} />
+      ) : (filteredHypervisors.length === 0 && filteredRegularServers.length === 0) ? (
+        <Empty icon={Search} title="Nema rezultata" subtitle={`Ništa ne odgovara pretrazi "${searchQuery}"`} />
       ) : (
         <div className="space-y-4">
-          {hypervisors.length > 0 && (
+          {filteredHypervisors.length > 0 && (
             <div>
               <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Hipervizori</p>
               <div className="card p-0 overflow-hidden">
-                <Table columns={hypervisorColumns} rows={hypervisors} />
+                <Table columns={hypervisorColumns} rows={filteredHypervisors} />
               </div>
             </div>
           )}
-          {regularServers.length > 0 && (
+          {filteredRegularServers.length > 0 && (
             <div>
-              {hypervisors.length > 0 && (
+              {filteredHypervisors.length > 0 && (
                 <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Serveri</p>
               )}
               <div className="card p-0 overflow-hidden">
-                <Table columns={regularColumns} rows={regularServers} />
+                <Table columns={regularColumns} rows={filteredRegularServers} />
               </div>
             </div>
           )}

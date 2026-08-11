@@ -1,11 +1,11 @@
 // src/pages/network/NetworkDevices.jsx
 import React, { useState, useEffect, useCallback, memo } from 'react';
-import { Plus, Edit, Trash2, Plug, Router, ArrowDown, ArrowUp, ChevronRight, ChevronDown } from 'lucide-react';
+import { Plus, Edit, Trash2, Plug, Router, ArrowDown, ArrowUp, ChevronRight, ChevronDown, Search, Download } from 'lucide-react';
 import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import {
   StatusBadge, Badge, Modal, ConfirmDialog,
-  Alert, Spinner, Empty, formatNetSpeed,
+  Alert, Spinner, Empty, formatNetSpeed, exportToCsv,
 } from '../../components/ui';
 
 function F({ label, children }) {
@@ -14,7 +14,7 @@ function F({ label, children }) {
 
 const DEVICE_TYPES = [
   { value: 'router',  label: 'Ruter' },
-  { value: 'switch',  label: 'Switch' },
+  { value: 'switch',  label: 'Svic' },
   { value: 'ap',      label: 'Access Point' },
   { value: 'ups',     label: 'UPS' },
   { value: 'other',   label: 'Ostalo' },
@@ -207,6 +207,7 @@ export default function NetworkDevices() {
   const canManage = hasPerm('perm_network_manage');
 
   const [devices, setDevices] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTitle, setModalTitle] = useState('Dodaj uređaj');
@@ -292,9 +293,18 @@ export default function NetworkDevices() {
     return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   }, [devices]);
 
+  const q = searchQuery.trim().toLowerCase();
+  const filteredDevices = React.useMemo(() => {
+    if (!q) return devices;
+    return devices.filter(d => [d.name, d.ip_address, d.vendor, d.model, d.location, d.description]
+      .filter(Boolean).some(v => String(v).toLowerCase().includes(q)));
+  }, [devices, q]);
+
+  // Grupisi uredjaje po lokaciji (bez lokacije ide u posebnu grupu na kraju),
+  // sortirano abecedno unutar svake grupe po imenu.
   const groupedDevices = React.useMemo(() => {
     const groups = {};
-    for (const d of devices) {
+    for (const d of filteredDevices) {
       const key = d.location || '__none__';
       (groups[key] ||= []).push(d);
     }
@@ -303,7 +313,22 @@ export default function NetworkDevices() {
     if (groups.__none__) ordered.push(['Bez lokacije', groups.__none__]);
     for (const [, list] of ordered) list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     return ordered;
-  }, [devices]);
+  }, [filteredDevices]);
+
+  const handleExport = () => {
+    const cols = [
+      { label: 'Naziv', get: d => d.name },
+      { label: 'IP adresa', get: d => d.ip_address },
+      { label: 'Tip', get: d => DEVICE_TYPES.find(t => t.value === d.device_type)?.label || d.device_type },
+      { label: 'Uređaj (proizvođač)', get: d => d.vendor },
+      { label: 'Model', get: d => d.model },
+      { label: 'Lokacija', get: d => d.location },
+      { label: 'Status', get: d => d.status },
+      { label: 'Broj interfejsa', get: d => d.interface_count },
+      { label: 'Interval osvežavanja (s)', get: d => d.poll_interval_sec },
+    ];
+    exportToCsv(`mrezni-uredjaji-${activeTenant?.name || 'export'}`, cols, filteredDevices);
+  };
 
   const columns = [
     { key: 'expand', label: '' },
@@ -322,17 +347,31 @@ export default function NetworkDevices() {
     <div className="space-y-4">
       <div className="flex justify-between items-center">
         <h1 className="text-xl font-semibold">Mrežni uređaji</h1>
-        {canManage && (
-          <button className="btn btn-primary" onClick={openAdd}>
-            <Plus size={16} /> Dodaj uređaj
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input className="input pl-8 py-1.5 text-sm w-48" placeholder="Pretraga..."
+              value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          </div>
+          {devices.length > 0 && (
+            <button className="btn btn-secondary" onClick={handleExport} title="Izvezi u CSV">
+              <Download size={16} />
+            </button>
+          )}
+          {canManage && (
+            <button className="btn btn-primary" onClick={openAdd}>
+              <Plus size={16} /> Dodaj uređaj
+            </button>
+          )}
+        </div>
       </div>
 
       {devices.length === 0 ? (
         <Empty icon={Router} title="Nema mrežnih uređaja"
           subtitle="Dodaj ruter, svič ili AP za SNMP monitoring"
           action={canManage && <button className="btn btn-primary" onClick={openAdd}><Plus size={16} /> Dodaj uređaj</button>} />
+      ) : filteredDevices.length === 0 ? (
+        <Empty icon={Search} title="Nema rezultata" subtitle={`Ništa ne odgovara pretrazi "${searchQuery}"`} />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

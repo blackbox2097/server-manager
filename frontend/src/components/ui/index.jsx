@@ -282,3 +282,28 @@ export function formatNetSpeed(kbps) {
   if (kbps < 1024) return `${kbps.toFixed(1)} KB/s`;
   return `${(kbps / 1024).toFixed(1)} MB/s`;
 }
+
+// ── CSV export ───────────────────────────────────────────────────────────────
+// columns: [{ label: 'Naziv', get: row => row.name }, ...]
+// Kolone su eksplicitne (ne "sve u redu") da izvoz uvek bude citljiv i
+// nezavisan od toga sta se trenutno prikazuje na ekranu (npr. mimo action
+// dugmica, ikonica i sl.).
+export function exportToCsv(filename, columns, rows) {
+  const esc = (val) => {
+    const s = val == null ? '' : String(val);
+    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+  const header = columns.map(c => esc(c.label)).join(',');
+  const lines = rows.map(row => columns.map(c => esc(c.get(row))).join(','));
+  const csv = '\uFEFF' + [header, ...lines].join('\r\n'); // BOM za ispravan UTF-8 prikaz u Excel-u
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
