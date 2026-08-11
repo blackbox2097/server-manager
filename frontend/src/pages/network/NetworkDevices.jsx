@@ -14,7 +14,7 @@ function F({ label, children }) {
 
 const DEVICE_TYPES = [
   { value: 'router',  label: 'Ruter' },
-  { value: 'switch',  label: 'Svic' },
+  { value: 'switch',  label: 'Switch' },
   { value: 'ap',      label: 'Access Point' },
   { value: 'ups',     label: 'UPS' },
   { value: 'other',   label: 'Ostalo' },
@@ -25,14 +25,14 @@ const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, locations, on
   const isEdit = !!device?.id;
 
   const [form, setForm] = useState(() => ({
-    name: '', description: '', ipAddress: '', deviceType: 'other', vendor: '', location: '',
+    name: '', description: '', ipAddress: '', deviceType: 'other', vendor: '', model: '', location: '',
     snmpPort: 161, snmpVersion: 'v2c', community: '',
     v3Username: '', v3SecurityLevel: 'authPriv', v3AuthProtocol: 'SHA', v3AuthPassword: '',
     v3PrivProtocol: 'AES', v3PrivPassword: '',
     pollIntervalSec: 60, rawRetentionHours: 72, rollupBucketMinutes: 1, rollupRetentionDays: 90,
     ...(isEdit ? {
       name: device.name, description: device.description || '', ipAddress: device.ip_address,
-      deviceType: device.device_type, vendor: device.vendor || '', location: device.location || '',
+      deviceType: device.device_type, vendor: device.vendor || '', model: device.model || '', location: device.location || '',
       snmpPort: device.snmp_port, snmpVersion: device.snmp_version,
       pollIntervalSec: device.poll_interval_sec,
     } : {}),
@@ -79,13 +79,16 @@ const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, locations, on
         </F>
         <F label="Proizvođač (opciono)"><input className="input" value={form.vendor} onChange={e => set('vendor', e.target.value)} placeholder="MikroTik, Cisco, Aruba..." /></F>
       </div>
-      <F label="Lokacija (opciono)">
-        <input className="input" list="location-suggestions" value={form.location}
-          onChange={e => set('location', e.target.value)} placeholder="npr. Zemun, Banovci..." />
-        <datalist id="location-suggestions">
-          {locations.map(loc => <option key={loc} value={loc} />)}
-        </datalist>
-      </F>
+      <div className="grid grid-cols-2 gap-3">
+        <F label="Model (opciono)"><input className="input" value={form.model} onChange={e => set('model', e.target.value)} placeholder="RB4011, Catalyst 2960..." /></F>
+        <F label="Lokacija (opciono)">
+          <input className="input" list="location-suggestions" value={form.location}
+            onChange={e => set('location', e.target.value)} placeholder="npr. Zemun, Banovci..." />
+          <datalist id="location-suggestions">
+            {locations.map(loc => <option key={loc} value={loc} />)}
+          </datalist>
+        </F>
+      </div>
 
       <div className="border border-gray-800 rounded-lg p-3 space-y-3">
         <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">SNMP konfiguracija</p>
@@ -304,9 +307,9 @@ export default function NetworkDevices() {
 
   const columns = [
     { key: 'expand', label: '' },
-    { key: 'name', label: 'Uređaj' },
+    { key: 'name', label: 'Naziv' },
     { key: 'device_type', label: 'Tip' },
-    { key: 'vendor', label: 'Proizvođač' },
+    { key: 'vendor', label: 'Uređaj' },
     { key: 'status', label: 'Status' },
     { key: 'interface_count', label: 'Interfejsi' },
     { key: 'poll_interval_sec', label: 'Interval' },
@@ -366,7 +369,14 @@ export default function NetworkDevices() {
                       <td className="py-2.5 px-3 text-gray-300">
                         <Badge color="blue">{DEVICE_TYPES.find(t => t.value === d.device_type)?.label || d.device_type}</Badge>
                       </td>
-                      <td className="py-2.5 px-3 text-gray-300">{d.vendor || '—'}</td>
+                      <td className="py-2.5 px-3 text-gray-300">
+                        {d.vendor || d.model ? (
+                          <div>
+                            {d.vendor && <span>{d.vendor}</span>}
+                            {d.model && <div className="text-xs text-gray-500">{d.model}</div>}
+                          </div>
+                        ) : '—'}
+                      </td>
                       <td className="py-2.5 px-3 text-gray-300"><StatusBadge status={d.status} /></td>
                       <td className="py-2.5 px-3 text-gray-300">{d.interface_count}</td>
                       <td className="py-2.5 px-3 text-gray-300">{d.poll_interval_sec}s</td>
