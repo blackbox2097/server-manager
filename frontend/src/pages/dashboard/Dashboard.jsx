@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Server, Wifi, WifiOff, AlertTriangle, PlayCircle, CheckCircle2,
-  XCircle, Loader2, Terminal as TerminalIcon, Mail, FileText, X
+  XCircle, Loader2, Terminal as TerminalIcon, Mail, FileText, X, Router
 } from 'lucide-react';
 import api from '../../services/api';
 import ws from '../../services/ws';
@@ -101,10 +101,13 @@ export default function Dashboard() {
 
   const [stats,       setStats]       = useState({ total: 0, online: 0, warning: 0, offline: 0, envCounts: {}, osCounts: {} });
   const [problems,    setProblems]    = useState([]);
+  const [networkStats,    setNetworkStats]    = useState({ total: 0, online: 0, warning: 0, offline: 0 });
+  const [networkProblems, setNetworkProblems] = useState([]);
   const [executions,  setExecutions]  = useState([]);
   const [recentLogs,  setRecentLogs]  = useState([]);
   const [sendingReport, setSendingReport] = useState(null);
   const [dismissing,  setDismissing]  = useState(null);
+  const [dismissingDevice, setDismissingDevice] = useState(null);
   const [loading,     setLoading]     = useState(true);
 
   const canRunScripts = hasPerm('perm_scripts_run');
@@ -112,22 +115,33 @@ export default function Dashboard() {
   const fetchProblems = useCallback(async () => {
     try {
       const { data } = await api.get('/dashboard/problems');
-      setProblems(data);
+      setProblems(Array.isArray(data) ? data : []);
+    } catch {}
+  }, []);
+
+  const fetchNetworkProblems = useCallback(async () => {
+    try {
+      const { data } = await api.get('/dashboard/network-problems');
+      setNetworkProblems(Array.isArray(data) ? data : []);
     } catch {}
   }, []);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [statsRes, probRes, execRes, logRes] = await Promise.all([
+      const [statsRes, probRes, netStatsRes, netProbRes, execRes, logRes] = await Promise.all([
         api.get('/dashboard/stats').catch(() => ({ data: null })),
         api.get('/dashboard/problems').catch(() => ({ data: [] })),
+        api.get('/dashboard/network-stats').catch(() => ({ data: null })),
+        api.get('/dashboard/network-problems').catch(() => ({ data: [] })),
         api.get('/dashboard/executions?limit=5').catch(() => ({ data: [] })),
         api.get('/dashboard/logs?limit=6').catch(() => ({ data: [] })),
       ]);
       if (statsRes.data) setStats(statsRes.data);
-      setProblems(probRes.data);
-      setExecutions(execRes.data);
-      setRecentLogs(logRes.data);
+      setProblems(Array.isArray(probRes.data) ? probRes.data : []);
+      if (netStatsRes.data) setNetworkStats(netStatsRes.data);
+      setNetworkProblems(Array.isArray(netProbRes.data) ? netProbRes.data : []);
+      setExecutions(Array.isArray(execRes.data) ? execRes.data : []);
+      setRecentLogs(Array.isArray(logRes.data) ? logRes.data : []);
     } catch {}
     setLoading(false);
   }, []);
@@ -142,6 +156,19 @@ export default function Dashboard() {
       setProblems(prevProblems); // vrati ako je dismiss neuspesan
     } finally {
       setDismissing(null);
+    }
+  };
+
+  const handleDismissDevice = async (deviceId) => {
+    setDismissingDevice(deviceId);
+    const prevProblems = networkProblems;
+    setNetworkProblems(prev => prev.filter(p => p.id !== deviceId)); // optimisticno
+    try {
+      await api.post(`/dashboard/dismiss-device/${deviceId}`);
+    } catch {
+      setNetworkProblems(prevProblems);
+    } finally {
+      setDismissingDevice(null);
     }
   };
 
@@ -161,18 +188,19 @@ export default function Dashboard() {
 
     const unsub = ws.on('metrics', (data) => {
       setProblems(prev => {
-        const idx = prev.findIndex(p => p.id === data.serverId);
+        const list = Array.isArray(prev) ? prev : [];
+        const idx = list.findIndex(p => p.id === data.serverId);
         if (data.status === 'online') {
           // oporavak — vise nije problem, ukloni ako je bio prikazan
-          return idx === -1 ? prev : prev.filter(p => p.id !== data.serverId);
+          return idx === -1 ? list : list.filter(p => p.id !== data.serverId);
         }
         if (data.status === 'warning' || data.status === 'offline') {
           if (idx === -1) {
             // nov problem koji lista jos nema (treba nam ime/tenant/itd.) — dovuci ceo spisak
             fetchProblems();
-            return prev;
+            return list;
           }
-          const next = [...prev];
+          const next = [...list];
           next[idx] = {
             ...next[idx], status: data.status, last_error: data.error || null,
             cpu_percent: data.metrics?.cpu ?? next[idx].cpu_percent,
@@ -183,7 +211,7 @@ export default function Dashboard() {
           };
           return next;
         }
-        return prev;
+        return list;
       });
     });
 
@@ -191,9 +219,29 @@ export default function Dashboard() {
       api.get('/dashboard/executions?limit=5').then(r => setExecutions(r.data)).catch(() => {});
     });
 
+    const unsubNet = ws.on('network_status', (data) => {
+      setNetworkProblems(prev => {
+        const list = Array.isArray(prev) ? prev : [];
+        const idx = list.findIndex(p => p.id === data.deviceId);
+        if (data.status === 'online') {
+          return idx === -1 ? list : list.filter(p => p.id !== data.deviceId);
+        }
+        if (data.status === 'warning' || data.status === 'offline') {
+          if (idx === -1) {
+            fetchNetworkProblems();
+            return list;
+          }
+          const next = [...list];
+          next[idx] = { ...next[idx], status: data.status, last_error: data.error || null };
+          return next;
+        }
+        return list;
+      });
+    });
+
     if (accessToken) ws.connect(accessToken);
 
-    return () => { unsub(); unsubExec(); };
+    return () => { unsub(); unsubExec(); unsubNet(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
@@ -215,6 +263,19 @@ export default function Dashboard() {
     }
     groups[groupIndex.get(p.tenant_id)].items.push(p);
   }
+
+  // Isto grupisanje za mrezne uredjaje
+  const networkGroups = [];
+  const networkGroupIndex = new Map();
+  for (const p of networkProblems) {
+    if (!networkGroupIndex.has(p.tenant_id)) {
+      networkGroupIndex.set(p.tenant_id, networkGroups.length);
+      networkGroups.push({ tenantId: p.tenant_id, tenantName: p.tenant_name, items: [] });
+    }
+    networkGroups[networkGroupIndex.get(p.tenant_id)].items.push(p);
+  }
+
+  const DEVICE_TYPE_LABELS = { router: 'Ruter', switch: 'Svič', ap: 'Access Point', ups: 'UPS', other: 'Uređaj' };
 
   return (
     <div className="space-y-6">
@@ -249,22 +310,35 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Mrezni uredjaji — semafor (isti obrazac kao za servere) */}
+      {networkStats.total > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <StatCard icon={Router}   label="Ukupno mrežnih uređaja" value={networkStats.total} />
+          <StatCard icon={Wifi}     label="Online"     value={networkStats.online}  color="text-green-400" />
+          <StatCard icon={AlertTriangle} label="Upozorenje" value={networkStats.warning} color="text-yellow-400" />
+          <StatCard icon={WifiOff}  label="Offline"    value={networkStats.offline} color="text-red-400" />
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Problematicni serveri — cross-tenant, grupisano */}
-        <div className="lg:col-span-2 card p-0 overflow-hidden">
+        {/* Problematicni serveri + Problematicni mrezni uredjaji — jedna ispod druge,
+            svaka ogranicene visine sa internim skrolom (deljen prostor umesto da
+            server panel raste bez granice) */}
+        <div className="lg:col-span-2 space-y-4">
+        <div className="card p-0 overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-800">
             <h2 className="text-sm font-medium text-gray-300">Problematični serveri</h2>
           </div>
           {groups.length === 0 ? (
-            <div className="py-12 text-center text-gray-600 text-sm flex flex-col items-center gap-2">
-              <CheckCircle2 size={28} className="text-green-600" />
+            <div className="py-8 text-center text-gray-600 text-sm flex flex-col items-center gap-2">
+              <CheckCircle2 size={24} className="text-green-600" />
               Sve je u redu — nema aktivnih problema
             </div>
           ) : (
-            <div>
+            <div className="h-72 overflow-y-auto">
               {groups.map(group => (
                 <div key={group.tenantId}>
-                  <div className="px-4 py-1.5 bg-gray-900/50 text-[11px] font-medium text-gray-500 uppercase tracking-wider">
+                  <div className="px-4 py-1.5 bg-gray-900/50 text-[11px] font-medium text-gray-500 uppercase tracking-wider sticky top-0">
                     {group.tenantName}
                   </div>
                   <div className="divide-y divide-gray-800/50">
@@ -301,7 +375,7 @@ export default function Dashboard() {
                             </div>
                           </div>
                         ) : (
-                          <span className="text-xs text-gray-600 hidden sm:block max-w-[200px] truncate">
+                          <span className="text-xs text-gray-600 max-w-[220px] truncate">
                             {server.last_error?.slice(0, 40) || 'Nedostupan'}
                           </span>
                         )}
@@ -319,6 +393,62 @@ export default function Dashboard() {
               ))}
             </div>
           )}
+        </div>
+
+        <div className="card p-0 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-800">
+            <h2 className="text-sm font-medium text-gray-300">Problematični mrežni uređaji</h2>
+          </div>
+          {networkGroups.length === 0 ? (
+            <div className="py-8 text-center text-gray-600 text-sm flex flex-col items-center gap-2">
+              <CheckCircle2 size={24} className="text-green-600" />
+              Sve je u redu — nema aktivnih problema
+            </div>
+          ) : (
+            <div className="h-72 overflow-y-auto">
+              {networkGroups.map(group => (
+                <div key={group.tenantId}>
+                  <div className="px-4 py-1.5 bg-gray-900/50 text-[11px] font-medium text-gray-500 uppercase tracking-wider sticky top-0">
+                    {group.tenantName}
+                  </div>
+                  <div className="divide-y divide-gray-800/50">
+                    {group.items.map(device => (
+                      <div key={device.id} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800/30 transition-colors">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-200 truncate">{device.name}</span>
+                            <span className="text-xs text-gray-600">{device.ip_address}</span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className={device.status === 'offline' ? 'badge-red' : 'badge-yellow'}>
+                              <span className="w-1.5 h-1.5 rounded-full bg-current inline-block mr-1" />
+                              {device.status === 'offline' ? 'Offline' : 'Upozorenje'}
+                            </span>
+                            <span className="text-xs text-gray-600">
+                              <Router size={10} className="inline -mt-0.5 mr-0.5" />
+                              {DEVICE_TYPE_LABELS[device.device_type] || device.device_type}
+                            </span>
+                            {device.location && <span className="text-xs text-gray-600">📍 {device.location}</span>}
+                          </div>
+                        </div>
+                        <span className="text-xs text-gray-600 max-w-[220px] truncate">
+                          {device.last_error?.slice(0, 40) || (device.vendor ? `${device.vendor}${device.model ? ' ' + device.model : ''}` : 'Nedostupan')}
+                        </span>
+                        <button
+                          className="btn-ghost py-1.5 px-1.5 text-gray-600 hover:text-gray-300 flex-shrink-0"
+                          disabled={dismissingDevice === device.id}
+                          onClick={() => handleDismissDevice(device.id)}
+                          title="Sakrij (ponovo se pojavljuje pri sledecoj promeni statusa)">
+                          {dismissingDevice === device.id ? <Spinner size={14} /> : <X size={14} />}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         </div>
 
         {/* Poslednja izvrsavanja + Poslednje aktivnosti — cross-tenant */}

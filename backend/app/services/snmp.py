@@ -26,6 +26,7 @@ from app.config import get_settings
 from app.database import fetch, fetchrow, execute
 from app.services.crypto import decrypt
 from app.services.monitor import scheduler
+from app.services.ws_manager import ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +301,10 @@ async def _poll_and_save(device: dict):
             "UPDATE network_devices SET status=$1, last_error=$2 WHERE id=$3",
             display_status, err, did,
         )
+        await ws_manager.broadcast("network_status", {
+            "deviceId": str(did), "tenantId": str(device["tenant_id"]),
+            "status": display_status, "error": err,
+        }, tenant_id=str(device["tenant_id"]))
         if confirmed and old_status and old_status != "offline":
             await _log_status_transition(device, old_status, "offline", error=err)
         return
@@ -314,6 +319,10 @@ async def _poll_and_save(device: dict):
            WHERE id=$4""",
         display_status, result["sys_descr"][:500], result["sys_uptime_ticks"], did,
     )
+    await ws_manager.broadcast("network_status", {
+        "deviceId": str(did), "tenantId": str(device["tenant_id"]),
+        "status": display_status,
+    }, tenant_id=str(device["tenant_id"]))
 
     if confirmed and old_status and old_status != confirmed:
         await _log_status_transition(device, old_status, confirmed)
@@ -364,6 +373,10 @@ async def _poll_guarded(device: dict):
                 "UPDATE network_devices SET status=$1, last_error=$2 WHERE id=$3",
                 display_status, err, device["id"],
             )
+            await ws_manager.broadcast("network_status", {
+                "deviceId": str(device["id"]), "tenantId": str(device["tenant_id"]),
+                "status": display_status, "error": err,
+            }, tenant_id=str(device["tenant_id"]))
             if confirmed and old_status and old_status != "offline":
                 await _log_status_transition(device, old_status, "offline", error=err)
         except Exception:

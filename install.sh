@@ -572,6 +572,18 @@ ALTER TABLE tenants ADD COLUMN IF NOT EXISTS alert_network_offline BOOLEAN NOT N
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS alert_network_recovery BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS alert_network_warning BOOLEAN NOT NULL DEFAULT false;
 
+-- Dashboard "problematicni mrezni uredjaji" panel -- dashboard_dismissals
+-- prosiren da podrzi i device_id (pored postojeceg server_id), tacno jedan
+-- od ta dva mora biti postavljen. Odluka od 11.8.2026.
+ALTER TABLE dashboard_dismissals ALTER COLUMN server_id DROP NOT NULL;
+ALTER TABLE dashboard_dismissals ADD COLUMN IF NOT EXISTS device_id UUID REFERENCES network_devices(id) ON DELETE CASCADE;
+ALTER TABLE dashboard_dismissals DROP CONSTRAINT IF EXISTS dashboard_dismissals_target_check;
+ALTER TABLE dashboard_dismissals ADD CONSTRAINT dashboard_dismissals_target_check CHECK (
+    (server_id IS NOT NULL AND device_id IS NULL) OR (server_id IS NULL AND device_id IS NOT NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS dashboard_dismissals_device_unique
+    ON dashboard_dismissals (operator_id, device_id) WHERE device_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS network_device_interfaces (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id       UUID        NOT NULL REFERENCES network_devices(id) ON DELETE CASCADE,
