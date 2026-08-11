@@ -562,6 +562,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS network_devices_name_tenant_active_unique
 ALTER TABLE network_devices ADD COLUMN IF NOT EXISTS location TEXT;
 CREATE INDEX IF NOT EXISTS idx_network_devices_location ON network_devices (tenant_id, location);
 
+-- Model uredjaja (npr. "RB4011", "Catalyst 2960") -- prosto tekstualno polje,
+-- isti duh kao vendor/location. Odluka od 11.8.2026.
+ALTER TABLE network_devices ADD COLUMN IF NOT EXISTS model TEXT;
+
+-- Alarmi za mrezne uredjaje -- odvojeni toggle-i od server alarma (odluka od
+-- 11.8.2026, ista podela kao alert_on_offline/recovery/warning za servere).
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS alert_network_offline BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS alert_network_recovery BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS alert_network_warning BOOLEAN NOT NULL DEFAULT false;
+
 CREATE TABLE IF NOT EXISTS network_device_interfaces (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id       UUID        NOT NULL REFERENCES network_devices(id) ON DELETE CASCADE,

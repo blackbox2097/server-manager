@@ -9,6 +9,15 @@ const TRIGGERS = [
   { key: 'alertOnOffline',          dbKey: 'alert_on_offline',           label: 'Server ode offline' },
   { key: 'alertOnRecovery',         dbKey: 'alert_on_recovery',          label: 'Server se oporavi (vrati online)' },
   { key: 'alertOnWarning',          dbKey: 'alert_on_warning',           label: 'Visoko opterećenje (CPU/RAM/Disk > 90%)' },
+];
+
+const NETWORK_TRIGGERS = [
+  { key: 'alertNetworkOffline',     dbKey: 'alert_network_offline',      label: 'Mrežni uređaj ode offline' },
+  { key: 'alertNetworkRecovery',    dbKey: 'alert_network_recovery',     label: 'Mrežni uređaj se oporavi (vrati online)' },
+  { key: 'alertNetworkWarning',     dbKey: 'alert_network_warning',      label: 'Upozorenje na mrežnom uređaju' },
+];
+
+const EXECUTION_TRIGGERS = [
   { key: 'alertOnExecutionFailure', dbKey: 'alert_on_execution_failure', label: 'Neuspešno izvršavanje skripte' },
   { key: 'alertOnExecutionReport',  dbKey: 'alert_on_execution_report',  label: 'Izveštaj posle SVAKOG izvršavanja skripte' },
 ];
@@ -111,8 +120,34 @@ export default function Alerts() {
       </div>
 
       <div className="card space-y-3">
-        <p className="text-sm font-medium text-gray-300">Kada slati alarme</p>
+        <p className="text-sm font-medium text-gray-300">Serveri — kada slati alarme</p>
         {TRIGGERS.map(t => (
+          <label key={t.key} className="flex items-center justify-between cursor-pointer py-1">
+            <span className="text-sm text-gray-400">{t.label}</span>
+            <input type="checkbox" className="accent-brand-500 w-4 h-4"
+              checked={settings?.[t.dbKey] || false}
+              disabled={!canManage || !settings?.alerts_enabled}
+              onChange={e => updateSetting(t.dbKey, t.key, e.target.checked)} />
+          </label>
+        ))}
+      </div>
+
+      <div className="card space-y-3">
+        <p className="text-sm font-medium text-gray-300">Mrežni uređaji — kada slati alarme</p>
+        {NETWORK_TRIGGERS.map(t => (
+          <label key={t.key} className="flex items-center justify-between cursor-pointer py-1">
+            <span className="text-sm text-gray-400">{t.label}</span>
+            <input type="checkbox" className="accent-brand-500 w-4 h-4"
+              checked={settings?.[t.dbKey] || false}
+              disabled={!canManage || !settings?.alerts_enabled}
+              onChange={e => updateSetting(t.dbKey, t.key, e.target.checked)} />
+          </label>
+        ))}
+      </div>
+
+      <div className="card space-y-3">
+        <p className="text-sm font-medium text-gray-300">Izvršavanje skripti — kada slati alarme</p>
+        {EXECUTION_TRIGGERS.map(t => (
           <label key={t.key} className="flex items-center justify-between cursor-pointer py-1">
             <span className="text-sm text-gray-400">{t.label}</span>
             <input type="checkbox" className="accent-brand-500 w-4 h-4"

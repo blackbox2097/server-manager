@@ -14,6 +14,9 @@ class AlertSettingsUp(BaseModel):
     alertOnOffline:           bool | None = None
     alertOnRecovery:          bool | None = None
     alertOnWarning:           bool | None = None
+    alertNetworkOffline:      bool | None = None
+    alertNetworkRecovery:     bool | None = None
+    alertNetworkWarning:      bool | None = None
     alertOnExecutionFailure:  bool | None = None
     alertOnExecutionReport:   bool | None = None
 
@@ -28,8 +31,9 @@ class RecipientIn(BaseModel):
 async def get_alert_settings(tid: str, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user)
     row = await fetchrow(
-        """SELECT alerts_enabled, alert_on_offline, alert_on_recovery,
-                  alert_on_warning, alert_on_execution_failure, alert_on_execution_report
+        """SELECT alerts_enabled, alert_on_offline, alert_on_recovery, alert_on_warning,
+                  alert_network_offline, alert_network_recovery, alert_network_warning,
+                  alert_on_execution_failure, alert_on_execution_report
            FROM tenants WHERE id=$1""", tid)
     if not row:
         raise HTTPException(404, "Tenant nije pronadjen")
@@ -45,13 +49,18 @@ async def update_alert_settings(tid: str, body: AlertSettingsUp, user=Depends(ge
              alert_on_offline           = COALESCE($2, alert_on_offline),
              alert_on_recovery          = COALESCE($3, alert_on_recovery),
              alert_on_warning           = COALESCE($4, alert_on_warning),
-             alert_on_execution_failure = COALESCE($5, alert_on_execution_failure),
-             alert_on_execution_report  = COALESCE($6, alert_on_execution_report)
-           WHERE id=$7
-           RETURNING alerts_enabled, alert_on_offline, alert_on_recovery,
-                     alert_on_warning, alert_on_execution_failure, alert_on_execution_report""",
-        body.alertsEnabled, body.alertOnOffline, body.alertOnRecovery,
-        body.alertOnWarning, body.alertOnExecutionFailure, body.alertOnExecutionReport,
+             alert_network_offline      = COALESCE($5, alert_network_offline),
+             alert_network_recovery     = COALESCE($6, alert_network_recovery),
+             alert_network_warning      = COALESCE($7, alert_network_warning),
+             alert_on_execution_failure = COALESCE($8, alert_on_execution_failure),
+             alert_on_execution_report  = COALESCE($9, alert_on_execution_report)
+           WHERE id=$10
+           RETURNING alerts_enabled, alert_on_offline, alert_on_recovery, alert_on_warning,
+                     alert_network_offline, alert_network_recovery, alert_network_warning,
+                     alert_on_execution_failure, alert_on_execution_report""",
+        body.alertsEnabled, body.alertOnOffline, body.alertOnRecovery, body.alertOnWarning,
+        body.alertNetworkOffline, body.alertNetworkRecovery, body.alertNetworkWarning,
+        body.alertOnExecutionFailure, body.alertOnExecutionReport,
         tid)
     if not row:
         raise HTTPException(404, "Tenant nije pronadjen")

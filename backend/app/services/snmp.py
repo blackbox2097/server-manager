@@ -84,6 +84,58 @@ _PRIV_PROTOCOLS = {
 }
 
 
+# device_id -> {"candidate": status_str, "count": int} -- debounce kes,
+# isti duh kao monitor._status_pending za servere (izbegava flapping alarme).
+_status_pending: dict[str, dict] = {}
+
+
+def _confirm_status(device_id: str, old_status: str | None, raw_status: str) -> str | None:
+    """Identicna logika kao monitor._confirm_status, samo odvojen kes (_status_pending
+    iznad) da SNMP i server debounce ne dele stanje -- razlicite skale poll intervala."""
+    cfg = get_settings()
+    did = str(device_id)
+
+    if not old_status or old_status == "unknown":
+        _status_pending.pop(did, None)
+        return raw_status
+
+    if raw_status == old_status:
+        _status_pending.pop(did, None)
+        return None
+
+    pending = _status_pending.get(did)
+    if pending and pending["candidate"] == raw_status:
+        pending["count"] += 1
+    else:
+        pending = {"candidate": raw_status, "count": 1}
+    _status_pending[did] = pending
+
+    if pending["count"] >= cfg.status_debounce_polls:
+        _status_pending.pop(did, None)
+        return raw_status
+    return None
+
+
+async def _log_status_transition(device: dict, old_status: str, new_status: str, error: str | None = None):
+    from app.services.audit import log_event
+    from app.services.notify import notify_network_device_status
+
+    is_recovery = new_status == "online" and old_status in ("warning", "offline")
+    action = "networkdevice.recovery" if is_recovery else f"networkdevice.status_{new_status}"
+
+    asyncio.create_task(log_event(
+        action, tenant_id=str(device["tenant_id"]),
+        resource_type="network_device", resource_id=str(device["id"]),
+        details={"name": device["name"], "from": old_status, "to": new_status},
+        success=(new_status != "offline"), error_message=error,
+    ))
+
+    notify_dev = dict(device)
+    if error:
+        notify_dev["last_error"] = error
+    asyncio.create_task(notify_network_device_status(notify_dev, old_status, new_status))
+
+
 class SNMPError(Exception):
     pass
 
@@ -236,23 +288,35 @@ async def _poll(device: dict) -> dict:
 
 async def _poll_and_save(device: dict):
     did = device["id"]
+    old_status = device.get("status")  # POTVRDJEN status pre ovog poll-a
     try:
         result = await _poll(device)
     except Exception as e:
+        err = str(e)[:500]
         logger.warning(f"SNMP poll neuspeo za {device.get('name', did)}: {e}")
+        confirmed = _confirm_status(did, old_status, "offline")
+        display_status = confirmed or old_status or "offline"
         await execute(
-            "UPDATE network_devices SET status='offline', last_error=$1 WHERE id=$2",
-            str(e)[:500], did,
+            "UPDATE network_devices SET status=$1, last_error=$2 WHERE id=$3",
+            display_status, err, did,
         )
+        if confirmed and old_status and old_status != "offline":
+            await _log_status_transition(device, old_status, "offline", error=err)
         return
+
+    confirmed = _confirm_status(did, old_status, "online")
+    display_status = confirmed or old_status or "online"
 
     await execute(
         """UPDATE network_devices
-           SET status='online', last_seen_at=NOW(), last_error=NULL,
-               sys_descr=$1, sys_uptime_ticks=$2
-           WHERE id=$3""",
-        result["sys_descr"][:500], result["sys_uptime_ticks"], did,
+           SET status=$1, last_seen_at=NOW(), last_error=NULL,
+               sys_descr=$2, sys_uptime_ticks=$3
+           WHERE id=$4""",
+        display_status, result["sys_descr"][:500], result["sys_uptime_ticks"], did,
     )
+
+    if confirmed and old_status and old_status != confirmed:
+        await _log_status_transition(device, old_status, confirmed)
 
     for iface in result["interfaces"]:
         iface_row = await fetchrow(
@@ -287,16 +351,21 @@ async def _poll_and_save(device: dict):
 async def _poll_guarded(device: dict):
     cfg = get_settings()
     _last_polled[str(device["id"])] = time.time()
+    old_status = device.get("status")
     try:
         await asyncio.wait_for(_poll_and_save(device), timeout=cfg.snmp_poll_watchdog_sec)
     except asyncio.TimeoutError:
         err = f"Watchdog timeout ({cfg.snmp_poll_watchdog_sec}s)"
         logger.error(f"{device.get('name', device.get('id'))}: {err}")
         try:
+            confirmed = _confirm_status(device["id"], old_status, "offline")
+            display_status = confirmed or old_status or "offline"
             await execute(
-                "UPDATE network_devices SET status='offline', last_error=$1 WHERE id=$2",
-                err, device["id"],
+                "UPDATE network_devices SET status=$1, last_error=$2 WHERE id=$3",
+                display_status, err, device["id"],
             )
+            if confirmed and old_status and old_status != "offline":
+                await _log_status_transition(device, old_status, "offline", error=err)
         except Exception:
             logger.exception("Greska pri obradi SNMP watchdog timeout-a")
 

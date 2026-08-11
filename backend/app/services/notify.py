@@ -129,6 +129,55 @@ async def notify_server_status(server: dict, old_status: str, new_status: str, m
     asyncio.create_task(send_email(recipients, subject, body))
 
 
+async def notify_network_device_status(device: dict, old_status: str, new_status: str):
+    """Poziva se iz snmp.py pri potvrdjenoj promeni statusa mreznog uredjaja.
+    Ogledalo notify_server_status, ali koristi ODVOJENE tenant toggle-e
+    (alert_network_offline/recovery/warning), ne alert_on_offline/recovery/warning
+    koji vaze za servere -- svesna odluka od 11.8.2026 da se alarmi mogu
+    nezavisno ukljuciti/iskljuciti po tipu (server vs. mrezni uredjaj)."""
+    if old_status == new_status:
+        return
+
+    tenant = await fetchrow(
+        "SELECT alerts_enabled, alert_network_offline, alert_network_recovery, alert_network_warning "
+        "FROM tenants WHERE id=$1",
+        device["tenant_id"]
+    )
+    if not tenant or not tenant["alerts_enabled"]:
+        return
+
+    is_recovery = new_status == "online" and old_status in ("offline", "warning")
+    is_offline  = new_status == "offline"
+    is_warning  = new_status == "warning" and old_status != "offline"
+
+    should_send = (
+        (is_offline  and tenant["alert_network_offline"]) or
+        (is_recovery and tenant["alert_network_recovery"]) or
+        (is_warning  and tenant["alert_network_warning"])
+    )
+    if not should_send:
+        return
+
+    recipients = await get_recipients(str(device["tenant_id"]))
+    if not recipients:
+        return
+
+    kind = "OFFLINE" if is_offline else ("OPORAVAK" if is_recovery else "UPOZORENJE")
+    color = "#ef4444" if is_offline else ("#22c55e" if is_recovery else "#eab308")
+
+    subject = f"[Server Manager] {kind}: {device['name']} (mrežni uređaj)"
+    body = f"""
+    <div style="font-family: -apple-system, sans-serif; max-width: 500px;">
+      <h2 style="color:{color};">{kind}: {device['name']}</h2>
+      <p><strong>Mrežni uređaj:</strong> {device['name']} ({device['ip_address']})</p>
+      <p><strong>Status:</strong> {_status_label(old_status)} → {_status_label(new_status)}</p>
+      {f"<p><strong>Greška:</strong> {device.get('last_error', '')[:300]}</p>" if is_offline and device.get('last_error') else ""}
+      <p style="color:#888; font-size:12px; margin-top:20px;">Server Manager — automatska obavest</p>
+    </div>
+    """
+    asyncio.create_task(send_email(recipients, subject, body))
+
+
 async def notify_execution(execution_id: str):
     """Poziva se nakon svakog rucno pokrenutog izvrsavanja skripte (Execute stranica).
     Zakazani poslovi imaju SOPSTVENU logiku (notify_scheduled_execution) — ne prolaze ovuda."""
