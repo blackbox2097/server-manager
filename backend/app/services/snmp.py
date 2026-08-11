@@ -140,29 +140,38 @@ def _fmt_mac(raw) -> str | None:
 
 async def _poll(device: dict) -> dict:
     engine = SnmpEngine()
-    auth   = _build_auth(device)
-    target = await UdpTransportTarget.create(
-        (str(device["ip_address"]), device["snmp_port"]), timeout=3, retries=1
-    )
+    try:
+        auth   = _build_auth(device)
+        target = await UdpTransportTarget.create(
+            (str(device["ip_address"]), device["snmp_port"]), timeout=3, retries=1
+        )
 
-    err_indication, err_status, err_index, var_binds = await get_cmd(
-        engine, auth, target, ContextData(),
-        ObjectType(ObjectIdentity(SYS_DESCR_OID)),
-        ObjectType(ObjectIdentity(SYS_UPTIME_OID)),
-    )
-    if err_indication:
-        raise SNMPError(str(err_indication))
-    if err_status:
-        raise SNMPError(f"{err_status.prettyPrint()} pri sys GET")
-    sys_descr  = str(var_binds[0][1])
-    sys_uptime = int(var_binds[1][1])
+        err_indication, err_status, err_index, var_binds = await get_cmd(
+            engine, auth, target, ContextData(),
+            ObjectType(ObjectIdentity(SYS_DESCR_OID)),
+            ObjectType(ObjectIdentity(SYS_UPTIME_OID)),
+        )
+        if err_indication:
+            raise SNMPError(str(err_indication))
+        if err_status:
+            raise SNMPError(f"{err_status.prettyPrint()} pri sys GET")
+        sys_descr  = str(var_binds[0][1])
+        sys_uptime = int(var_binds[1][1])
 
-    cols: dict[str, dict[int, object]] = {}
-    for name, oid in {**IF_COLUMNS, **IFX_COLUMNS}.items():
-        try:
-            cols[name] = await _walk_column(engine, target, auth, oid)
-        except SNMPError:
-            cols[name] = {}  # vendor mozda ne podrzava ifXTable -- nastavi bez nje
+        cols: dict[str, dict[int, object]] = {}
+        for name, oid in {**IF_COLUMNS, **IFX_COLUMNS}.items():
+            try:
+                cols[name] = await _walk_column(engine, target, auth, oid)
+            except SNMPError:
+                cols[name] = {}  # vendor mozda ne podrzava ifXTable -- nastavi bez nje
+    finally:
+        # KRITICNO: SnmpEngine otvara UDP socket (transport dispatcher) koji
+        # se NIKAD ne zatvara sam od sebe. Bez ovoga, svaki poll ostavlja
+        # jedan otvoren fajl-deskriptor zauvek -- sa ~10 uredjaja na svakih
+        # ~60s to je na hiljade procurelih socket-a kroz par dana rada, sto
+        # je izazvalo curenje memorije (12.6GB) i pad aplikacije 11.8.2026.
+        # Potvrdjeno testom: 20 poll-ova bez ovoga = +20 FD-ova, sa ovim = +1.
+        engine.close_dispatcher()
 
     if_indexes = set()
     for c in cols.values():
