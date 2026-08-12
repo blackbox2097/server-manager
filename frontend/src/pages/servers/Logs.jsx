@@ -28,6 +28,9 @@ export function actionLabel(action) {
     'server.restart': 'Server restartovan',
     'server.status_warning': 'Upozorenje počelo', 'server.status_offline': 'Server nedostupan',
     'server.status_online': 'Server online', 'server.recovery': 'Server se oporavio',
+    'networkdevice.create': 'Mrežni uređaj dodat', 'networkdevice.update': 'Mrežni uređaj izmenjen', 'networkdevice.delete': 'Mrežni uređaj obrisan',
+    'networkdevice.status_warning': 'Upozorenje počelo', 'networkdevice.status_offline': 'Mrežni uređaj nedostupan',
+    'networkdevice.status_online': 'Mrežni uređaj online', 'networkdevice.recovery': 'Mrežni uređaj se oporavio',
     'script.create': 'Skripta dodata', 'script.update': 'Skripta izmenjena', 'script.delete': 'Skripta obrisana',
     'script.execute': 'Skripta izvrsena',
     'schedule.create': 'Zakazivanje dodato', 'schedule.update': 'Zakazivanje izmenjeno',
@@ -90,6 +93,23 @@ function detailsSummary(log) {
   }
   if (log.action.startsWith('server.status_') && d.name) {
     return <div className="truncate">Server: {d.name} ({d.from} → {d.to})</div>;
+  }
+  if (log.action === 'networkdevice.status_warning' || log.action === 'networkdevice.status_offline') {
+    return (
+      <>
+        {d.name && <div className="truncate">Uređaj: {d.name}</div>}
+      </>
+    );
+  }
+  if (log.action === 'networkdevice.recovery' || (log.action === 'networkdevice.status_online' && d.from && d.from !== 'unknown')) {
+    return (
+      <>
+        {d.name && <div className="truncate">Uređaj: {d.name} — bio u stanju "{d.from === 'warning' ? 'upozorenje' : 'offline'}"</div>}
+      </>
+    );
+  }
+  if (['networkdevice.create', 'networkdevice.update', 'networkdevice.delete'].includes(log.action) && d.name) {
+    return <div className="truncate">Uređaj: {d.name}</div>;
   }
   if (['server.create', 'server.update', 'server.delete', 'server.restart'].includes(log.action) && d.name) {
     return <div className="truncate">Server: {d.name}{d.ipAddress ? ` (${d.ipAddress})` : ''}</div>;
@@ -182,6 +202,23 @@ function detailsExpanded(log) {
     return (
       <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
         <div>Server: <span className="text-gray-300">{d.name}</span> ({STATUS_LABELS[d.from] || d.from} -&gt; {STATUS_LABELS[d.to] || d.to})</div>
+      </div>
+    );
+  }
+  if (log.action === 'networkdevice.status_warning' || log.action === 'networkdevice.status_offline' || log.action === 'networkdevice.recovery' || log.action === 'networkdevice.status_online') {
+    return (
+      <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
+        {d.name && <div>Uređaj: <span className="text-gray-300">{d.name}</span></div>}
+        {(d.from || d.to) && (
+          <div>Status: {STATUS_LABELS[d.from] || d.from} -&gt; {STATUS_LABELS[d.to] || d.to}</div>
+        )}
+      </div>
+    );
+  }
+  if (['networkdevice.create', 'networkdevice.update', 'networkdevice.delete'].includes(log.action) && d.name) {
+    return (
+      <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
+        <div>Uređaj: <span className="text-gray-300">{d.name}</span></div>
       </div>
     );
   }
