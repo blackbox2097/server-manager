@@ -1,7 +1,9 @@
 // src/pages/network/NetworkDevices.jsx
 import React, { useState, useEffect, useCallback, memo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Plus, Edit, Trash2, Plug, Router, ArrowDown, ArrowUp, ChevronRight, ChevronDown, Search, Download } from 'lucide-react';
 import api from '../../services/api';
+import ws from '../../services/ws';
 import useAuthStore from '../../store/authStore';
 import {
   StatusBadge, Badge, Modal, ConfirmDialog,
@@ -206,6 +208,7 @@ export default function NetworkDevices() {
   const tenantId  = activeTenant?.id;
   const canManage = hasPerm('perm_network_manage');
 
+  const [searchParams, setSearchParams] = useSearchParams();
   const [devices, setDevices] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -230,6 +233,14 @@ export default function NetworkDevices() {
   }, [tenantId]);
 
   useEffect(() => { fetchDevices(); }, [fetchDevices]);
+  useEffect(() => {
+    const unsub = ws.on('network_status', (data) => {
+      setDevices(prev => prev.map(d => d.id !== data.deviceId ? d : {
+        ...d, status: data.status, last_error: data.error || null,
+      }));
+    });
+    return unsub;
+  }, []);
 
   const toggleExpand = async (device) => {
     const next = new Set(expanded);
@@ -294,11 +305,13 @@ export default function NetworkDevices() {
   }, [devices]);
 
   const q = searchQuery.trim().toLowerCase();
+  const statusFilter = searchParams.get('status') || '';
   const filteredDevices = React.useMemo(() => {
-    if (!q) return devices;
-    return devices.filter(d => [d.name, d.ip_address, d.vendor, d.model, d.location, d.description]
-      .filter(Boolean).some(v => String(v).toLowerCase().includes(q)));
-  }, [devices, q]);
+    return devices
+      .filter(d => !q || [d.name, d.ip_address, d.vendor, d.model, d.location, d.description]
+        .filter(Boolean).some(v => String(v).toLowerCase().includes(q)))
+      .filter(d => !statusFilter || d.status === statusFilter);
+  }, [devices, q, statusFilter]);
 
   // Grupisi uredjaje po lokaciji (bez lokacije ide u posebnu grupu na kraju),
   // sortirano abecedno unutar svake grupe po imenu.
@@ -348,18 +361,28 @@ export default function NetworkDevices() {
       <div className="flex justify-between items-center">
         <h1 className="text-xl font-semibold">Mrežni uređaji</h1>
         <div className="flex items-center gap-2">
+          <select className="input py-1.5 text-sm w-32 flex-shrink-0" value={statusFilter} onChange={e => setSearchParams(prev => {
+            const next = new URLSearchParams(prev);
+            if (e.target.value) next.set('status', e.target.value); else next.delete('status');
+            return next;
+          })}>
+            <option value="">Svi statusi</option>
+            <option value="online">Online</option>
+            <option value="warning">Upozorenje</option>
+            <option value="offline">Offline</option>
+          </select>
           <div className="relative">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
             <input className="input pl-8 py-1.5 text-sm w-48" placeholder="Pretraga..."
               value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
           </div>
           {devices.length > 0 && (
-            <button className="btn btn-secondary" onClick={handleExport} title="Izvezi u CSV">
+            <button className="btn btn-secondary flex-shrink-0" onClick={handleExport} title="Izvezi u CSV">
               <Download size={16} />
             </button>
           )}
           {canManage && (
-            <button className="btn btn-primary" onClick={openAdd}>
+            <button className="btn btn-primary flex-shrink-0 whitespace-nowrap" onClick={openAdd}>
               <Plus size={16} /> Dodaj uređaj
             </button>
           )}
@@ -371,7 +394,7 @@ export default function NetworkDevices() {
           subtitle="Dodaj ruter, svič ili AP za SNMP monitoring"
           action={canManage && <button className="btn btn-primary" onClick={openAdd}><Plus size={16} /> Dodaj uređaj</button>} />
       ) : filteredDevices.length === 0 ? (
-        <Empty icon={Search} title="Nema rezultata" subtitle={`Ništa ne odgovara pretrazi "${searchQuery}"`} />
+        <Empty icon={Search} title="Nema rezultata" subtitle={q ? `Ništa ne odgovara pretrazi "${searchQuery}"` : 'Nijedan uređaj ne odgovara izabranom filteru'} />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

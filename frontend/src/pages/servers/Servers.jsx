@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Edit, Trash2, Plug, Server, TerminalSquare, ArrowDown, ArrowUp, Cpu, RotateCw, ExternalLink, Search, Download } from 'lucide-react';
 import api from '../../services/api';
+import ws from '../../services/ws';
 import useAuthStore from '../../store/authStore';
 import {
   StatusBadge, Badge, MetricCell, DiskCell, Modal, ConfirmDialog,
@@ -411,6 +412,19 @@ export default function Servers() {
   }, [tenantId]);
 
   useEffect(() => { fetchServers(); }, [fetchServers]);
+  useEffect(() => {
+    const unsub = ws.on('metrics', (data) => {
+      setServers(prev => prev.map(s => s.id !== data.serverId ? s : {
+        ...s, status: data.status, last_error: data.error || null,
+        cpu_percent: data.metrics?.cpu ?? s.cpu_percent,
+        ram_percent: data.metrics?.ram ?? s.ram_percent,
+        disk_percent: data.metrics?.disk ?? s.disk_percent,
+        disks: data.metrics?.disks ?? s.disks,
+        uptime_seconds: data.metrics?.uptime ?? s.uptime_seconds,
+      }));
+    });
+    return unsub;
+  }, []);
 
   // Prefil "Dodaj server" forme kad se stigne sa VM liste ("Dodaj kao server" dugme)
   useEffect(() => {
@@ -488,10 +502,12 @@ export default function Servers() {
   const regularServers = servers.filter(s => !['proxmox', 'hyperv', 'esxi'].includes(s.os_type));
 
   const q = searchQuery.trim().toLowerCase();
+  const statusFilter = searchParams.get('status') || '';
   const matchesSearch = (s) => !q || [s.name, s.ip_address, s.hostname, s.description, ...(s.tags || [])]
     .filter(Boolean).some(v => String(v).toLowerCase().includes(q));
-  const filteredHypervisors    = hypervisors.filter(matchesSearch);
-  const filteredRegularServers = regularServers.filter(matchesSearch);
+  const matchesStatus = (s) => !statusFilter || s.status === statusFilter;
+  const filteredHypervisors    = hypervisors.filter(s => matchesSearch(s) && matchesStatus(s));
+  const filteredRegularServers = regularServers.filter(s => matchesSearch(s) && matchesStatus(s));
 
   const handleExport = async () => {
     const cols = [
@@ -635,22 +651,32 @@ export default function Servers() {
         <div>
           <h1 className="text-lg font-semibold text-gray-100">Serveri</h1>
           <p className="text-sm text-gray-500">
-            {q ? `${filteredHypervisors.length + filteredRegularServers.length} od ${servers.length}` : `${servers.length}`} servera u {activeTenant?.name}
+            {(q || statusFilter) ? `${filteredHypervisors.length + filteredRegularServers.length} od ${servers.length}` : `${servers.length}`} servera u {activeTenant?.name}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <select className="input py-1.5 text-sm w-32 flex-shrink-0" value={statusFilter} onChange={e => setSearchParams(prev => {
+            const next = new URLSearchParams(prev);
+            if (e.target.value) next.set('status', e.target.value); else next.delete('status');
+            return next;
+          })}>
+            <option value="">Svi statusi</option>
+            <option value="online">Online</option>
+            <option value="warning">Upozorenje</option>
+            <option value="offline">Offline</option>
+          </select>
           <div className="relative">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
             <input className="input pl-8 py-1.5 text-sm w-48" placeholder="Pretraga..."
               value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
           </div>
           {servers.length > 0 && (
-            <button className="btn-secondary" onClick={handleExport} title="Izvezi u CSV">
+            <button className="btn-secondary flex-shrink-0" onClick={handleExport} title="Izvezi u CSV">
               <Download size={16} />
             </button>
           )}
           {canManage && (
-            <button className="btn-primary" onClick={openAdd}>
+            <button className="btn-primary flex-shrink-0 whitespace-nowrap" onClick={openAdd}>
               <Plus size={16} /> Dodaj server
             </button>
           )}
@@ -666,7 +692,7 @@ export default function Servers() {
             </button>
           )} />
       ) : (filteredHypervisors.length === 0 && filteredRegularServers.length === 0) ? (
-        <Empty icon={Search} title="Nema rezultata" subtitle={`Ništa ne odgovara pretrazi "${searchQuery}"`} />
+        <Empty icon={Search} title="Nema rezultata" subtitle={q ? `Ništa ne odgovara pretrazi "${searchQuery}"` : 'Nijedan server ne odgovara izabranom filteru'} />
       ) : (
         <div className="space-y-4">
           {filteredHypervisors.length > 0 && (

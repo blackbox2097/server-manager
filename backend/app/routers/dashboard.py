@@ -201,3 +201,43 @@ async def dashboard_logs(limit: int = Query(6, ge=1, le=50), user=Depends(get_cu
             base + " WHERE a.tenant_id = ANY($1::uuid[]) ORDER BY a.occurred_at DESC LIMIT $2",
             tids, min(limit, 50))
     return [dict(r) for r in rows]
+@router.get("/servers-by-status")
+async def servers_by_status(status: str = Query(...), user=Depends(get_current_user)):
+    if status not in ("online", "warning", "offline"):
+        raise HTTPException(400, "Nevazeci status")
+    tids = await _accessible_tenant_ids(user)
+    base = """
+        SELECT s.id, s.name, s.ip_address, s.os_type, s.status, s.last_error, s.virt_type,
+               s.last_seen_at, s.tenant_id, t.name AS tenant_name,
+               m.cpu_percent, m.ram_percent, m.disk_percent, m.disks, m.uptime_seconds
+        FROM servers s
+        JOIN tenants t ON t.id = s.tenant_id
+        LEFT JOIN LATERAL (
+            SELECT cpu_percent, ram_percent, disk_percent, disks, uptime_seconds
+            FROM metrics WHERE server_id=s.id ORDER BY collected_at DESC LIMIT 1
+        ) m ON true
+        WHERE s.active=true AND s.status=$1
+    """
+    if tids is None:
+        rows = await fetch(base + " ORDER BY t.name, s.name", status)
+    else:
+        rows = await fetch(base + " AND s.tenant_id = ANY($2::uuid[]) ORDER BY t.name, s.name", status, tids)
+    return [dict(r) for r in rows]
+@router.get("/network-devices-by-status")
+async def network_devices_by_status(status: str = Query(...), user=Depends(get_current_user)):
+    if status not in ("online", "warning", "offline"):
+        raise HTTPException(400, "Nevazeci status")
+    tids = await _accessible_tenant_ids(user)
+    base = """
+        SELECT nd.id, nd.name, nd.ip_address, nd.device_type, nd.vendor, nd.model, nd.location,
+               nd.status, nd.last_error, nd.last_seen_at, nd.tenant_id, t.name AS tenant_name,
+               (SELECT COUNT(*) FROM network_device_interfaces WHERE device_id=nd.id) AS interface_count
+        FROM network_devices nd
+        JOIN tenants t ON t.id = nd.tenant_id
+        WHERE nd.active=true AND nd.status=$1
+    """
+    if tids is None:
+        rows = await fetch(base + " ORDER BY t.name, nd.name", status)
+    else:
+        rows = await fetch(base + " AND nd.tenant_id = ANY($2::uuid[]) ORDER BY t.name, nd.name", status, tids)
+    return [dict(r) for r in rows]

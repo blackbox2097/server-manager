@@ -40,13 +40,13 @@ function HostStatusBar() {
         <div className="flex items-center gap-4">
           <div className="w-28">
             <div className="flex justify-between text-xs text-gray-500 mb-1">
-              <span>CPU (app server)</span><span>{Math.round(host.cpuPercent)}%</span>
+              <span>CPU (app server)</span><span className="w-7 text-right tabular-nums">{Math.round(host.cpuPercent)}%</span>
             </div>
             <MeterBar value={host.cpuPercent} />
           </div>
           <div className="w-28">
             <div className="flex justify-between text-xs text-gray-500 mb-1">
-              <span>RAM (app server)</span><span>{Math.round(host.ramPercent)}%</span>
+              <span>RAM (app server)</span><span className="w-7 text-right tabular-nums">{Math.round(host.ramPercent)}%</span>
             </div>
             <MeterBar value={host.ramPercent} />
           </div>
@@ -56,9 +56,12 @@ function HostStatusBar() {
   );
 }
 
-function StatCard({ icon: Icon, label, value, color = 'text-gray-100' }) {
+function StatCard({ icon: Icon, label, value, color = 'text-gray-100', onClick }) {
   return (
-    <div className="card flex items-center gap-4">
+    <div
+      className={`card flex items-center gap-4${onClick ? ' cursor-pointer hover:bg-gray-800/40 transition-colors' : ''}`}
+      onClick={onClick}
+    >
       <div className="p-2.5 bg-gray-800 rounded-lg">
         <Icon size={20} className={color} />
       </div>
@@ -290,10 +293,10 @@ export default function Dashboard() {
       <div className="space-y-2">
         <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wider">Serveri</h2>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <StatCard icon={Server}        label="Ukupno servera"  value={stats.total}   />
-          <StatCard icon={Wifi}          label="Online"          value={stats.online}   color="text-green-400" />
-          <StatCard icon={AlertTriangle} label="Upozorenje"      value={stats.warning}  color="text-yellow-400" />
-          <StatCard icon={WifiOff}       label="Offline"         value={stats.offline}  color="text-red-400" />
+          <StatCard icon={Server}        label="Ukupno servera"  value={stats.total}   onClick={() => navigate('/servers')} />
+          <StatCard icon={Wifi}          label="Online"          value={stats.online}   color="text-green-400" onClick={() => navigate('/status-overview/servers?status=online')} />
+          <StatCard icon={AlertTriangle} label="Upozorenje"      value={stats.warning}  color="text-yellow-400" onClick={() => navigate('/status-overview/servers?status=warning')} />
+          <StatCard icon={WifiOff}       label="Offline"         value={stats.offline}  color="text-red-400" onClick={() => navigate('/status-overview/servers?status=offline')} />
         </div>
       </div>
 
@@ -318,10 +321,10 @@ export default function Dashboard() {
         <div className="space-y-2">
           <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wider">Mrežni uređaji</h2>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard icon={Router}   label="Ukupno mrežnih uređaja" value={networkStats.total} />
-            <StatCard icon={Wifi}     label="Online"     value={networkStats.online}  color="text-green-400" />
-            <StatCard icon={AlertTriangle} label="Upozorenje" value={networkStats.warning} color="text-yellow-400" />
-            <StatCard icon={WifiOff}  label="Offline"    value={networkStats.offline} color="text-red-400" />
+            <StatCard icon={Router}   label="Ukupno mrežnih uređaja" value={networkStats.total} onClick={() => navigate('/network-devices')} />
+            <StatCard icon={Wifi}     label="Online"     value={networkStats.online}  color="text-green-400" onClick={() => navigate('/status-overview/network-devices?status=online')} />
+            <StatCard icon={AlertTriangle} label="Upozorenje" value={networkStats.warning} color="text-yellow-400" onClick={() => navigate('/status-overview/network-devices?status=warning')} />
+            <StatCard icon={WifiOff}  label="Offline"    value={networkStats.offline} color="text-red-400" onClick={() => navigate('/status-overview/network-devices?status=offline')} />
           </div>
         </div>
       )}
@@ -360,7 +363,7 @@ export default function Dashboard() {
                               <span className="w-1.5 h-1.5 rounded-full bg-current inline-block mr-1" />
                               {server.status === 'offline' ? 'Offline' : 'Upozorenje'}
                             </span>
-                            <span className="text-xs text-gray-600">{server.os_type === 'windows' ? '🪟 Windows' : '🐧 Linux'}</span>
+                            <span className="text-xs text-gray-600">{server.os_type === 'windows' ? '🪟 Windows' : server.os_type === 'proxmox' ? '🖥️ Proxmox' : server.os_type === 'hyperv' ? '🖥️ Hyper-V' : server.os_type === 'esxi' ? '🖥️ ESXi' : '🐧 Linux'}</span>
                             {server.uptime_seconds != null && server.status !== 'offline' && (
                               <span className="text-xs text-gray-600">↑ {formatUptime(server.uptime_seconds)}</span>
                             )}
