@@ -64,6 +64,112 @@ async def get_recipients(tenant_id: str) -> list[str]:
         "SELECT email FROM alert_recipients WHERE tenant_id=$1 AND active=true", tenant_id
     )
     return [r["email"] for r in rows]
+async def send_digest_emails():
+    """Periodicni posao (APScheduler, svakih notification_digest_interval_sec)
+    -- sakuplja sve pending_notifications redove PO TENANTU i salje JEDAN
+    zbirni email po tenantu, umesto pojedinacnog mejla po dogadjaju. Resava
+    "alert storm" problem (masovni istovremeni pad vise uredjaja -> bujica
+    pojedinacnih mejlova)."""
+    tenant_rows = await fetch("SELECT DISTINCT tenant_id FROM pending_notifications")
+    for trow in tenant_rows:
+        tenant_id = str(trow["tenant_id"])
+        items = await fetch(
+            "SELECT * FROM pending_notifications WHERE tenant_id=$1 ORDER BY occurred_at", tenant_id)
+        if not items:
+            continue
+        ids = [i["id"] for i in items]
+        recipients = await get_recipients(tenant_id)
+        if not recipients:
+            await execute("DELETE FROM pending_notifications WHERE id = ANY($1::bigint[])", ids)
+            continue
+        by_resource, order = {}, []
+        for it in items:
+            key = (it["resource_type"], str(it["resource_id"]))
+            if key not in by_resource:
+                by_resource[key] = []
+                order.append(key)
+            by_resource[key].append(it)
+        offline_lines, warning_lines, recovery_lines = [], [], []
+        for key in order:
+            events = by_resource[key]
+            last = events[-1]
+            chain = [events[0]["old_status"]] + [e["new_status"] for e in events]
+            dedup_chain = [chain[0]]
+            for s in chain[1:]:
+                if s != dedup_chain[-1]:
+                    dedup_chain.append(s)
+            flap_suffix = f" ({len(events)} promene)" if len(events) > 1 else ""
+            chain_str = (" → ".join(_status_label(s) for s in dedup_chain)
+                         if len(events) > 1 else _status_label(last["new_status"]))
+            metrics_parts = []
+            for label, field in (("CPU", "cpu_percent"), ("RAM", "ram_percent"), ("Disk", "disk_percent")):
+                val = last[field]
+                if val is None:
+                    continue
+                is_high = float(val) >= 90
+                style = "color:#ef4444; font-weight:600;" if is_high else "color:#374151;"
+                marker = " (prag prekoracen)" if is_high else ""
+                metrics_parts.append(f'<span style="{style}">{label}: {round(float(val))}%{marker}</span>')
+            metrics_html = (f'<div style="margin-top:2px; font-size:13px;">{" &nbsp;|&nbsp; ".join(metrics_parts)}</div>'
+                             if metrics_parts else "")
+            error_html = (f'<div style="color:#888; font-size:12px; margin-top:2px;">Greška: {last["error_message"]}</div>'
+                          if last["error_message"] else "")
+            line = f"""
+                <div style="padding:8px 0; border-bottom:1px solid #eee;">
+                  <strong>{last["resource_name"]}</strong>{flap_suffix} — {chain_str}
+                  {metrics_html}
+                  {error_html}
+                </div>"""
+            if last["new_status"] == "offline":
+                offline_lines.append(line)
+            elif last["new_status"] == "warning":
+                warning_lines.append(line)
+            elif last["new_status"] == "online":
+                recovery_lines.append(line)
+        if not (offline_lines or warning_lines or recovery_lines):
+            await execute("DELETE FROM pending_notifications WHERE id = ANY($1::bigint[])", ids)
+            continue
+        subject_parts = []
+        if offline_lines: subject_parts.append(f"{len(offline_lines)} offline")
+        if warning_lines: subject_parts.append(f"{len(warning_lines)} upozorenja")
+        if recovery_lines: subject_parts.append(f"{len(recovery_lines)} oporavka")
+        subject = f"[Server Manager] Sažetak: {' · '.join(subject_parts)}"
+        summary_bits = []
+        if offline_lines:
+            summary_bits.append(f'<span style="color:#ef4444; font-weight:600;">{len(offline_lines)} offline</span>')
+        if warning_lines:
+            summary_bits.append(f'<span style="color:#eab308; font-weight:600;">{len(warning_lines)} upozorenja</span>')
+        if recovery_lines:
+            summary_bits.append(f'<span style="color:#22c55e; font-weight:600;">{len(recovery_lines)} oporavka</span>')
+        summary_html = f'<p style="font-size:14px;">{" &nbsp;·&nbsp; ".join(summary_bits)}</p>'
+        sections_html = ""
+        if offline_lines:
+            sections_html += f'<h3 style="color:#ef4444; margin-bottom:4px;">Offline</h3>{"".join(offline_lines)}'
+        if warning_lines:
+            sections_html += f'<h3 style="color:#eab308; margin-bottom:4px;">Upozorenje</h3>{"".join(warning_lines)}'
+        if recovery_lines:
+            sections_html += f'<h3 style="color:#22c55e; margin-bottom:4px;">Oporavak</h3>{"".join(recovery_lines)}'
+        body = f"""
+        <div style="font-family: -apple-system, sans-serif; max-width: 560px;">
+          <h2 style="color:#374151;">Sažetak promena statusa</h2>
+          {summary_html}
+          {sections_html}
+          <p style="color:#888; font-size:12px; margin-top:20px;">Server Manager — automatska obavest (periodicni sažetak)</p>
+        </div>
+        """
+        await send_email(recipients, subject, body)
+        await execute("DELETE FROM pending_notifications WHERE id = ANY($1::bigint[])", ids)
+def start():
+    """Registruje periodicni digest posao -- poziva se iz main.py lifespan-a,
+    isti obrazac kao monitor.start()/retention.start()/snmp.start()."""
+    from app.services.monitor import scheduler
+    from app.config import get_settings
+    cfg = get_settings()
+    scheduler.add_job(
+        send_digest_emails, "interval",
+        seconds=cfg.notification_digest_interval_sec, id="notify_digest",
+    )
+    logger.info(f"Notifikacioni digest pokrenut (interval: {cfg.notification_digest_interval_sec}s)")
 
 
 def _status_label(s: str) -> str:
@@ -94,39 +200,19 @@ async def notify_server_status(server: dict, old_status: str, new_status: str, m
     if not should_send:
         return
 
-    recipients = await get_recipients(str(server["tenant_id"]))
-    if not recipients:
-        return
-
-    kind = "OFFLINE" if is_offline else ("OPORAVAK" if is_recovery else "UPOZORENJE")
-    color = "#ef4444" if is_offline else ("#22c55e" if is_recovery else "#eab308")
-
-    metrics_html = ""
-    if metrics:
-        parts = []
-        for label, key in (("CPU", "cpuPercent"), ("RAM", "ramPercent"), ("Disk", "diskPercent")):
-            val = metrics.get(key)
-            if val is None:
-                continue
-            is_high = val >= 90
-            style = "color:#ef4444; font-weight:600;" if is_high else "color:#374151;"
-            marker = " \u26a0" if is_high else ""
-            parts.append(f'<span style="{style}">{label}: {round(val)}%{marker}</span>')
-        if parts:
-            metrics_html = f'<p><strong>Metrike:</strong> {" &nbsp;|&nbsp; ".join(parts)}</p>'
-
-    subject = f"[Server Manager] {kind}: {server['name']}"
-    body = f"""
-    <div style="font-family: -apple-system, sans-serif; max-width: 500px;">
-      <h2 style="color:{color};">{kind}: {server['name']}</h2>
-      <p><strong>Server:</strong> {server['name']} ({server['ip_address']})</p>
-      <p><strong>Status:</strong> {_status_label(old_status)} → {_status_label(new_status)}</p>
-      {metrics_html}
-      {f"<p><strong>Greška:</strong> {server.get('last_error', '')[:300]}</p>" if is_offline and server.get('last_error') else ""}
-      <p style="color:#888; font-size:12px; margin-top:20px;">Server Manager — automatska obavest</p>
-    </div>
-    """
-    asyncio.create_task(send_email(recipients, subject, body))
+    cpu = metrics.get("cpuPercent") if metrics else None
+    ram = metrics.get("ramPercent") if metrics else None
+    disk = metrics.get("diskPercent") if metrics else None
+    await execute(
+        """INSERT INTO pending_notifications
+             (tenant_id, resource_type, resource_id, resource_name, old_status, new_status,
+              error_message, cpu_percent, ram_percent, disk_percent)
+           VALUES ($1,'server',$2,$3,$4,$5,$6,$7,$8,$9)""",
+        server["tenant_id"], server["id"], server["name"], old_status, new_status,
+        (server.get("last_error")[:300] if is_offline and server.get("last_error") else None),
+        cpu, ram, disk,
+    )
+    return
 
 
 async def notify_network_device_status(device: dict, old_status: str, new_status: str):
@@ -158,24 +244,15 @@ async def notify_network_device_status(device: dict, old_status: str, new_status
     if not should_send:
         return
 
-    recipients = await get_recipients(str(device["tenant_id"]))
-    if not recipients:
-        return
-
-    kind = "OFFLINE" if is_offline else ("OPORAVAK" if is_recovery else "UPOZORENJE")
-    color = "#ef4444" if is_offline else ("#22c55e" if is_recovery else "#eab308")
-
-    subject = f"[Server Manager] {kind}: {device['name']} (mrežni uređaj)"
-    body = f"""
-    <div style="font-family: -apple-system, sans-serif; max-width: 500px;">
-      <h2 style="color:{color};">{kind}: {device['name']}</h2>
-      <p><strong>Mrežni uređaj:</strong> {device['name']} ({device['ip_address']})</p>
-      <p><strong>Status:</strong> {_status_label(old_status)} → {_status_label(new_status)}</p>
-      {f"<p><strong>Greška:</strong> {device.get('last_error', '')[:300]}</p>" if is_offline and device.get('last_error') else ""}
-      <p style="color:#888; font-size:12px; margin-top:20px;">Server Manager — automatska obavest</p>
-    </div>
-    """
-    asyncio.create_task(send_email(recipients, subject, body))
+    await execute(
+        """INSERT INTO pending_notifications
+             (tenant_id, resource_type, resource_id, resource_name, old_status, new_status,
+              error_message, cpu_percent, ram_percent, disk_percent)
+           VALUES ($1,'network_device',$2,$3,$4,$5,$6,NULL,NULL,NULL)""",
+        device["tenant_id"], device["id"], device["name"], old_status, new_status,
+        (device.get("last_error")[:300] if is_offline and device.get("last_error") else None),
+    )
+    return
 
 
 async def notify_execution(execution_id: str):

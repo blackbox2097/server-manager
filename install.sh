@@ -629,6 +629,21 @@ CREATE TABLE IF NOT EXISTS network_device_interface_metrics_rollup (
     CONSTRAINT ndim_rollup_unique UNIQUE (interface_id, bucket_start, bucket_minutes)
 );
 CREATE INDEX IF NOT EXISTS idx_ndim_rollup_iface_time ON network_device_interface_metrics_rollup (interface_id, bucket_start DESC);
+CREATE TABLE IF NOT EXISTS pending_notifications (
+    id              BIGSERIAL   PRIMARY KEY,
+    tenant_id       UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    resource_type   TEXT        NOT NULL,
+    resource_id     UUID        NOT NULL,
+    resource_name   TEXT        NOT NULL,
+    old_status      TEXT        NOT NULL,
+    new_status      TEXT        NOT NULL,
+    error_message   TEXT,
+    cpu_percent     NUMERIC(5,2),
+    ram_percent     NUMERIC(5,2),
+    disk_percent    NUMERIC(5,2),
+    occurred_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pending_notifications_tenant ON pending_notifications (tenant_id, occurred_at);
 
 DO $$
 BEGIN

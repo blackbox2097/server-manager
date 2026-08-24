@@ -34,6 +34,9 @@ class Settings(BaseSettings):
                                         # kompatibilnosti, ne brisati bez provere .env fajlova.
     retention_tick_sec:     int = 300  # koliko cesto raw+rollup retention posao proverava
                                         # istekle metrike (per-server pragovi, ne globalni)
+    notification_digest_interval_sec: int = 300  # digest email prozor -- sakuplja promene
+                                        # statusa i salje JEDAN zbirni mejl po tenantu
+                                        # umesto pojedinacnog mejla po dogadjaju
     log_retention_days:     int = 30
     status_debounce_polls:  int = 2
 
