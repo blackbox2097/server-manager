@@ -31,8 +31,34 @@ from app.services.ws_manager import ws_manager
 
 logger = logging.getLogger(__name__)
 
+# Deljeni SnmpEngine -- kreira se LENJO, JEDNOM, pri prvom poll-u i zivi
+# do gasenja aplikacije. SnmpEngine() konstruktor gradi/indeksira ceo MIB
+# (sinhrono, CPU-vezano) -- ranije se ovo desavalo po SVAKOM pollu SVAKOG
+# uredjaja (~76x po ciklusu), sto je blokiralo event loop na sekundu+.
+_engine: SnmpEngine | None = None
+
+
+def _get_engine() -> SnmpEngine:
+    global _engine
+    if _engine is None:
+        _engine = SnmpEngine()
+    return _engine
+
+
+def shutdown_engine():
+    """Zatvara deljeni SnmpEngine dispatcher -- pozvati SAMO pri gasenju
+    aplikacije (main.py lifespan), ne po pollu (vidi komentar iznad i u
+    _poll() finally bloku za zasto)."""
+    global _engine
+    if _engine is not None:
+        _engine.close_dispatcher()
+        _engine = None
+
 # device_id -> vreme (time.time()) poslednjeg POKUSAJA poll-a (uspesnog ili ne)
 _last_polled: dict[str, float] = {}
+# device_id -> vreme (time.time()) poslednjeg INTERFACE WALK-a (odvojeno od
+# liveness gore -- walk je skup, radi se rede, vidi cfg.snmp_iface_poll_interval_sec)
+_iface_last_polled: dict[str, float] = {}
 
 # "device_id:if_index" -> {"in": int, "out": int, "in_err": int, "out_err": int,
 #                           "in_disc": int, "out_disc": int, "ts": float}
@@ -167,6 +193,7 @@ async def _walk_column(engine, target, auth, base_oid: str) -> dict[int, object]
         0, 25,
         ObjectType(ObjectIdentity(base_oid)),
         lexicographicMode=False,
+        lookupMib=False,
     )
     async for err_indication, err_status, err_index, var_binds in objects:
         if err_indication:
@@ -193,7 +220,7 @@ def _fmt_mac(raw) -> str | None:
 
 
 async def _poll(device: dict) -> dict:
-    engine = SnmpEngine()
+    engine = _get_engine()
     try:
         auth   = _build_auth(device)
         target = await UdpTransportTarget.create(
@@ -204,6 +231,7 @@ async def _poll(device: dict) -> dict:
             engine, auth, target, ContextData(),
             ObjectType(ObjectIdentity(SYS_DESCR_OID)),
             ObjectType(ObjectIdentity(SYS_UPTIME_OID)),
+            lookupMib=False,
         )
         if err_indication:
             raise SNMPError(str(err_indication))
@@ -213,19 +241,33 @@ async def _poll(device: dict) -> dict:
         sys_uptime = int(var_binds[1][1])
 
         cols: dict[str, dict[int, object]] = {}
-        for name, oid in {**IF_COLUMNS, **IFX_COLUMNS}.items():
-            try:
-                cols[name] = await _walk_column(engine, target, auth, oid)
-            except SNMPError:
-                cols[name] = {}  # vendor mozda ne podrzava ifXTable -- nastavi bez nje
+        cfg = get_settings()
+        did = str(device["id"])
+        last_iface = _iface_last_polled.get(did)
+        iface_due = last_iface is None or (time.time() - last_iface) >= cfg.snmp_iface_poll_interval_sec
+        if iface_due:
+            for name, oid in {**IF_COLUMNS, **IFX_COLUMNS}.items():
+                try:
+                    cols[name] = await _walk_column(engine, target, auth, oid)
+                except SNMPError:
+                    cols[name] = {}  # vendor mozda ne podrzava ifXTable -- nastavi bez nje
+            _iface_last_polled[did] = time.time()
+        # else: interface walk NIJE dospeo -- cols ostaje prazan, interfaces=[]
+        # nize u funkciji, _poll_and_save() preskace bulk upsert (if ifaces: guard)
     finally:
-        # KRITICNO: SnmpEngine otvara UDP socket (transport dispatcher) koji
-        # se NIKAD ne zatvara sam od sebe. Bez ovoga, svaki poll ostavlja
-        # jedan otvoren fajl-deskriptor zauvek -- sa ~10 uredjaja na svakih
-        # ~60s to je na hiljade procurelih socket-a kroz par dana rada, sto
-        # je izazvalo curenje memorije (12.6GB) i pad aplikacije 11.8.2026.
-        # Potvrdjeno testom: 20 poll-ova bez ovoga = +20 FD-ova, sa ovim = +1.
-        engine.close_dispatcher()
+        # Engine je sada DELJEN (singleton, vidi _get_engine()/
+        # shutdown_engine() iznad u fajlu) -- NE zatvara se vise posle
+        # svakog poll-a. Ranije se ovde zvao engine.close_dispatcher() posle
+        # SVAKOG poll-a da se spreci FD leak (12.6GB RAM incident
+        # 11.8.2026), ali to je primoravalo pysnmp da iznova gradi ceo
+        # SnmpEngine() -- sto ukljucuje sinhrono MIB indeksiranje -- na
+        # svakih ~76 uredjaja x svaki poll ciklus, blokirajuci event loop
+        # (potvrdjeno py-spy dump-om: index_mib na glavnoj niti). FD leak je
+        # sada resen drugacije: dispatcher se otvara SAMO JEDNOM i zatvara
+        # SAMO pri gasenju aplikacije (main.py lifespan poziva
+        # shutdown_engine()) -- nema vise ponavljanog open/close ciklusa,
+        # pa nema vise ni leak-a.
+        pass
 
     if_indexes = set()
     for c in cols.values():

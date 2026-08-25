@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     snmp_poll_tick_sec:     int = 5    # isti duh kao poll_tick_sec, za mrezne uredjaje
     snmp_poll_watchdog_sec: int = 30   # SNMP je UDP, ne treba mu 120s kao SSH -- brz timeout/retry
     snmp_max_parallel:      int = 20
+    snmp_iface_poll_interval_sec: int = 300  # koliko cesto se radi SKUPI interface walk
+                                        # (portovi/kbps/errori) -- ODVOJENO od liveness (sys
+                                        # GET) provere koja ostaje na poll_interval_sec. Interface
+                                        # walk je izvor pyasn1 BER decode opterecenja na glavnoj
+                                        # niti (potvrdjeno py-spy dump-om) -- dok nisu definisani
+                                        # per-vendor MIB-ovi/alerti po interfejsima, prioritet je
+                                        # samo liveness, pa se walk radi rede.
     metrics_retention_days: int = 7   # NAPOMENA: vise se ne koristi za metrics cleanup
                                         # (zamenjeno per-server raw+rollup retention engine-om
                                         # u services/retention.py) -- ostavljeno zbog .env

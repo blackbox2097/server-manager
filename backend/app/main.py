@@ -59,6 +59,8 @@ async def lifespan(app: FastAPI):
     from app.services.monitor import scheduler
     if scheduler.running:
         scheduler.shutdown(wait=False)
+    from app.services.snmp import shutdown_engine
+    shutdown_engine()
     await close_db()
     logger.info("Server ugasen")
 
@@ -72,6 +74,19 @@ app = FastAPI(
 if cfg.node_env != "production":
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
                        allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+import time as _diag_time
+
+@app.middleware("http")
+async def _diag_timing_middleware(request, call_next):
+    _t0 = _diag_time.time()
+    response = await call_next(request)
+    _dur_ms = (_diag_time.time() - _t0) * 1000
+    if _dur_ms > 300:
+        logger.warning(
+            f"DIAG-SLOW {_dur_ms:.0f}ms {request.method} {request.url.path}"
+        )
+    return response
 
 from app.routers import auth, admin, servers, monitoring, operations, terminal, schedules, alerts, logs, backup, automation, dashboard, network_devices
 app.include_router(auth.router)
