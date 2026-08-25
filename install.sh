@@ -284,11 +284,13 @@ CREATE TABLE IF NOT EXISTS scripts (
     os_type     TEXT        NOT NULL DEFAULT 'linux',
     content     TEXT        NOT NULL,
     is_builtin  BOOLEAN     NOT NULL DEFAULT FALSE,
+    timeout_sec INTEGER,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_by  UUID        REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT scripts_os_type_check CHECK (os_type IN ('linux', 'windows', 'both')),
-    CONSTRAINT scripts_name_tenant_unique UNIQUE (tenant_id, name)
+    CONSTRAINT scripts_name_tenant_unique UNIQUE (tenant_id, name),
+    CONSTRAINT scripts_timeout_check CHECK (timeout_sec IS NULL OR (timeout_sec BETWEEN 60 AND 3600))
 );
 
 CREATE TABLE IF NOT EXISTS executions (
@@ -365,7 +367,7 @@ CREATE TABLE IF NOT EXISTS execution_results (
     started_at      TIMESTAMPTZ,
     finished_at     TIMESTAMPTZ,
     duration_ms     INTEGER,
-    CONSTRAINT exec_results_status_check CHECK (status IN ('pending','running','success','error','timeout'))
+    CONSTRAINT exec_results_status_check CHECK (status IN ('pending','running','success','error','timeout','cancelled'))
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (

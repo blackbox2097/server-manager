@@ -15,14 +15,19 @@ def _ip(req: Request) -> str | None: return req.client.host if req.client else N
 class ScriptIn(BaseModel):
     name: str; content: str
     description: str | None = None; osType: str = "linux"
+    timeoutSec: int | None = None  # per-skripta override tvrdog max vremena izvrsavanja
+                                    # (60-3600s / 1-60 min); None = koristi globalni default
 
 class ScriptUp(BaseModel):
     name: str | None = None; description: str | None = None
     osType: str | None = None; content: str | None = None
+    timeoutSec: int | None = None
 
 class ExecReq(BaseModel):
     serverIds: list[str]
     scriptId: str | None = None; scriptContent: str | None = None; scriptName: str | None = None
+    timeoutSec: int | None = None  # eksplicitan override iz forme (npr. Execute.jsx za ad-hoc) --
+                                    # ima prioritet nad timeout-om sacuvane skripte ako je prosledjen
 
 
 @router.get("/{tid}/scripts")
@@ -30,7 +35,7 @@ async def list_scripts(tid: str, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user)
     rows = await fetch(
         """SELECT s.id, s.name, s.description, s.os_type, s.content, s.is_builtin,
-                  s.created_at, u.username AS created_by_name
+                  s.timeout_sec, s.created_at, u.username AS created_by_name
            FROM scripts s LEFT JOIN users u ON u.id=s.created_by
            WHERE s.tenant_id=$1 ORDER BY s.is_builtin DESC, s.name""", tid)
     return [dict(r) for r in rows]
@@ -41,8 +46,8 @@ async def create_script(tid: str, body: ScriptIn, req: Request, user=Depends(get
     await check_tenant_perm(tid, user, "perm_scripts_manage")
     try:
         row = await fetchrow(
-            "INSERT INTO scripts (tenant_id, name, description, os_type, content, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
-            tid, body.name, body.description, body.osType, body.content, user["id"])
+            "INSERT INTO scripts (tenant_id, name, description, os_type, content, timeout_sec, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+            tid, body.name, body.description, body.osType, body.content, body.timeoutSec, user["id"])
         await log_event("script.create", user_id=user["id"], username=user.get("username"),
                         tenant_id=tid, ip_address=_ip(req),
                         resource_type="script", resource_id=str(row["id"]), details={"name": body.name})
@@ -57,9 +62,9 @@ async def update_script(tid: str, scid: str, body: ScriptUp, req: Request, user=
     await check_tenant_perm(tid, user, "perm_scripts_manage")
     row = await fetchrow(
         """UPDATE scripts SET name=COALESCE($1,name), description=COALESCE($2,description),
-           os_type=COALESCE($3,os_type), content=COALESCE($4,content)
-           WHERE id=$5 AND tenant_id=$6 AND is_builtin=false RETURNING *""",
-        body.name, body.description, body.osType, body.content, scid, tid)
+           os_type=COALESCE($3,os_type), content=COALESCE($4,content), timeout_sec=$5
+           WHERE id=$6 AND tenant_id=$7 AND is_builtin=false RETURNING *""",
+        body.name, body.description, body.osType, body.content, body.timeoutSec, scid, tid)
     if not row: raise HTTPException(404, "Skripta nije pronadjena ili je sistemska")
     await log_event("script.update", user_id=user["id"], username=user.get("username"),
                     tenant_id=tid, ip_address=_ip(req),
@@ -85,15 +90,18 @@ async def execute_script(tid: str, body: ExecReq, user=Depends(get_current_user)
     if not body.serverIds: raise HTTPException(400, "Nisi odabrao nijedan server")
     content = body.scriptContent
     name    = body.scriptName or "Ad-hoc"
+    timeout_override = body.timeoutSec
     if body.scriptId and not content:
-        row = await fetchrow("SELECT content, name FROM scripts WHERE id=$1 AND tenant_id=$2", body.scriptId, tid)
+        row = await fetchrow("SELECT content, name, timeout_sec FROM scripts WHERE id=$1 AND tenant_id=$2", body.scriptId, tid)
         if not row: raise HTTPException(404, "Skripta nije pronadjena")
         content = row["content"]; name = row["name"]
+        if timeout_override is None:
+            timeout_override = row["timeout_sec"]
     if not content or not content.strip():
         raise HTTPException(400, "Sadrzaj skripte je prazan")
     try:
         eid = await run(tid, body.serverIds, content, name, body.scriptId, user["id"],
-                       started_by_username=user.get("username"))
+                       started_by_username=user.get("username"), timeout_override=timeout_override)
         return {"executionId": eid, "message": f"Pokrenuto na {len(body.serverIds)} servera"}
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -114,3 +122,22 @@ async def execution(tid: str, eid: str, user=Depends(get_current_user)):
     data = await get_exec(eid, tid)
     if not data: raise HTTPException(404, "Execution nije pronadjen")
     return data
+
+
+@router.post("/{tid}/executions/{eid}/cancel")
+async def cancel_execution(tid: str, eid: str, req: Request, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user, "perm_scripts_run")
+    exec_row = await fetchrow("SELECT id FROM executions WHERE id=$1 AND tenant_id=$2", eid, tid)
+    if not exec_row:
+        raise HTTPException(404, "Execution nije pronadjen")
+    running = await fetch(
+        "SELECT id FROM execution_results WHERE execution_id=$1 AND status='running'", eid)
+    if not running:
+        raise HTTPException(400, "Nema aktivnih rezultata za otkazivanje (izvrsavanje je vec zavrseno)")
+    from app.services.exec_registry import cancel as cancel_conn
+    cancelled_count = sum(1 for r in running if cancel_conn(r["id"]))
+    await log_event("script.cancel", user_id=user["id"], username=user.get("username"),
+                    tenant_id=tid, ip_address=_ip(req),
+                    resource_type="execution", resource_id=eid,
+                    details={"cancelledCount": cancelled_count})
+    return {"ok": True, "cancelledCount": cancelled_count}

@@ -3,6 +3,7 @@ import asyncio
 import io
 import random
 import shlex
+from app.services import exec_registry
 import string
 import time
 import logging
@@ -169,12 +170,13 @@ async def _get_metrics_linux(server: dict) -> dict:
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
-async def _execute_script_linux(server: dict, script_content: str) -> dict:
+async def _execute_script_linux(server: dict, script_content: str, rid=None) -> dict:
     cfg = get_settings()
 
     def _run():
         start  = time.time()
         client = _connect(server)
+        exec_registry.register(rid, client)
         try:
             rand    = "".join(random.choices(string.ascii_lowercase, k=8))
             ts      = int(time.time() * 1000)
@@ -188,7 +190,7 @@ async def _execute_script_linux(server: dict, script_content: str) -> dict:
                 askpass = f"/tmp/.sm_ask_{ts}.sh"
                 wrapper = f"/tmp/.sm_wrap_{ts}.sh"
 
-                _write_remote(client, askpass, f"#!/bin/bash\necho {sudo_pw!r}\n")
+                _write_remote(client, askpass, f"#!/bin/bash\necho {shlex.quote(sudo_pw)}\n")
                 _write_remote(client, wrapper, (
                     f"#!/bin/bash\n"
                     f"export SUDO_ASKPASS={askpass}\n"
@@ -213,10 +215,16 @@ async def _execute_script_linux(server: dict, script_content: str) -> dict:
             return {"exitCode": code, "stdout": stdout,
                     "stderr": stderr, "durationMs": int((time.time()-start)*1000)}
         except Exception as e:
+            if exec_registry.was_cancelled(rid):
+                return {"exitCode": -1, "stdout": "",
+                        "stderr": "Izvrsavanje otkazano na zahtev korisnika.",
+                        "durationMs": int((time.time()-start)*1000),
+                        "_status_override": "cancelled"}
             return {"exitCode": -1, "stdout": "",
                     "stderr": f"Greska konekcije: {e}",
                     "durationMs": int((time.time()-start)*1000)}
         finally:
+            exec_registry.unregister(rid)
             client.close()
 
     return await asyncio.get_event_loop().run_in_executor(None, _run)
@@ -374,13 +382,14 @@ async def get_metrics(server: dict) -> dict:
     return await _get_metrics_linux(server)
 
 
-async def _execute_script_windows(server: dict, script_content: str) -> dict:
+async def _execute_script_windows(server: dict, script_content: str, rid=None) -> dict:
     """Izvrsava PowerShell skriptu na Windows serveru preko SSH (paramiko).
     Zamena za winrm.execute_script."""
     cfg = get_settings()
     def _run():
         start  = time.time()
         client = _connect(server)
+        exec_registry.register(rid, client)
         try:
             rand = "".join(random.choices(string.ascii_lowercase, k=8))
             ts   = int(time.time() * 1000)
@@ -399,10 +408,16 @@ async def _execute_script_windows(server: dict, script_content: str) -> dict:
             return {"exitCode": code, "stdout": stdout,
                     "stderr": stderr, "durationMs": int((time.time()-start)*1000)}
         except Exception as e:
+            if exec_registry.was_cancelled(rid):
+                return {"exitCode": -1, "stdout": "",
+                        "stderr": "Izvrsavanje otkazano na zahtev korisnika.",
+                        "durationMs": int((time.time()-start)*1000),
+                        "_status_override": "cancelled"}
             return {"exitCode": -1, "stdout": "",
                     "stderr": f"Greska konekcije: {e}",
                     "durationMs": int((time.time()-start)*1000)}
         finally:
+            exec_registry.unregister(rid)
             client.close()
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
@@ -585,11 +600,14 @@ async def list_vms_hyperv(server: dict) -> list[dict]:
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
-async def execute_script(server: dict, script_content: str) -> dict:
-    """Dispatch po os_type -- izvrsavanje skripti sad uvek preko SSH."""
+async def execute_script(server: dict, script_content: str, rid=None) -> dict:
+    """Dispatch po os_type -- izvrsavanje skripti sad uvek preko SSH.
+    rid = execution_results.id, opciono -- ako je prosledjen, registruje
+    konekciju u exec_registry da bi mogla nasilno da se prekine (hard
+    timeout ili rucno otkazivanje)."""
     if server.get("os_type") in ("windows", "hyperv"):
-        return await _execute_script_windows(server, script_content)
-    return await _execute_script_linux(server, script_content)
+        return await _execute_script_windows(server, script_content, rid=rid)
+    return await _execute_script_linux(server, script_content, rid=rid)
 
 
 async def list_processes(server: dict, limit: int = 50) -> list[dict]:

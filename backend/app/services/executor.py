@@ -4,11 +4,12 @@ from app.config import get_settings
 from app.database import fetch, fetchrow, execute
 from app.services.crypto import decrypt
 from app.services.ws_manager import ws_manager
+from app.services.bgtasks import create_bg_task
 
 logger = logging.getLogger(__name__)
 
 
-async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str, trigger_source: str = "manual") -> str:
+async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str, trigger_source: str = "manual", timeout_override: int | None = None) -> str:
     row = await fetchrow(
         """INSERT INTO execution_results
              (execution_id, server_id, server_name, server_ip, status, started_at)
@@ -26,11 +27,27 @@ async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str, tri
     if srv.get("sudo_password"):   srv["_sudo_password"]  = decrypt(srv["sudo_password"])
     if srv.get("winrm_password"):  srv["_winrm_password"] = decrypt(srv["winrm_password"])
 
+    cfg = get_settings()
+    effective_timeout = timeout_override or cfg.script_hard_timeout_sec
     try:
-        # SSH primarno, auto-fallback na WinRM za Windows ako SSH konekcija ne uspe
+        # SSH primarno, auto-fallback na WinRM za Windows ako SSH konekcija ne uspe.
+        # asyncio.wait_for = TVRDI max limit trajanja -- ako se prekorači, prekidamo
+        # cekanje I nasilno zatvaramo konekciju (exec_registry.cancel) da se ne bi
+        # zauvek "curilo" thread-pool mesto dok pozadinski thread ceka na read().
+        # effective_timeout = per-skripta override (timeout_override) ako postoji,
+        # inace globalni default (cfg.script_hard_timeout_sec).
         from app.services.conn_dispatch import execute_script
-        result = await execute_script(srv, content)
-        status = "success" if result["exitCode"] == 0 else "error"
+        result = await asyncio.wait_for(
+            execute_script(srv, content, rid=rid), timeout=effective_timeout
+        )
+        status = result.get("_status_override") or ("success" if result["exitCode"] == 0 else "error")
+    except asyncio.TimeoutError:
+        from app.services.exec_registry import cancel as cancel_conn
+        cancel_conn(rid)
+        result = {"exitCode": -1, "stdout": "",
+                  "stderr": f"Prekoraceno maksimalno vreme izvrsavanja ({effective_timeout}s) -- izvrsavanje je automatski obustavljeno.",
+                  "durationMs": effective_timeout * 1000}
+        status = "timeout"
     except Exception as e:
         result = {"exitCode": -1, "stdout": "", "stderr": str(e), "durationMs": 0}
         status = "error"
@@ -38,7 +55,7 @@ async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str, tri
     if status == "error" and trigger_source in ("manual", "scheduled"):
         automation_trigger = "exec_failed" if trigger_source == "manual" else "scheduled_exec_failed"
         from app.services.automation import check_exec_failed_trigger
-        asyncio.create_task(check_exec_failed_trigger(tenant_id, str(server["id"]), automation_trigger))
+        create_bg_task(check_exec_failed_trigger(tenant_id, str(server["id"]), automation_trigger))
 
     await execute(
         """UPDATE execution_results
@@ -61,7 +78,8 @@ async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str, tri
 async def run(tenant_id: str, server_ids: list, content: str,
               script_name: str = "Ad-hoc", script_id=None, started_by=None,
               notify: bool = True, on_complete=None, started_by_username: str | None = None,
-              rule_id: str | None = None, trigger_source: str = "manual") -> str:
+              rule_id: str | None = None, trigger_source: str = "manual",
+              timeout_override: int | None = None) -> str:
     cfg = get_settings()
     ph  = ", ".join(f"${i+2}" for i in range(len(server_ids)))
     servers = await fetch(
@@ -88,17 +106,24 @@ async def run(tenant_id: str, server_ids: list, content: str,
         tenant_id=tenant_id)
 
     async def _all():
-        ok = err = 0
+        ok = err = cancelled = 0
         mp = cfg.monitor_max_parallel
         for i in range(0, len(servers), mp):
             results = await asyncio.gather(
-                *[_run_one(eid, dict(s), content, tenant_id, trigger_source) for s in servers[i:i+mp]],
+                *[_run_one(eid, dict(s), content, tenant_id, trigger_source, timeout_override) for s in servers[i:i+mp]],
                 return_exceptions=True
             )
             for r in results:
-                if isinstance(r, Exception) or r == "error": err += 1
-                else: ok += 1
-        final = "done" if err == 0 else ("failed" if ok == 0 else "done")
+                if isinstance(r, Exception) or r in ("error", "timeout"):
+                    err += 1
+                elif r == "cancelled":
+                    cancelled += 1
+                else:
+                    ok += 1
+        if cancelled and not ok and not err:
+            final = "cancelled"
+        else:
+            final = "done" if err == 0 else ("failed" if ok == 0 else "done")
         await execute(
             "UPDATE executions SET status=$1, finished_at=NOW(), success_count=$2, error_count=$3 WHERE id=$4",
             final, ok, err, eid
@@ -110,7 +135,7 @@ async def run(tenant_id: str, server_ids: list, content: str,
         logger.info(f"Execution {eid}: {final} ok={ok} err={err}")
 
         from app.services.audit import log_event
-        asyncio.create_task(log_event(
+        create_bg_task(log_event(
             "script.execute",
             user_id=started_by, username=started_by_username, tenant_id=tenant_id,
             resource_type="execution", resource_id=eid,
@@ -125,11 +150,11 @@ async def run(tenant_id: str, server_ids: list, content: str,
 
         from app.services.notify import notify_execution
         if notify:
-            asyncio.create_task(notify_execution(eid))
+            create_bg_task(notify_execution(eid))
         if on_complete:
-            asyncio.create_task(on_complete(eid))
+            create_bg_task(on_complete(eid))
 
-    asyncio.create_task(_all())
+    create_bg_task(_all())
     return eid
 
 

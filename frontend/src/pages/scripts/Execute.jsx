@@ -1,6 +1,6 @@
 // src/pages/scripts/Execute.jsx
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, CheckCircle, XCircle, Clock, ChevronDown, ChevronRight } from 'lucide-react';
+import { Play, CheckCircle, XCircle, Clock, ChevronDown, ChevronRight, StopCircle } from 'lucide-react';
 import api from '../../services/api';
 import ws from '../../services/ws';
 import useAuthStore from '../../store/authStore';
@@ -167,6 +167,8 @@ export default function Execute() {
   const [results,  setResults]  = useState({});
   const [error,    setError]    = useState('');
   const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [timeoutMin, setTimeoutMin] = useState('');
+  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -228,6 +230,11 @@ export default function Execute() {
   const handleRun = async () => {
     if (!content.trim()) { setError('Skripta je prazna'); return; }
     if (!selected.size)  { setError('Odaberi bar jedan server'); return; }
+    const timeoutMinNum = timeoutMin === '' ? null : Number(timeoutMin);
+    if (timeoutMinNum != null && (timeoutMinNum < 1 || timeoutMinNum > 60)) {
+      setError('Maksimalno vreme izvršavanja mora biti između 1 i 60 minuta');
+      return;
+    }
     setError(''); setRunning(true);
 
     // Inicijalizuj rezultate
@@ -243,6 +250,7 @@ export default function Execute() {
         serverIds:     [...selected],
         scriptContent: content,
         scriptName,
+        timeoutSec:    timeoutMinNum ? timeoutMinNum * 60 : null,
       });
       setExecId(data.executionId);
     } catch (err) {
@@ -251,6 +259,17 @@ export default function Execute() {
     }
   };
 
+  const handleCancel = async () => {
+    if (!execId) return;
+    setCancelling(true);
+    try {
+      await api.post(`/tenants/${tenantId}/executions/${execId}/cancel`);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Greška pri otkazivanju');
+    } finally {
+      setCancelling(false);
+    }
+  };
   if (!tenantId) return <div className="text-gray-500 text-sm p-4">Odaberi tenant.</div>;
   if (!canRun)   return <div className="text-gray-500 text-sm p-4">Nemaš dozvolu za pokretanje skripti.</div>;
 
@@ -274,13 +293,21 @@ export default function Execute() {
               <label className="label mb-0">Naziv skripte</label>
             </div>
             <input className="input" value={scriptName} onChange={e => setScriptName(e.target.value)} />
+            <div>
+              <label className="label">Maks. vreme izvršavanja (min, prazno = podrazumevano 15)</label>
+              <input type="number" min="1" max="60" className="input" value={timeoutMin}
+                onChange={e => setTimeoutMin(e.target.value)} placeholder="15" />
+            </div>
 
             {scripts.length > 0 && (
               <div>
                 <label className="label">Učitaj predložak</label>
                 <select className="input" onChange={e => {
                   const s = scripts.find(sc => sc.id === e.target.value);
-                  if (s) { setContent(s.content); setScriptName(s.name); }
+                  if (s) {
+                    setContent(s.content); setScriptName(s.name);
+                    setTimeoutMin(s.timeout_sec ? String(Math.round(s.timeout_sec / 60)) : '');
+                  }
                   e.target.value = '';
                 }}>
                   <option value="">— Odaberi predložak —</option>
@@ -312,10 +339,21 @@ export default function Execute() {
 
           {error && <Alert type="error" message={error} onClose={() => setError('')} />}
 
-          <button className="btn-primary w-full justify-center py-2.5" onClick={handleRun} disabled={running || !selected.size}>
-            {running ? <><Spinner size={16} /> Izvršavam ({progress.done}/{progress.total})...</>
-                     : <><Play size={16} /> Pokreni na {selected.size} server{selected.size !== 1 ? 'a' : ''}</>}
-          </button>
+          {running ? (
+            <div className="flex gap-2">
+              <button className="btn-primary flex-1 justify-center py-2.5" disabled>
+                <Spinner size={16} /> Izvršavam ({progress.done}/{progress.total})...
+              </button>
+              <button className="btn-secondary py-2.5 px-4 flex-shrink-0" onClick={handleCancel} disabled={cancelling}
+                title="Prekida sva jos aktivna izvrsavanja u ovoj skripti">
+                {cancelling ? <Spinner size={16} /> : <><StopCircle size={16} /> Otkaži</>}
+              </button>
+            </div>
+          ) : (
+            <button className="btn-primary w-full justify-center py-2.5" onClick={handleRun} disabled={!selected.size}>
+              <Play size={16} /> Pokreni na {selected.size} server{selected.size !== 1 ? 'a' : ''}
+            </button>
+          )}
         </div>
 
         {/* Desno: odabir servera */}

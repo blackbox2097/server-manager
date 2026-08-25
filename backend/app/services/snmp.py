@@ -8,6 +8,7 @@
 # (paramiko, sinhron, treba ThreadPoolExecutor) ovde NIJE potreban executor.
 
 import asyncio
+from app.services.bgtasks import create_bg_task
 import logging
 import time
 
@@ -124,7 +125,7 @@ async def _log_status_transition(device: dict, old_status: str, new_status: str,
     is_recovery = new_status == "online" and old_status in ("warning", "offline")
     action = "networkdevice.recovery" if is_recovery else f"networkdevice.status_{new_status}"
 
-    asyncio.create_task(log_event(
+    create_bg_task(log_event(
         action, tenant_id=str(device["tenant_id"]),
         resource_type="network_device", resource_id=str(device["id"]),
         details={"name": device["name"], "from": old_status, "to": new_status},
@@ -134,7 +135,7 @@ async def _log_status_transition(device: dict, old_status: str, new_status: str,
     notify_dev = dict(device)
     if error:
         notify_dev["last_error"] = error
-    asyncio.create_task(notify_network_device_status(notify_dev, old_status, new_status))
+    create_bg_task(notify_network_device_status(notify_dev, old_status, new_status))
 
 
 class SNMPError(Exception):

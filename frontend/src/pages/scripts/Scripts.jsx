@@ -9,18 +9,25 @@ import { Modal, ConfirmDialog, Alert, Spinner, Empty, Table } from '../../compon
 function ScriptForm({ script, tenantId, onSave, onClose }) {
   const isEdit = !!script?.id;
   const [form, setForm] = useState({
-    name: '', description: '', osType: 'linux', content: '',
+    name: '', description: '', osType: 'linux', content: '', timeoutMin: '',
     ...(script || {}), osType: script?.os_type || 'linux', content: script?.content || '',
+    timeoutMin: script?.timeout_sec ? String(Math.round(script.timeout_sec / 60)) : '',
   });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState('');
 
   const handleSave = async () => {
     if (!form.name || !form.content) { setError('Naziv i sadržaj su obavezni'); return; }
+    const timeoutMinNum = form.timeoutMin === '' ? null : Number(form.timeoutMin);
+    if (timeoutMinNum != null && (timeoutMinNum < 1 || timeoutMinNum > 60)) {
+      setError('Maksimalno vreme izvršavanja mora biti između 1 i 60 minuta');
+      return;
+    }
     setSaving(true);
     try {
-      if (isEdit) await api.put(`/tenants/${tenantId}/scripts/${script.id}`, form);
-      else        await api.post(`/tenants/${tenantId}/scripts`, form);
+      const payload = { ...form, timeoutSec: timeoutMinNum ? timeoutMinNum * 60 : null };
+      if (isEdit) await api.put(`/tenants/${tenantId}/scripts/${script.id}`, payload);
+      else        await api.post(`/tenants/${tenantId}/scripts`, payload);
       onSave();
     } catch (err) {
       setError(err.response?.data?.error || 'Greška');
@@ -42,6 +49,10 @@ function ScriptForm({ script, tenantId, onSave, onClose }) {
       </div>
       <div><label className="label">Opis</label>
         <input className="input" value={form.description || ''} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></div>
+      <div><label className="label">Maks. vreme izvršavanja (min, prazno = podrazumevano 15)</label>
+        <input type="number" min="1" max="60" className="input" value={form.timeoutMin}
+          onChange={e => setForm(f => ({ ...f, timeoutMin: e.target.value }))}
+          placeholder="15" /></div>
       <div><label className="label">Sadržaj skripte *</label>
         <textarea className="input font-mono text-xs h-56 resize-y" value={form.content}
           onChange={e => setForm(f => ({ ...f, content: e.target.value }))}

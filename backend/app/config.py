@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     pm2_user:   str = "servermanager"
 
     ssh_connect_timeout_ms:   int = 10000
+    script_hard_timeout_sec:  int = 900  # TVRDI max limit trajanja izvrsavanja skripte
+                                          # (ukupno, ne "bez aktivnosti" kao ssh_exec_timeout_ms) --
+                                          # posle ovoga se konekcija nasilno zatvara i izvrsavanje
+                                          # oznacava kao 'timeout', da ne bi zauvek visilo u "running"
     ssh_exec_timeout_ms:      int = 300000
     winrm_connect_timeout_ms: int = 15000
     winrm_exec_timeout_ms:    int = 300000
