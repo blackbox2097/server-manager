@@ -328,12 +328,19 @@ async def _poll_and_save(device: dict):
     if confirmed and old_status and old_status != confirmed:
         await _log_status_transition(device, old_status, confirmed)
 
-    for iface in result["interfaces"]:
-        iface_row = await fetchrow(
+    ifaces = result["interfaces"]
+    if ifaces:
+        iface_rows = await fetch(
             """INSERT INTO network_device_interfaces
                  (device_id, if_index, if_name, if_descr, if_alias, if_type,
                   if_speed_bps, mac_address, admin_status, oper_status, last_polled_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+               SELECT $1, x.if_index, x.if_name, x.if_descr, x.if_alias, x.if_type,
+                      x.if_speed_bps, x.mac_address, x.admin_status, x.oper_status, NOW()
+               FROM UNNEST(
+                 $2::int[], $3::text[], $4::text[], $5::text[], $6::text[],
+                 $7::bigint[], $8::text[], $9::text[], $10::text[]
+               ) AS x(if_index, if_name, if_descr, if_alias, if_type,
+                      if_speed_bps, mac_address, admin_status, oper_status)
                ON CONFLICT (device_id, if_index) DO UPDATE SET
                  if_name=EXCLUDED.if_name, if_descr=EXCLUDED.if_descr,
                  if_alias=EXCLUDED.if_alias, if_type=EXCLUDED.if_type,
@@ -342,19 +349,35 @@ async def _poll_and_save(device: dict):
                  last_change_at = CASE WHEN network_device_interfaces.oper_status <> EXCLUDED.oper_status
                                         THEN NOW() ELSE network_device_interfaces.last_change_at END,
                  oper_status=EXCLUDED.oper_status, last_polled_at=NOW()
-               RETURNING id""",
-            did, iface["if_index"], iface["if_name"], iface["if_descr"], iface["if_alias"],
-            iface["if_type"], iface["if_speed_bps"], iface["mac_address"],
-            iface["admin_status"], iface["oper_status"],
+               RETURNING id, if_index""",
+            did,
+            [i["if_index"] for i in ifaces],
+            [i["if_name"] for i in ifaces],
+            [i["if_descr"] for i in ifaces],
+            [i["if_alias"] for i in ifaces],
+            [i["if_type"] for i in ifaces],
+            [i["if_speed_bps"] for i in ifaces],
+            [i["mac_address"] for i in ifaces],
+            [i["admin_status"] for i in ifaces],
+            [i["oper_status"] for i in ifaces],
         )
+        id_by_idx = {r["if_index"]: r["id"] for r in iface_rows}
         await execute(
             """INSERT INTO network_device_interface_metrics
                  (interface_id, in_kbps, out_kbps, in_errors, out_errors,
                   in_discards, out_discards, oper_status)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)""",
-            iface_row["id"], iface["in_kbps"], iface["out_kbps"],
-            iface["in_errors"], iface["out_errors"],
-            iface["in_discards"], iface["out_discards"], iface["oper_status"],
+               SELECT * FROM UNNEST(
+                 $1::uuid[], $2::numeric[], $3::numeric[], $4::bigint[], $5::bigint[],
+                 $6::bigint[], $7::bigint[], $8::text[]
+               )""",
+            [id_by_idx[i["if_index"]] for i in ifaces],
+            [i["in_kbps"] for i in ifaces],
+            [i["out_kbps"] for i in ifaces],
+            [i["in_errors"] for i in ifaces],
+            [i["out_errors"] for i in ifaces],
+            [i["in_discards"] for i in ifaces],
+            [i["out_discards"] for i in ifaces],
+            [i["oper_status"] for i in ifaces],
         )
 
 
