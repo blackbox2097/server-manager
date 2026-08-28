@@ -359,7 +359,7 @@ export default function NetworkDevices() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center sticky top-0 z-10 bg-gray-950 py-2 border-b border-gray-800/50">
         <h1 className="text-xl font-semibold">Mrežni uređaji</h1>
         <div className="flex items-center gap-2">
           <select className="input py-1.5 text-sm w-32 flex-shrink-0" value={statusFilter} onChange={e => setSearchParams(prev => {

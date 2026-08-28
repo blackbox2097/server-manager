@@ -647,7 +647,7 @@ export default function Servers() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between sticky top-0 z-10 bg-gray-950 py-2 border-b border-gray-800/50">
         <div>
           <h1 className="text-lg font-semibold text-gray-100">Serveri</h1>
           <p className="text-sm text-gray-500">
