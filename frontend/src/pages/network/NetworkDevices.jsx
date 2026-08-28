@@ -7,7 +7,7 @@ import ws from '../../services/ws';
 import useAuthStore from '../../store/authStore';
 import {
   StatusBadge, Badge, Modal, ConfirmDialog,
-  Alert, Spinner, Empty, formatNetSpeed, exportToXlsx,
+  Alert, Spinner, Empty, formatNetSpeed, formatUptimeFull, exportToXlsx,
 } from '../../components/ui';
 
 function F({ label, children }) {
@@ -349,6 +349,7 @@ export default function NetworkDevices() {
     { key: 'device_type', label: 'Tip' },
     { key: 'vendor', label: 'Uređaj' },
     { key: 'status', label: 'Status' },
+    { key: 'uptime', label: 'Uptime' },
     { key: 'interface_count', label: 'Interfejsi' },
     { key: 'poll_interval_sec', label: 'Interval' },
     { key: 'actions', label: '' },
@@ -440,6 +441,9 @@ export default function NetworkDevices() {
                         ) : '—'}
                       </td>
                       <td className="py-2.5 px-3 text-gray-300"><StatusBadge status={d.status} /></td>
+                      <td className="py-2.5 px-3 text-gray-300 text-xs">
+                        {formatUptimeFull(d.sys_uptime_ticks != null ? d.sys_uptime_ticks / 100 : null)}
+                      </td>
                       <td className="py-2.5 px-3 text-gray-300">{d.interface_count}</td>
                       <td className="py-2.5 px-3 text-gray-300">{d.poll_interval_sec}s</td>
                       <td className="py-2.5 px-3 text-gray-300" onClick={e => e.stopPropagation()}>

@@ -276,6 +276,19 @@ export function formatUptime(seconds) {
   return `${m}m`;
 }
 
+// Puni format "dd hh:mm:ss" -- za mrezne uredjaje (SNMP sysUpTime, konvertovano
+// iz TimeTicks/100 pre poziva ove funkcije).
+export function formatUptimeFull(seconds) {
+  if (seconds == null) return '—';
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const pad = n => String(n).padStart(2, '0');
+  if (d > 0) return `${d}d ${pad(h)}:${pad(m)}:${pad(s)}`;
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
 export function formatNetSpeed(kbps) {
   if (kbps == null) return '—';
   if (kbps < 1) return '0 KB/s';
