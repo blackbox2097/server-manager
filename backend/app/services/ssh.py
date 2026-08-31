@@ -285,7 +285,7 @@ async def _get_metrics_windows(server: dict) -> dict:
     Zamena za winrm.get_metrics -- izbegava unencrypted WinRM basic auth."""
     ps_lines = [
         "$ErrorActionPreference='SilentlyContinue'",
-        "$cpu=[math]::Round((Get-CimInstance Win32_Processor|Measure-Object -Property LoadPercentage -Average).Average)",
+        "$cpu=[math]::Round((Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter \"Name='_Total'\").PercentProcessorTime)",
         "$os=Get-CimInstance Win32_OperatingSystem",
         "$ram=[math]::Round((($os.TotalVisibleMemorySize-$os.FreePhysicalMemory)/$os.TotalVisibleMemorySize)*100)",
         "$diskParts=@()",
@@ -298,9 +298,9 @@ async def _get_metrics_windows(server: dict) -> dict:
         "foreach ($dp in $diskParts) { $v=[int]($dp.Split('=')[1]); if ($v -gt $diskMax) { $diskMax=$v } }",
         "$up=[int]((Get-Date)-$os.LastBootUpTime).TotalSeconds",
         "$procs=(Get-Process).Count",
-        "$netStats=Get-NetAdapterStatistics -ErrorAction SilentlyContinue | Where-Object {$_.ReceivedBytes -gt 0 -or $_.SentBytes -gt 0}",
-        "$rx=($netStats | Measure-Object -Property ReceivedBytes -Sum).Sum",
-        "$tx=($netStats | Measure-Object -Property SentBytes -Sum).Sum",
+        "$netStats=Get-CimInstance Win32_PerfRawData_Tcpip_NetworkInterface -ErrorAction SilentlyContinue | Where-Object {$_.BytesReceivedPersec -gt 0 -or $_.BytesSentPersec -gt 0}",
+        "$rx=($netStats | Measure-Object -Property BytesReceivedPersec -Sum).Sum",
+        "$tx=($netStats | Measure-Object -Property BytesSentPersec -Sum).Sum",
         "if (-not $rx) {$rx=0}; if (-not $tx) {$tx=0}",
         "$cs=Get-CimInstance Win32_ComputerSystem",
         "$model=$cs.Model",
