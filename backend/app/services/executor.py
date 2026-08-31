@@ -29,6 +29,22 @@ async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str, tri
 
     cfg = get_settings()
     effective_timeout = timeout_override or cfg.script_hard_timeout_sec
+    loop = asyncio.get_event_loop()
+
+    def _on_chunk(text: str, stream: str):
+        """Zove se iz pozadinskog SSH thread-a (run_in_executor) -- run_coroutine_threadsafe
+        je jedini bezbedan nacin da se odatle zakaze async posao (ws broadcast) na event loop-u."""
+        try:
+            asyncio.run_coroutine_threadsafe(
+                ws_manager.broadcast("exec_output_chunk", {
+                    "executionId": exec_id, "serverId": str(server["id"]),
+                    "stream": stream, "text": text,
+                }, tenant_id=tenant_id),
+                loop
+            )
+        except Exception:
+            pass
+
     try:
         # SSH primarno, auto-fallback na WinRM za Windows ako SSH konekcija ne uspe.
         # asyncio.wait_for = TVRDI max limit trajanja -- ako se prekorači, prekidamo
@@ -38,7 +54,7 @@ async def _run_one(exec_id: str, server: dict, content: str, tenant_id: str, tri
         # inace globalni default (cfg.script_hard_timeout_sec).
         from app.services.conn_dispatch import execute_script
         result = await asyncio.wait_for(
-            execute_script(srv, content, rid=rid), timeout=effective_timeout
+            execute_script(srv, content, rid=rid, on_chunk=_on_chunk), timeout=effective_timeout
         )
         status = result.get("_status_override") or ("success" if result["exitCode"] == 0 else "error")
     except asyncio.TimeoutError:

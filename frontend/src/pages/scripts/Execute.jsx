@@ -108,8 +108,17 @@ Write-Output "IIS restartan: $(Get-Date)"`,
 };
 
 function ResultRow({ result }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(result.status === 'running');
   const hasOutput = result.stdout || result.stderr;
+  const stdoutRef = useRef(null);
+
+  useEffect(() => {
+    if (result.status === 'running') setOpen(true);
+  }, [result.status]);
+
+  useEffect(() => {
+    if (stdoutRef.current) stdoutRef.current.scrollTop = stdoutRef.current.scrollHeight;
+  }, [result.stdout]);
 
   return (
     <div className="border border-gray-800 rounded-lg overflow-hidden">
@@ -136,7 +145,7 @@ function ResultRow({ result }) {
       {open && hasOutput && (
         <div className="border-t border-gray-800 bg-gray-950">
           {result.stdout && (
-            <pre className="text-xs text-green-300 p-3 overflow-x-auto whitespace-pre-wrap font-mono max-h-48 overflow-y-auto">
+            <pre ref={stdoutRef} className="text-xs text-green-300 p-3 overflow-x-auto whitespace-pre-wrap font-mono max-h-48 overflow-y-auto">
               {result.stdout}
             </pre>
           )}
@@ -192,6 +201,18 @@ export default function Execute() {
       }));
     });
 
+    const unsubChunk = ws.on('exec_output_chunk', data => {
+      if (data.executionId !== execId) return;
+      const key = data.stream === 'stderr' ? 'stderr' : 'stdout';
+      setResults(prev => ({
+        ...prev,
+        [data.serverId]: {
+          ...prev[data.serverId],
+          [key]: (prev[data.serverId]?.[key] || '') + data.text,
+        }
+      }));
+    });
+
     const unsubDone = ws.on('exec_server_done', data => {
       if (data.executionId !== execId) return;
       setResults(prev => ({
@@ -210,7 +231,7 @@ export default function Execute() {
       setRunning(false);
     });
 
-    return () => { unsubStart(); unsubDone(); unsubFinish(); };
+    return () => { unsubStart(); unsubChunk(); unsubDone(); unsubFinish(); };
   }, [execId]);
 
   const toggleServer = (id) => {

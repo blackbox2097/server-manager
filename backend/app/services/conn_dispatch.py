@@ -51,10 +51,12 @@ async def get_metrics(server: dict) -> dict:
         return await winrm_get_metrics(server)
 
 
-async def execute_script(server: dict, script_content: str, rid=None) -> dict:
+async def execute_script(server: dict, script_content: str, rid=None, on_chunk=None) -> dict:
     """rid = execution_results.id, opciono -- provlaci se do ssh.py radi
     registracije u exec_registry (hard timeout / rucno otkazivanje). WinRM
-    put ga trenutno ne koristi (otkazivanje jos nije podrzano za WinRM)."""
+    put ga trenutno ne koristi (otkazivanje jos nije podrzano za WinRM).
+    on_chunk = opcioni callback za zivi prikaz izlaza -- trenutno SAMO SSH/Linux
+    put ga koristi, WinRM fallback ga ignorise (nema streaming)."""
     if server.get("os_type") in ("proxmox", "esxi"):
         return {"exitCode": -1, "stdout": "", "stderr": _UNSUPPORTED_MSG, "durationMs": 0}
 
@@ -63,10 +65,10 @@ async def execute_script(server: dict, script_content: str, rid=None) -> dict:
         from app.services.winrm import execute_script as winrm_execute_script
         return await winrm_execute_script(server, script_content)
     if method == "ssh" or server.get("os_type") != "windows":
-        return await ssh.execute_script(server, script_content, rid=rid)
+        return await ssh.execute_script(server, script_content, rid=rid, on_chunk=on_chunk)
     # auto + windows
     try:
-        return await ssh.execute_script(server, script_content, rid=rid)
+        return await ssh.execute_script(server, script_content, rid=rid, on_chunk=on_chunk)
     except SSHConnectionError as e:
         logger.warning(f"SSH konekcija neuspesna za {server.get('name')}, fallback na WinRM: {e}")
         from app.services.winrm import execute_script as winrm_execute_script

@@ -74,6 +74,43 @@ def _exec(client: paramiko.SSHClient, cmd: str, timeout: int = 60) -> tuple[str,
             code)
 
 
+def _exec_stream(client: paramiko.SSHClient, cmd: str, on_chunk=None, timeout: int = 60) -> tuple[str, str, int]:
+    """Kao _exec(), ali cita izlaz inkrementalno (isti polling obrazac kao
+    terminal.py) i zove on_chunk(text, stream) cim stigne novi komad, umesto
+    da ceka kraj komande i cita sve odjednom preko out.read().
+    on_chunk potpis: on_chunk(text: str, stream: str) gde je stream 'stdout'
+    ili 'stderr'. Poziva se SINHRONO iz OVOG (worker) thread-a."""
+    chan = client.get_transport().open_session(timeout=timeout)
+    chan.settimeout(0.5)
+    chan.exec_command(cmd)
+    stdout_chunks = []
+    stderr_chunks = []
+    while True:
+        got_data = False
+        if chan.recv_ready():
+            chunk = chan.recv(4096)
+            if chunk:
+                text = chunk.decode("utf-8", errors="replace")
+                stdout_chunks.append(text)
+                if on_chunk:
+                    on_chunk(text, "stdout")
+                got_data = True
+        if chan.recv_stderr_ready():
+            chunk = chan.recv_stderr(4096)
+            if chunk:
+                text = chunk.decode("utf-8", errors="replace")
+                stderr_chunks.append(text)
+                if on_chunk:
+                    on_chunk(text, "stderr")
+                got_data = True
+        if chan.exit_status_ready() and not chan.recv_ready() and not chan.recv_stderr_ready():
+            break
+        if not got_data:
+            time.sleep(0.05)
+    code = chan.recv_exit_status()
+    return ("".join(stdout_chunks), "".join(stderr_chunks), code)
+
+
 def _write_remote(client: paramiko.SSHClient, path: str, content: str, mode: int = 0o700):
     """Piše fajl na remote server kroz SFTP — pouzdanije od exec_command stdin pipe-a."""
     sftp = client.open_sftp()
@@ -170,7 +207,7 @@ async def _get_metrics_linux(server: dict) -> dict:
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
-async def _execute_script_linux(server: dict, script_content: str, rid=None) -> dict:
+async def _execute_script_linux(server: dict, script_content: str, rid=None, on_chunk=None) -> dict:
     cfg = get_settings()
 
     def _run():
@@ -203,10 +240,16 @@ async def _execute_script_linux(server: dict, script_content: str, rid=None) -> 
             else:
                 cmd = f"bash {tmp}; EC=$?; rm -f {tmp}; exit $EC"
 
-            stdout, stderr, code = _exec(
-                client, cmd,
-                timeout=cfg.ssh_exec_timeout_ms // 1000
-            )
+            if on_chunk:
+                stdout, stderr, code = _exec_stream(
+                    client, cmd, on_chunk,
+                    timeout=cfg.ssh_exec_timeout_ms // 1000
+                )
+            else:
+                stdout, stderr, code = _exec(
+                    client, cmd,
+                    timeout=cfg.ssh_exec_timeout_ms // 1000
+                )
             stderr = "\n".join(
                 l for l in stderr.splitlines()
                 if not l.startswith("[sudo]")
@@ -600,14 +643,16 @@ async def list_vms_hyperv(server: dict) -> list[dict]:
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
-async def execute_script(server: dict, script_content: str, rid=None) -> dict:
+async def execute_script(server: dict, script_content: str, rid=None, on_chunk=None) -> dict:
     """Dispatch po os_type -- izvrsavanje skripti sad uvek preko SSH.
     rid = execution_results.id, opciono -- ako je prosledjen, registruje
     konekciju u exec_registry da bi mogla nasilno da se prekine (hard
-    timeout ili rucno otkazivanje)."""
+    timeout ili rucno otkazivanje).
+    on_chunk = opcioni callback(text, stream) za zivi prikaz izlaza dok
+    skripta jos radi -- trenutno podrzano SAMO za Linux (SSH bash)."""
     if server.get("os_type") in ("windows", "hyperv"):
         return await _execute_script_windows(server, script_content, rid=rid)
-    return await _execute_script_linux(server, script_content, rid=rid)
+    return await _execute_script_linux(server, script_content, rid=rid, on_chunk=on_chunk)
 
 
 async def list_processes(server: dict, limit: int = 50) -> list[dict]:
