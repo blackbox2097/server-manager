@@ -20,7 +20,15 @@ const CATEGORIES = [
   { label: 'Tenant/Korisnici', prefix: 'tenant.' },
 ];
 
-export function actionLabel(action) {
+export function actionLabel(action, details) {
+  if (action === 'script.execute' && details?.status) {
+    const statusMap = {
+      cancelled: 'Skripta otkazana',
+      failed: 'Skripta neuspesna',
+      timeout: 'Skripta istekla (timeout)',
+    };
+    if (statusMap[details.status]) return statusMap[details.status];
+  }
   const map = {
     'auth.login': 'Prijava', 'auth.login_failed': 'Neuspela prijava',
     'auth.logout': 'Odjava', 'auth.password_change': 'Promena lozinke',
@@ -255,7 +263,7 @@ export function LogRow({ log, showTenant = false }) {
         </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-200">{actionLabel(log.action)}</span>
+            <span className="text-sm text-gray-200">{actionLabel(log.action, log.details)}</span>
             {showTenant && log.tenant_name && <span className="badge-gray text-xs">{log.tenant_name}</span>}
           </div>
           {summary && <div className="text-xs text-gray-500 mt-0.5">{summary}</div>}
