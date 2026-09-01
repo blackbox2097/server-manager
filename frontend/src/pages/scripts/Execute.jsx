@@ -188,7 +188,10 @@ export default function Execute() {
       setServers(s.data);
       setScripts(sc.data);
     });
-    if (accessToken) ws.connect(accessToken);
+    // ws.connect() se NE poziva ovde -- vec je globalno pozvan u App.jsx.
+    // Lokalni poziv je pravio race (dupli soket) dok je globalna konekcija
+    // jos bila CONNECTING, sto je izazivalo duple WS evente (isti princip
+    // kao StatusOverview.jsx).
   }, [tenantId]);
 
   // Live WS rezultati

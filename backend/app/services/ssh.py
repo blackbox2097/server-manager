@@ -425,7 +425,7 @@ async def get_metrics(server: dict) -> dict:
     return await _get_metrics_linux(server)
 
 
-async def _execute_script_windows(server: dict, script_content: str, rid=None) -> dict:
+async def _execute_script_windows(server: dict, script_content: str, rid=None, on_chunk=None) -> dict:
     """Izvrsava PowerShell skriptu na Windows serveru preko SSH (paramiko).
     Zamena za winrm.execute_script."""
     cfg = get_settings()
@@ -439,9 +439,14 @@ async def _execute_script_windows(server: dict, script_content: str, rid=None) -
             tmp  = f"C:/Windows/Temp/.sm_{ts}_{rand}.ps1"
             _write_remote(client, tmp, script_content, mode=0o700)
             cmd = f'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{tmp}"'
-            stdout, stderr, code = _exec(
-                client, cmd, timeout=cfg.ssh_exec_timeout_ms // 1000
-            )
+            if on_chunk:
+                stdout, stderr, code = _exec_stream(
+                    client, cmd, on_chunk, timeout=cfg.ssh_exec_timeout_ms // 1000
+                )
+            else:
+                stdout, stderr, code = _exec(
+                    client, cmd, timeout=cfg.ssh_exec_timeout_ms // 1000
+                )
             try:
                 sftp = client.open_sftp()
                 sftp.remove(tmp)
@@ -649,9 +654,9 @@ async def execute_script(server: dict, script_content: str, rid=None, on_chunk=N
     konekciju u exec_registry da bi mogla nasilno da se prekine (hard
     timeout ili rucno otkazivanje).
     on_chunk = opcioni callback(text, stream) za zivi prikaz izlaza dok
-    skripta jos radi -- trenutno podrzano SAMO za Linux (SSH bash)."""
+    skripta jos radi -- podrzano i za Linux i za Windows (SSH put)."""
     if server.get("os_type") in ("windows", "hyperv"):
-        return await _execute_script_windows(server, script_content, rid=rid)
+        return await _execute_script_windows(server, script_content, rid=rid, on_chunk=on_chunk)
     return await _execute_script_linux(server, script_content, rid=rid, on_chunk=on_chunk)
 
 
