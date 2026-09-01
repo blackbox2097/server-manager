@@ -5,11 +5,11 @@ import { ArrowLeft, Server, Router } from 'lucide-react';
 import api from '../../services/api';
 import ws from '../../services/ws';
 import useAuthStore from '../../store/authStore';
-import { StatusBadge, Spinner, Empty, Table } from '../../components/ui';
+import { Spinner, Empty, Table } from '../../components/ui';
 import { getServerColumns } from '../../utils/serverColumns';
+import { getNetworkDeviceColumns } from '../../utils/networkDeviceColumns';
 
 const STATUS_LABELS = { online: 'online', warning: 'upozorenje', offline: 'offline' };
-const DEVICE_TYPE_LABELS = { router: 'Ruter', switch: 'Svič', ap: 'Access Point', ups: 'UPS', other: 'Uređaj' };
 
 export default function StatusOverview() {
   const { type } = useParams(); // 'servers' | 'network-devices'
@@ -103,6 +103,7 @@ export default function StatusOverview() {
   };
 
   const serverColumns = getServerColumns({});
+  const networkColumns = getNetworkDeviceColumns({});
 
   return (
     <div className="space-y-4">
@@ -134,27 +135,8 @@ export default function StatusOverview() {
                   <Table columns={serverColumns} rows={group.items} onRowClick={handleOpen} />
                 </div>
               ) : (
-                <div className="card p-0 overflow-hidden divide-y divide-gray-800/50">
-                  {group.items.map(item => (
-                    <div key={item.id}
-                      className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800/30 transition-colors cursor-pointer"
-                      onClick={() => handleOpen(item)}>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-gray-200 truncate">{item.name}</span>
-                          <StatusBadge status={item.status} />
-                        </div>
-                        <div className="text-xs text-gray-500 mt-0.5">
-                          {item.ip_address} · {DEVICE_TYPE_LABELS[item.device_type] || item.device_type}
-                          {item.vendor && ` · ${item.vendor}${item.model ? ' ' + item.model : ''}`}
-                          {item.location && ` · 📍 ${item.location}`}
-                        </div>
-                        {item.last_error && (
-                          <div className="text-xs text-gray-600 mt-0.5 truncate">{item.last_error}</div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                <div className="card p-0 overflow-hidden">
+                  <Table columns={networkColumns} rows={group.items} onRowClick={handleOpen} />
                 </div>
               )}
             </div>

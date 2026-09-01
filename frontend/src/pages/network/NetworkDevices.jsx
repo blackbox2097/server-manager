@@ -1,26 +1,19 @@
 // src/pages/network/NetworkDevices.jsx
 import React, { useState, useEffect, useCallback, memo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, Edit, Trash2, Plug, Router, ArrowDown, ArrowUp, ChevronRight, ChevronDown, Search, Download } from 'lucide-react';
+import { Plus, Router, ArrowDown, ArrowUp, Search, Download } from 'lucide-react';
 import api from '../../services/api';
 import ws from '../../services/ws';
 import useAuthStore from '../../store/authStore';
 import {
-  StatusBadge, Badge, Modal, ConfirmDialog,
-  Alert, Spinner, Empty, formatNetSpeed, formatUptimeFull, exportToXlsx,
+  StatusBadge, Modal, ConfirmDialog,
+  Alert, Spinner, Empty, formatNetSpeed, exportToXlsx,
 } from '../../components/ui';
+import { getNetworkDeviceColumns, DEVICE_TYPES } from '../../utils/networkDeviceColumns';
 
 function F({ label, children }) {
   return <div><label className="label">{label}</label>{children}</div>;
 }
-
-const DEVICE_TYPES = [
-  { value: 'router',  label: 'Ruter' },
-  { value: 'switch',  label: 'Svic' },
-  { value: 'ap',      label: 'Access Point' },
-  { value: 'ups',     label: 'UPS' },
-  { value: 'other',   label: 'Ostalo' },
-];
 
 const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, locations, onSave, onClose }) {
   const device = deviceRef.current;
@@ -343,17 +336,11 @@ export default function NetworkDevices() {
     await exportToXlsx(`mrezni-uredjaji-${activeTenant?.name || 'export'}`, cols, filteredDevices, 'Mrežni uređaji');
   };
 
-  const columns = [
-    { key: 'expand', label: '' },
-    { key: 'name', label: 'Naziv' },
-    { key: 'device_type', label: 'Tip' },
-    { key: 'vendor', label: 'Uređaj' },
-    { key: 'status', label: 'Status' },
-    { key: 'uptime', label: 'Uptime' },
-    { key: 'interface_count', label: 'Interfejsi' },
-    { key: 'poll_interval_sec', label: 'Interval' },
-    { key: 'actions', label: '' },
-  ];
+  const columns = getNetworkDeviceColumns({
+    expanded, toggleExpand,
+    testing, handleTest,
+    canManage, openEdit, setDelConfirm,
+  });
 
   if (loading) return <Spinner />;
 
@@ -422,42 +409,11 @@ export default function NetworkDevices() {
                   <React.Fragment key={d.id}>
                     <tr className="border-b border-gray-800/50 cursor-pointer hover:bg-gray-800/50 transition-colors"
                         onClick={() => toggleExpand(d)}>
-                      <td className="py-2.5 px-3 text-gray-500 w-6">
-                        {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      </td>
-                      <td className="py-2.5 px-3 text-gray-300">
-                        <div className="font-medium flex items-center gap-2"><Router size={14} className="text-gray-500" />{d.name}</div>
-                        <div className="text-xs text-gray-500">{d.ip_address}</div>
-                      </td>
-                      <td className="py-2.5 px-3 text-gray-300">
-                        <Badge color="blue">{DEVICE_TYPES.find(t => t.value === d.device_type)?.label || d.device_type}</Badge>
-                      </td>
-                      <td className="py-2.5 px-3 text-gray-300">
-                        {d.vendor || d.model ? (
-                          <div>
-                            {d.vendor && <span>{d.vendor}</span>}
-                            {d.model && <div className="text-xs text-gray-500">{d.model}</div>}
-                          </div>
-                        ) : '—'}
-                      </td>
-                      <td className="py-2.5 px-3 text-gray-300"><StatusBadge status={d.status} /></td>
-                      <td className="py-2.5 px-3 text-gray-300 text-xs">
-                        {formatUptimeFull(d.sys_uptime_ticks != null ? d.sys_uptime_ticks / 100 : null)}
-                      </td>
-                      <td className="py-2.5 px-3 text-gray-300">{d.interface_count}</td>
-                      <td className="py-2.5 px-3 text-gray-300">{d.poll_interval_sec}s</td>
-                      <td className="py-2.5 px-3 text-gray-300" onClick={e => e.stopPropagation()}>
-                        <div className="flex gap-1 justify-end">
-                          <button className="icon-btn" title="Testiraj" disabled={testing === d.id}
-                            onClick={() => handleTest(d)}>
-                            {testing === d.id ? <Spinner size={14} /> : <Plug size={14} />}
-                          </button>
-                          {canManage && <>
-                            <button className="icon-btn" title="Izmeni" onClick={() => openEdit(d)}><Edit size={14} /></button>
-                            <button className="icon-btn text-red-400" title="Obriši" onClick={() => setDelConfirm(d)}><Trash2 size={14} /></button>
-                          </>}
-                        </div>
-                      </td>
+                      {columns.map(col => (
+                        <td key={col.key} className="py-2.5 px-3 text-gray-300">
+                          {col.render(d)}
+                        </td>
+                      ))}
                     </tr>
                     {isOpen && (
                       <tr className="border-b border-gray-800/50 bg-gray-900/40">

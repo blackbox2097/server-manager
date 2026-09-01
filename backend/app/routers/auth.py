@@ -16,13 +16,13 @@ async def _tenants_for(user_id: str, role: str) -> list:
         rows = await fetch(
             """SELECT id, name, slug, color,
                       true AS perm_view, true AS perm_scripts_run, true AS perm_scripts_manage,
-                      true AS perm_servers_manage, true AS perm_keys_manage
+                      true AS perm_servers_manage, true AS perm_keys_manage, true AS perm_network_manage
                FROM tenants WHERE active=true ORDER BY name""")
     else:
         rows = await fetch(
             """SELECT t.id, t.name, t.slug, t.color,
                       ot.perm_view, ot.perm_scripts_run, ot.perm_scripts_manage,
-                      ot.perm_servers_manage, ot.perm_keys_manage
+                      ot.perm_servers_manage, ot.perm_keys_manage, ot.perm_network_manage
                FROM operator_tenants ot JOIN tenants t ON t.id=ot.tenant_id
                WHERE ot.operator_id=$1 AND t.active=true ORDER BY t.name""", user_id)
     return [dict(r) for r in rows]

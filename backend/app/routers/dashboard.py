@@ -231,6 +231,7 @@ async def network_devices_by_status(status: str = Query(...), user=Depends(get_c
     base = """
         SELECT nd.id, nd.name, nd.ip_address, nd.device_type, nd.vendor, nd.model, nd.location,
                nd.status, nd.last_error, nd.last_seen_at, nd.tenant_id, t.name AS tenant_name,
+               nd.poll_interval_sec, nd.sys_uptime_ticks,
                (SELECT COUNT(*) FROM network_device_interfaces WHERE device_id=nd.id) AS interface_count
         FROM network_devices nd
         JOIN tenants t ON t.id = nd.tenant_id

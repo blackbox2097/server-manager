@@ -73,7 +73,7 @@ export default function VmList() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between sticky top-0 z-10 bg-gray-950 py-2 border-b border-gray-800/50">
         <div className="flex items-center gap-3 min-w-0">
           <button className="btn-ghost py-1.5 px-2 flex-shrink-0" onClick={() => navigate('/servers')}>
             <ArrowLeft size={16} />

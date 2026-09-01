@@ -10,6 +10,7 @@ const PERMS = [
   { key: 'permScriptsManage', label: 'Upravljanje skriptama' },
   { key: 'permServersManage', label: 'Upravljanje serverima' },
   { key: 'permKeysManage',    label: 'SSH ključevi' },
+  { key: 'permNetworkManage', label: 'Upravljanje mrežnim uređajima' },
 ];
 
 // ── Forma za kreiranje/editovanje operatera ───────────────────────────────────
@@ -31,6 +32,7 @@ function UserForm({ operator, tenants, onSave, onClose }) {
       permScriptsManage:  t.permScriptsManage  || false,
       permServersManage:  t.permServersManage  || false,
       permKeysManage:     t.permKeysManage     || false,
+      permNetworkManage:  t.permNetworkManage  || false,
     })) || []
   );
   const [saving, setSaving] = useState(false);
@@ -43,7 +45,7 @@ function UserForm({ operator, tenants, onSave, onClose }) {
     setAssignments(prev =>
       hasTenant(tenantId)
         ? prev.filter(a => a.tenantId !== tenantId)
-        : [...prev, { tenantId, permScriptsRun: false, permScriptsManage: false, permServersManage: false, permKeysManage: false }]
+        : [...prev, { tenantId, permScriptsRun: false, permScriptsManage: false, permServersManage: false, permKeysManage: false, permNetworkManage: false }]
     );
   };
 
@@ -233,7 +235,7 @@ export default function Users() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between sticky top-0 z-10 bg-gray-950 py-2 border-b border-gray-800/50">
         <div>
           <h1 className="text-lg font-semibold text-gray-100">Operateri</h1>
           <p className="text-sm text-gray-500">{users.length} operatera ukupno</p>

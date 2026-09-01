@@ -377,6 +377,7 @@ export default function Logs() {
 
   return (
     <div className="space-y-4">
+      <div className="sticky top-0 z-10 bg-gray-950 py-2 space-y-4 border-b border-gray-800/50">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold text-gray-100 flex items-center gap-2">
@@ -447,6 +448,7 @@ export default function Logs() {
             )}
           </div>
         )}
+      </div>
       </div>
 
       {/* Lista */}
