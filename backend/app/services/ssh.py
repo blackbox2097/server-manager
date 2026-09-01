@@ -66,15 +66,20 @@ def _connect(server: dict) -> paramiko.SSHClient:
     return client
 
 
-def _exec(client: paramiko.SSHClient, cmd: str, timeout: int = 60) -> tuple[str, str, int]:
+def _exec(client: paramiko.SSHClient, cmd: str, timeout: int = 60, on_start=None) -> tuple[str, str, int]:
     _, out, err = client.exec_command(cmd, timeout=timeout)
+    if on_start:
+        try:
+            on_start()
+        except Exception:
+            pass
     code = out.channel.recv_exit_status()
     return (out.read().decode("utf-8", errors="replace"),
             err.read().decode("utf-8", errors="replace"),
             code)
 
 
-def _exec_stream(client: paramiko.SSHClient, cmd: str, on_chunk=None, timeout: int = 60) -> tuple[str, str, int]:
+def _exec_stream(client: paramiko.SSHClient, cmd: str, on_chunk=None, timeout: int = 60, on_start=None) -> tuple[str, str, int]:
     """Kao _exec(), ali cita izlaz inkrementalno (isti polling obrazac kao
     terminal.py) i zove on_chunk(text, stream) cim stigne novi komad, umesto
     da ceka kraj komande i cita sve odjednom preko out.read().
@@ -83,6 +88,11 @@ def _exec_stream(client: paramiko.SSHClient, cmd: str, on_chunk=None, timeout: i
     chan = client.get_transport().open_session(timeout=timeout)
     chan.settimeout(0.5)
     chan.exec_command(cmd)
+    if on_start:
+        try:
+            on_start()
+        except Exception:
+            pass
     stdout_chunks = []
     stderr_chunks = []
     while True:
@@ -213,15 +223,17 @@ async def _execute_script_linux(server: dict, script_content: str, rid=None, on_
     def _run():
         start  = time.time()
         client = _connect(server)
-        exec_registry.register(rid, client)
+        exec_registry.register(rid, client, server=server)
         try:
             rand    = "".join(random.choices(string.ascii_lowercase, k=8))
             ts      = int(time.time() * 1000)
             tmp     = f"/tmp/.sm_{ts}_{rand}.sh"
+            pidfile = f"/tmp/.sm_pid_{ts}"
             sudo_pw = server.get("_sudo_password")
             ssh_user = server.get("ssh_user", "")
 
-            _write_remote(client, tmp, script_content)
+            wrapped_content = "export DEBIAN_FRONTEND=noninteractive\n" + script_content
+            _write_remote(client, tmp, wrapped_content)
 
             if sudo_pw and ssh_user != "root":
                 askpass = f"/tmp/.sm_ask_{ts}.sh"
@@ -230,25 +242,47 @@ async def _execute_script_linux(server: dict, script_content: str, rid=None, on_
                 _write_remote(client, askpass, f"#!/bin/bash\necho {shlex.quote(sudo_pw)}\n")
                 _write_remote(client, wrapper, (
                     f"#!/bin/bash\n"
+                    f"echo $$ > {pidfile}\n"
                     f"export SUDO_ASKPASS={askpass}\n"
                     f"sudo -A bash {tmp}\n"
                     f"EC=$?\n"
-                    f"rm -f {askpass} {wrapper} {tmp} 2>/dev/null\n"
+                    f"rm -f {askpass} {wrapper} {tmp} {pidfile} 2>/dev/null\n"
                     f"exit $EC\n"
                 ))
                 cmd = f"bash {wrapper}"
             else:
-                cmd = f"bash {tmp}; EC=$?; rm -f {tmp}; exit $EC"
+                cmd = f"echo $$ > {pidfile}; bash {tmp}; EC=$?; rm -f {tmp} {pidfile}; exit $EC"
+
+            def _read_pid():
+                """Kratak SFTP poll (do ~2s) za pidfile koji skripta upisuje na startu --
+                omogucava cancel() da posalje pravi kill signal umesto da samo
+                zatvori konekciju (sudo cesto izoluje decu od SIGHUP-a)."""
+                for _ in range(20):
+                    try:
+                        sftp = client.open_sftp()
+                        try:
+                            with sftp.open(pidfile) as f:
+                                pid_str = f.read().decode().strip()
+                            if pid_str:
+                                exec_registry.set_pid(rid, int(pid_str))
+                                return
+                        finally:
+                            sftp.close()
+                    except Exception:
+                        pass
+                    time.sleep(0.1)
 
             if on_chunk:
                 stdout, stderr, code = _exec_stream(
                     client, cmd, on_chunk,
-                    timeout=cfg.ssh_exec_timeout_ms // 1000
+                    timeout=cfg.ssh_exec_timeout_ms // 1000,
+                    on_start=_read_pid,
                 )
             else:
                 stdout, stderr, code = _exec(
                     client, cmd,
-                    timeout=cfg.ssh_exec_timeout_ms // 1000
+                    timeout=cfg.ssh_exec_timeout_ms // 1000,
+                    on_start=_read_pid,
                 )
             stderr = "\n".join(
                 l for l in stderr.splitlines()
