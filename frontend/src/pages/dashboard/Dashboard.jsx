@@ -99,7 +99,12 @@ function timeAgo(iso) {
 }
 
 export default function Dashboard() {
-  const { accessToken, user, hasPerm } = useAuthStore();
+  const { accessToken, user, hasPerm, tenants, setActiveTenant } = useAuthStore();
+  const handleOpenProblem = (item, isServerItem) => {
+    const tenant = tenants.find(t => t.id === item.tenant_id);
+    if (tenant) setActiveTenant(tenant);
+    navigate(isServerItem ? '/servers' : '/network-devices');
+  };
   const navigate = useNavigate();
 
   const [stats,       setStats]       = useState({ total: 0, online: 0, warning: 0, offline: 0, envCounts: {}, osCounts: {} });
@@ -352,7 +357,8 @@ export default function Dashboard() {
                   </div>
                   <div className="divide-y divide-gray-800/50">
                     {group.items.map(server => (
-                      <div key={server.id} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800/30 transition-colors">
+                      <div key={server.id} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800/30 transition-colors cursor-pointer"
+                        onClick={() => handleOpenProblem(server, true)}>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-gray-200 truncate">{server.name}</span>
@@ -391,7 +397,7 @@ export default function Dashboard() {
                         <button
                           className="btn-ghost py-1.5 px-1.5 text-gray-600 hover:text-gray-300 flex-shrink-0"
                           disabled={dismissing === server.id}
-                          onClick={() => handleDismiss(server.id)}
+                          onClick={(e) => { e.stopPropagation(); handleDismiss(server.id); }}
                           title="Sakrij (ponovo se pojavljuje pri sledecoj promeni statusa)">
                           {dismissing === server.id ? <Spinner size={14} /> : <X size={14} />}
                         </button>
@@ -422,7 +428,8 @@ export default function Dashboard() {
                   </div>
                   <div className="divide-y divide-gray-800/50">
                     {group.items.map(device => (
-                      <div key={device.id} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800/30 transition-colors">
+                      <div key={device.id} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800/30 transition-colors cursor-pointer"
+                        onClick={() => handleOpenProblem(device, false)}>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-gray-200 truncate">{device.name}</span>
@@ -446,7 +453,7 @@ export default function Dashboard() {
                         <button
                           className="btn-ghost py-1.5 px-1.5 text-gray-600 hover:text-gray-300 flex-shrink-0"
                           disabled={dismissingDevice === device.id}
-                          onClick={() => handleDismissDevice(device.id)}
+                          onClick={(e) => { e.stopPropagation(); handleDismissDevice(device.id); }}
                           title="Sakrij (ponovo se pojavljuje pri sledecoj promeni statusa)">
                           {dismissingDevice === device.id ? <Spinner size={14} /> : <X size={14} />}
                         </button>

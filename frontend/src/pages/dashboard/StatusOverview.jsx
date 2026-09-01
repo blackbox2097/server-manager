@@ -5,18 +5,11 @@ import { ArrowLeft, Server, Router } from 'lucide-react';
 import api from '../../services/api';
 import ws from '../../services/ws';
 import useAuthStore from '../../store/authStore';
-import { StatusBadge, MetricCell, DiskCell, Spinner, Empty, formatUptime } from '../../components/ui';
+import { StatusBadge, Spinner, Empty, Table } from '../../components/ui';
+import { getServerColumns } from '../../utils/serverColumns';
 
 const STATUS_LABELS = { online: 'online', warning: 'upozorenje', offline: 'offline' };
 const DEVICE_TYPE_LABELS = { router: 'Ruter', switch: 'Svič', ap: 'Access Point', ups: 'UPS', other: 'Uređaj' };
-
-function osLabel(osType) {
-  return osType === 'windows' ? '🪟 Windows'
-    : osType === 'proxmox' ? '🖥️ Proxmox'
-    : osType === 'hyperv' ? '🖥️ Hyper-V'
-    : osType === 'esxi' ? '🖥️ ESXi'
-    : '🐧 Linux';
-}
 
 export default function StatusOverview() {
   const { type } = useParams(); // 'servers' | 'network-devices'
@@ -109,6 +102,8 @@ export default function StatusOverview() {
     navigate(isServers ? '/servers' : '/network-devices');
   };
 
+  const serverColumns = getServerColumns({});
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -130,43 +125,38 @@ export default function StatusOverview() {
         <Empty icon={isServers ? Server : Router} title="Nema rezultata"
           subtitle={`Nijedan ${isServers ? 'server' : 'uređaj'} nije u statusu "${STATUS_LABELS[status] || status}"`} />
       ) : (
-        <div className="card p-0 overflow-hidden">
+        <div className="space-y-4">
           {groups.map(group => (
             <div key={group.tenantId}>
-              <div className="px-4 py-1.5 bg-gray-900/50 text-[11px] font-medium text-gray-500 uppercase tracking-wider">
-                {group.tenantName}
-              </div>
-              <div className="divide-y divide-gray-800/50">
-                {group.items.map(item => (
-                  <div key={item.id} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800/30 transition-colors">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-gray-200 truncate">{item.name}</span>
-                        <StatusBadge status={item.status} />
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">{group.tenantName}</p>
+              {isServers ? (
+                <div className="card p-0 overflow-hidden">
+                  <Table columns={serverColumns} rows={group.items} onRowClick={handleOpen} />
+                </div>
+              ) : (
+                <div className="card p-0 overflow-hidden divide-y divide-gray-800/50">
+                  {group.items.map(item => (
+                    <div key={item.id}
+                      className="flex items-center gap-4 px-4 py-3 hover:bg-gray-800/30 transition-colors cursor-pointer"
+                      onClick={() => handleOpen(item)}>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-gray-200 truncate">{item.name}</span>
+                          <StatusBadge status={item.status} />
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {item.ip_address} · {DEVICE_TYPE_LABELS[item.device_type] || item.device_type}
+                          {item.vendor && ` · ${item.vendor}${item.model ? ' ' + item.model : ''}`}
+                          {item.location && ` · 📍 ${item.location}`}
+                        </div>
+                        {item.last_error && (
+                          <div className="text-xs text-gray-600 mt-0.5 truncate">{item.last_error}</div>
+                        )}
                       </div>
-                      <div className="text-xs text-gray-500 mt-0.5">
-                        {item.ip_address} · {isServers ? osLabel(item.os_type) : (DEVICE_TYPE_LABELS[item.device_type] || item.device_type)}
-                        {!isServers && item.vendor && ` · ${item.vendor}${item.model ? ' ' + item.model : ''}`}
-                        {!isServers && item.location && ` · 📍 ${item.location}`}
-                      </div>
-                      {item.last_error && (
-                        <div className="text-xs text-gray-600 mt-0.5 truncate">{item.last_error}</div>
-                      )}
                     </div>
-                    {isServers && (
-                      <div className="hidden md:flex items-center gap-4 flex-shrink-0">
-                        <MetricCell value={item.cpu_percent} label="CPU" />
-                        <MetricCell value={item.ram_percent} label="RAM" />
-                        <DiskCell value={item.disk_percent} disks={item.disks} />
-                        <span className="text-xs text-gray-500 w-20 text-right">{formatUptime(item.uptime_seconds)}</span>
-                      </div>
-                    )}
-                    <button className="btn-secondary flex-shrink-0" onClick={() => handleOpen(item)}>
-                      Otvori
-                    </button>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
