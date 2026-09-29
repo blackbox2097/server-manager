@@ -41,6 +41,7 @@ export function getServerColumns({
           {s.os_type === 'proxmox' && <Badge color="purple">Proxmox</Badge>}
           {s.os_type === 'hyperv' && <Badge color="blue">Hyper-V</Badge>}
           {s.os_type === 'esxi' && <Badge color="orange">ESXi</Badge>}
+          {s.is_docker_host && s.os_type === 'linux' && <Badge color="blue">Docker</Badge>}
           {!['proxmox', 'hyperv', 'esxi'].includes(s.os_type) && s.virt_type && s.virt_type !== 'none' && (
             <Badge color={VIRT_COLORS[s.virt_type] || 'gray'}>{VIRT_LABELS[s.virt_type] || s.virt_type}</Badge>
           )}

@@ -332,7 +332,7 @@ async def sync_vms():
 
 async def get_latest(tenant_id: str) -> list:
     rows = await fetch(
-        """SELECT s.id, s.name, s.hostname, s.ip_address, s.os_type, s.os_name,
+        """SELECT s.id, s.name, s.hostname, s.ip_address, s.os_type, s.os_name, s.is_docker_host,
                   s.status, s.last_seen_at, s.last_error, s.tags, s.environment,
                   m.cpu_percent, m.ram_percent, m.disk_percent, m.disks,
                   m.uptime_seconds, m.load_avg_1m, m.collected_at AS metric_at,

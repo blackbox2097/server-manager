@@ -48,6 +48,7 @@ export default function VmList() {
   };
 
   const [hypervisorName, setHypervisorName] = useState('');
+  const [isDockerHost, setIsDockerHost] = useState(false);
   const [vms, setVms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -78,6 +79,9 @@ export default function VmList() {
     });
   }, [vms]);
 
+  // Docker kontejneri nemaju CPU/RAM/disk/IP -- te kolone se za Docker hostove ne prikazuju.
+  const hiddenCols = isDockerHost ? new Set(['cpu', 'ram', 'disk', 'ip']) : new Set();
+
   const fetchVms = useCallback(async () => {
     if (!tenantId) return;
     setLoading(true);
@@ -86,6 +90,7 @@ export default function VmList() {
         params: vmType ? { vm_type: vmType } : {},
       });
       setHypervisorName(data.hypervisorName);
+      setIsDockerHost(!!data.isDockerHost);
       setVms(data.vms);
       setError('');
     } catch (err) {
@@ -150,11 +155,16 @@ export default function VmList() {
               { key: 'name', label: 'Naziv', render: v => (
                 <div>
                   <div className="font-medium text-gray-200">{v.name}</div>
-                  <div className="text-xs text-gray-600">
-                    ID: {v.vm_id_on_host}{v.guest_os ? ` · ${v.guest_os}` : ''}
-                  </div>
+                  {!isDockerHost && (
+                    <div className="text-xs text-gray-600">
+                      ID: {v.vm_id_on_host}{v.guest_os ? ` · ${v.guest_os}` : ''}
+                    </div>
+                  )}
                 </div>
               )},
+              ...(isDockerHost ? [{ key: 'image', label: 'Image', sortValue: v => v.guest_os, render: v => (
+                <span className="text-xs text-gray-400 font-mono">{v.guest_os || '—'}</span>
+              )}] : []),
               { key: 'power', label: 'Stanje', sortKey: 'power_state', render: v => (
                 <span className={
                   v.power_state === 'running' ? 'text-green-500' :
@@ -179,7 +189,7 @@ export default function VmList() {
               { key: 'ip', label: 'IP adresa', sortable: false, render: v => (
                 <span className="text-xs text-gray-500">{v.ip_address || '—'}</span>
               )},
-              ...(canManage ? [{
+              ...(canManage && !isDockerHost ? [{
                 key: 'actions', label: '', sortable: false, render: v => (
                   v.linked_server_id ? (
                     <span className="text-xs text-gray-600" title="Već povezan sa serverom">Povezan</span>
@@ -192,7 +202,7 @@ export default function VmList() {
                   )
                 )
               }] : []),
-            ]}
+            ].filter(c => !hiddenCols.has(c.key))}
             rows={g.rows}
           />
               )}

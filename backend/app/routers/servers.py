@@ -203,6 +203,11 @@ async def update_server(tid: str, sid: str, body: ServerUp, req: Request, user=D
         body.isDockerHost,
         sid, tid)
     if not row: raise HTTPException(404, "Server nije pronadjen")
+    if body.isDockerHost is False and row["os_type"] == "linux":
+        # flag skinut -> kontejneri vise ne pripadaju hostu
+        from app.database import execute as _db_execute
+        await _db_execute(
+            "DELETE FROM virtual_machines WHERE hypervisor_id=$1 AND vm_type='container'", sid)
     await log_event("server.update", user_id=user["id"], username=user.get("username"),
                     tenant_id=tid, ip_address=_ip(req),
                     resource_type="server", resource_id=sid,
@@ -365,7 +370,7 @@ async def server_processes(tid: str, sid: str, user=Depends(get_current_user)):
 async def server_vms(tid: str, sid: str, vm_type: str | None = None, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user)
     srv = await fetchrow(
-        "SELECT id, name FROM servers WHERE id=$1 AND tenant_id=$2 AND active=true", sid, tid)
+        "SELECT id, name, is_docker_host FROM servers WHERE id=$1 AND tenant_id=$2 AND active=true", sid, tid)
     if not srv:
         raise HTTPException(404, "Server nije pronadjen")
     if vm_type in ("vm", "container"):
@@ -378,7 +383,8 @@ async def server_vms(tid: str, sid: str, vm_type: str | None = None, user=Depend
             """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
                       disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at, stack_name
                FROM virtual_machines WHERE hypervisor_id=$1 ORDER BY name""", sid)
-    return {"hypervisorName": srv["name"], "vms": [dict(r) for r in rows]}
+    return {"hypervisorName": srv["name"], "isDockerHost": bool(srv["is_docker_host"]),
+            "vms": [dict(r) for r in rows]}
 
 
 # ── SSH kljucevi ──────────────────────────────────────────────────────────────
