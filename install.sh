@@ -470,6 +470,7 @@ CREATE INDEX IF NOT EXISTS idx_vm_tenant     ON virtual_machines (tenant_id);
 -- Docker hostovi i grupisanje kontejnera po stack-u
 ALTER TABLE servers ADD COLUMN IF NOT EXISTS is_docker_host BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE virtual_machines ADD COLUMN IF NOT EXISTS stack_name VARCHAR(100);
+ALTER TABLE virtual_machines ADD COLUMN IF NOT EXISTS ports TEXT;
 
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$
 BEGIN NEW.updated_at = NOW(); RETURN NEW; END;

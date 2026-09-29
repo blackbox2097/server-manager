@@ -682,15 +682,43 @@ async def list_vms_hyperv(server: dict) -> list[dict]:
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
+def _fmt_docker_ports(raw: str) -> str:
+    """docker ps Ports -> samo objavljeni portovi, bez IPv4/IPv6 duplikata.
+    0.0.0.0:8000->8000/tcp i [::]:8000->8000/tcp postaju '8000->8000/tcp';
+    vezivanje na konkretnu adresu (127.0.0.1:3000->3000/tcp) ostaje vidljivo;
+    neobjavljeni (samo EXPOSE) portovi se izostavljaju."""
+    out = []
+    for item in (raw or "").split(","):
+        item = item.strip()
+        if "->" not in item:
+            continue
+        left, right = item.split("->", 1)
+        bind, _, hport = left.rpartition(":")
+        if bind in ("", "0.0.0.0", "[::]", "::"):
+            entry = f"{hport}->{right}"
+        else:
+            entry = f"{bind}:{hport}->{right}"
+        if entry not in out:
+            out.append(entry)
+    return ", ".join(out)
+
+
 async def list_vms_docker(server: dict) -> list[dict]:
-    """Lista Docker kontejnera preko SSH (docker ps -a). Ako korisnik nije u
-    docker grupi, pokusava sudo -n. Greska (docker nije instaliran, nema
-    dozvole) se PROPAGIRA -- sync_vms tada preskace host i ne brise postojece
-    kontejnere. vm_id_on_host = ime kontejnera (ID se menja pri recreate-u).
-    Stack = Compose labela, a ako je nema, Swarm labela."""
-    fmt = ('{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}|'
-           '{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.stack.namespace"}}')
-    base = f"docker ps -a --format {shlex.quote(fmt)}"
+    """Lista Docker kontejnera preko SSH (docker ps -a + docker inspect za IP).
+    Ako korisnik nije u docker grupi, koristi sudo (askpass sa sudo lozinkom iz
+    baze, a ako je nema, sudo -n). Greska se PROPAGIRA -- sync_vms tada
+    preskace host i ne brise postojece kontejnere. vm_id_on_host = ime
+    kontejnera (ID se menja pri recreate-u). Stack = Compose labela, a ako je
+    nema, Swarm labela. IP: sve mreze kontejnera odvojene zarezom; host mreza
+    = "host"; docker inspect greska ne obara sync (kontejneri samo bez IP-a)."""
+    ps_fmt = ('{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}|'
+              '{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.stack.namespace"}}|{{.Ports}}')
+    ip_fmt = ('{{.Name}}|{{.HostConfig.NetworkMode}}|'
+              '{{range $k,$v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{end}}')
+    script = ("docker ps -a --format " + shlex.quote(ps_fmt) + " && echo @@IPS@@ && "
+              "{ ids=$(docker ps -aq); if [ -n \"$ids\" ]; then docker inspect --format "
+              + shlex.quote(ip_fmt) + " $ids || true; fi; }")
+    base = "sh -c " + shlex.quote(script)
 
     def _map(state: str, status: str) -> str:
         s = state.strip().lower()
@@ -731,12 +759,27 @@ async def list_vms_docker(server: dict) -> list[dict]:
             client.close()
 
     out = await asyncio.get_event_loop().run_in_executor(None, _run)
+    ps_part, _, ip_part = out.partition("@@IPS@@")
+
+    ips = {}
+    for line in ip_part.splitlines():
+        parts = line.split("|")
+        if len(parts) < 3:
+            continue
+        cname = parts[0].strip().lstrip("/")
+        addrs = [a for a in parts[2].split() if a]
+        if addrs:
+            ips[cname] = ", ".join(addrs)
+        elif parts[1].strip() == "host":
+            ips[cname] = "host"
+
     vms = []
-    for line in out.splitlines():
+    for line in ps_part.splitlines():
         parts = line.split("|")
         if len(parts) < 6:
             continue
         name, state, status, image, compose, swarm = [p.strip() for p in parts[:6]]
+        ports = _fmt_docker_ports(parts[6] if len(parts) > 6 else "")
         if not name:
             continue
         stack = compose or swarm
@@ -745,6 +788,8 @@ async def list_vms_docker(server: dict) -> list[dict]:
             "name": name,
             "powerState": _map(state, status),
             "guestOs": image or None,
+            "ipAddress": ips.get(name),
+            "ports": ports or None,
             "stackName": stack[:100] if stack else None,
             "vmType": "container",
         })

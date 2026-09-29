@@ -370,20 +370,21 @@ async def server_processes(tid: str, sid: str, user=Depends(get_current_user)):
 async def server_vms(tid: str, sid: str, vm_type: str | None = None, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user)
     srv = await fetchrow(
-        "SELECT id, name, is_docker_host FROM servers WHERE id=$1 AND tenant_id=$2 AND active=true", sid, tid)
+        "SELECT id, name, ip_address, is_docker_host FROM servers WHERE id=$1 AND tenant_id=$2 AND active=true", sid, tid)
     if not srv:
         raise HTTPException(404, "Server nije pronadjen")
     if vm_type in ("vm", "container"):
         rows = await fetch(
             """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
-                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at, stack_name
+                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at, stack_name, ports
                FROM virtual_machines WHERE hypervisor_id=$1 AND vm_type=$2 ORDER BY name""", sid, vm_type)
     else:
         rows = await fetch(
             """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
-                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at, stack_name
+                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at, stack_name, ports
                FROM virtual_machines WHERE hypervisor_id=$1 ORDER BY name""", sid)
     return {"hypervisorName": srv["name"], "isDockerHost": bool(srv["is_docker_host"]),
+            "hypervisorIp": str(srv["ip_address"]) if srv["ip_address"] else None,
             "vms": [dict(r) for r in rows]}
 
 

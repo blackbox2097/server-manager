@@ -306,19 +306,20 @@ async def sync_vms():
                     """INSERT INTO virtual_machines
                          (hypervisor_id, tenant_id, vm_id_on_host, name, power_state,
                           cpu_cores, ram_mb, disk_gb, disk_sizes_gb, guest_os, ip_address,
-                          vm_type, stack_name, last_seen_at)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
+                          vm_type, stack_name, ports, last_seen_at)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
                        ON CONFLICT (hypervisor_id, vm_id_on_host) DO UPDATE SET
                           tenant_id=EXCLUDED.tenant_id, name=EXCLUDED.name,
                           power_state=EXCLUDED.power_state, cpu_cores=EXCLUDED.cpu_cores,
                           ram_mb=EXCLUDED.ram_mb, disk_gb=EXCLUDED.disk_gb,
                           disk_sizes_gb=EXCLUDED.disk_sizes_gb, guest_os=EXCLUDED.guest_os,
                           ip_address=EXCLUDED.ip_address, vm_type=EXCLUDED.vm_type,
-                          stack_name=EXCLUDED.stack_name, last_seen_at=NOW()""",
+                          stack_name=EXCLUDED.stack_name, ports=EXCLUDED.ports, last_seen_at=NOW()""",
                     srv["id"], srv["tenant_id"], vm_key, vm["name"], vm["powerState"],
                     vm.get("cpuCores"), vm.get("ramMb"), vm.get("diskGb"), vm.get("diskSizesGb"),
                     vm.get("guestOs"), vm.get("ipAddress"), vm.get("vmType", "vm"),
                     vm.get("stackName"),
+                    vm.get("ports"),
                 )
             # brisu se samo nestali, tek posle uspesnog upisa svih
             await execute(

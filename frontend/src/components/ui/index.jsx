@@ -222,7 +222,7 @@ export function Table({ columns, rows, onRowClick, defaultSort }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className={clsx('w-full text-sm', columns.some(c => c.width) && 'table-fixed')}>
         <thead>
           <tr className="border-b border-gray-800">
             {columns.map(col => {
@@ -230,6 +230,7 @@ export function Table({ columns, rows, onRowClick, defaultSort }) {
               const isActive = sortKey === key;
               return (
                 <th key={col.key}
+                    style={col.width ? { width: col.width } : undefined}
                     onClick={() => handleSort(col)}
                     className={clsx('text-left py-2.5 px-3 text-xs font-medium text-gray-500 uppercase tracking-wider',
                       col.sortable !== false && 'cursor-pointer select-none hover:text-gray-300 transition-colors')}>

@@ -6,6 +6,16 @@ import useAuthStore from '../../store/authStore';
 import api from '../../services/api';
 import { Table, Spinner, Empty } from '../../components/ui';
 
+// "8000->8000/tcp" -> "8000/tcp (8000)" -- port kontejnera, u zagradi port na hostu
+function fmtContainerPort(p) {
+  const [host, container = ''] = p.split('->');
+  return `${container} (${host})`;
+}
+
+// Fiksne sirine kolona za Docker liste -- da kolone budu iste u svim stack grupama.
+// Kolona 'name' nema sirinu i uzima ostatak.
+const DOCKER_COL_WIDTHS = { image: '24%', power: '120px', ip: '150px', ports: '26%' };
+
 function formatMb(mb) {
   if (mb == null) return '—';
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
@@ -49,6 +59,7 @@ export default function VmList() {
 
   const [hypervisorName, setHypervisorName] = useState('');
   const [isDockerHost, setIsDockerHost] = useState(false);
+  const [hypervisorIp, setHypervisorIp] = useState('');
   const [vms, setVms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -79,8 +90,8 @@ export default function VmList() {
     });
   }, [vms]);
 
-  // Docker kontejneri nemaju CPU/RAM/disk/IP -- te kolone se za Docker hostove ne prikazuju.
-  const hiddenCols = isDockerHost ? new Set(['cpu', 'ram', 'disk', 'ip']) : new Set();
+  // Docker kontejneri nemaju CPU/RAM/disk -- te kolone se za Docker hostove ne prikazuju.
+  const hiddenCols = isDockerHost ? new Set(['cpu', 'ram', 'disk']) : new Set();
 
   const fetchVms = useCallback(async () => {
     if (!tenantId) return;
@@ -91,6 +102,7 @@ export default function VmList() {
       });
       setHypervisorName(data.hypervisorName);
       setIsDockerHost(!!data.isDockerHost);
+      setHypervisorIp(data.hypervisorIp || '');
       setVms(data.vms);
       setError('');
     } catch (err) {
@@ -117,6 +129,7 @@ export default function VmList() {
             </h1>
             <p className="text-xs text-gray-500">
               {vms.length} {vmType === 'container' ? 'kontejnera' : vmType === 'vm' ? 'VM' : 'VM/kontejnera'}
+              {isDockerHost && hypervisorIp ? ` · objavljeni portovi dostupni na ${hypervisorIp}` : ''}
             </p>
           </div>
         </div>
@@ -154,7 +167,7 @@ export default function VmList() {
             columns={[
               { key: 'name', label: 'Naziv', render: v => (
                 <div>
-                  <div className="font-medium text-gray-200">{v.name}</div>
+                  <div className="font-medium text-gray-200 truncate" title={v.name}>{v.name}</div>
                   {!isDockerHost && (
                     <div className="text-xs text-gray-600">
                       ID: {v.vm_id_on_host}{v.guest_os ? ` · ${v.guest_os}` : ''}
@@ -163,7 +176,7 @@ export default function VmList() {
                 </div>
               )},
               ...(isDockerHost ? [{ key: 'image', label: 'Image', sortValue: v => v.guest_os, render: v => (
-                <span className="text-xs text-gray-400 font-mono">{v.guest_os || '—'}</span>
+                <span className="block truncate text-xs text-gray-400 font-mono" title={v.guest_os || ''}>{v.guest_os || '—'}</span>
               )}] : []),
               { key: 'power', label: 'Stanje', sortKey: 'power_state', render: v => (
                 <span className={
@@ -186,9 +199,16 @@ export default function VmList() {
                     : (v.disk_gb != null ? `${v.disk_gb} GB` : '—')}
                 </span>
               )},
-              { key: 'ip', label: 'IP adresa', sortable: false, render: v => (
+              { key: 'ip', label: isDockerHost ? 'Docker IP' : 'IP adresa', sortable: false, render: v => (
                 <span className="text-xs text-gray-500">{v.ip_address || '—'}</span>
               )},
+              ...(isDockerHost ? [{ key: 'ports', label: 'Port (host)', sortable: false, render: v => (
+                v.ports
+                  ? <div className="flex flex-wrap gap-1">{v.ports.split(', ').map(p => (
+                      <span key={p} className="text-xs font-mono text-gray-300 bg-gray-800 rounded px-1.5 py-0.5">{fmtContainerPort(p)}</span>
+                    ))}</div>
+                  : <span className="text-xs text-gray-600">—</span>
+              )}] : []),
               ...(canManage && !isDockerHost ? [{
                 key: 'actions', label: '', sortable: false, render: v => (
                   v.linked_server_id ? (
@@ -202,7 +222,7 @@ export default function VmList() {
                   )
                 )
               }] : []),
-            ].filter(c => !hiddenCols.has(c.key))}
+            ].filter(c => !hiddenCols.has(c.key)).map(c => (isDockerHost && DOCKER_COL_WIDTHS[c.key]) ? { ...c, width: DOCKER_COL_WIDTHS[c.key] } : c)}
             rows={g.rows}
           />
               )}
