@@ -1,7 +1,7 @@
 // src/pages/servers/VmList.jsx
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Server, Plus } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Server, Plus, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 import api from '../../services/api';
 import { Table, Spinner, Empty } from '../../components/ui';
@@ -16,6 +16,8 @@ const POWER_LABELS = {
   running: 'Aktivan',
   stopped: 'Zaustavljen',
   paused: 'Pauziran',
+  unhealthy: 'Nezdrav',
+  restarting: 'Restartuje se',
   unknown: 'Nepoznato',
 };
 
@@ -49,6 +51,32 @@ export default function VmList() {
   const [vms, setVms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [collapsed, setCollapsed] = useState({});
+  const toggleGroup = (key) => setCollapsed(c => ({ ...c, [key]: !c[key] }));
+
+  // Grupisanje po stack-u samo kad barem jedna stavka ima stack_name (Docker);
+  // Proxmox/ESXi/Hyper-V liste ostaju ravne.
+  const groups = useMemo(() => {
+    if (!vms.some(v => v.stack_name)) {
+      return [{ key: '__all__', label: '', rows: vms, showHeader: false }];
+    }
+    const map = new Map();
+    for (const v of vms) {
+      const k = v.stack_name || '__none__';
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(v);
+    }
+    const keys = [...map.keys()].filter(k => k !== '__none__').sort((a, b) => a.localeCompare(b));
+    if (map.has('__none__')) keys.push('__none__');
+    return keys.map(k => {
+      const rows = map.get(k);
+      const running = rows.filter(v => v.power_state === 'running').length;
+      return {
+        key: k, label: k === '__none__' ? 'Bez stack-a' : k, rows, showHeader: true,
+        running, total: rows.length, warn: running < rows.length,
+      };
+    });
+  }, [vms]);
 
   const fetchVms = useCallback(async () => {
     if (!tenantId) return;
@@ -100,7 +128,23 @@ export default function VmList() {
         <Empty icon={Server} title={vmType === 'container' ? 'Nema kontejnera' : 'Nema VM-ova'}
           subtitle="Ovaj hipervizor trenutno nema stavki ovog tipa, ili sinhronizacija još nije prošla (osvežava se svakih 5 min)." />
       ) : (
-        <div className="card p-0 overflow-hidden">
+        <div className="space-y-4">
+          {groups.map(g => (
+            <div key={g.key} className="card p-0 overflow-hidden">
+              {g.showHeader && (
+                <button type="button" onClick={() => toggleGroup(g.key)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-900/60 hover:bg-gray-900 border-b border-gray-800 text-left">
+                  <span className="flex items-center gap-2 text-sm font-medium text-gray-200">
+                    {collapsed[g.key] ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    {g.label}
+                  </span>
+                  <span className={`flex items-center gap-1.5 text-xs ${g.warn ? 'text-yellow-500' : 'text-gray-500'}`}>
+                    {g.warn && <AlertTriangle size={12} />}
+                    {g.running}/{g.total} aktivnih
+                  </span>
+                </button>
+              )}
+              {!collapsed[g.key] && (
           <Table
             columns={[
               { key: 'name', label: 'Naziv', render: v => (
@@ -149,8 +193,11 @@ export default function VmList() {
                 )
               }] : []),
             ]}
-            rows={vms}
+            rows={g.rows}
           />
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>

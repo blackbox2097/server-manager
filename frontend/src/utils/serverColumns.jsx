@@ -67,6 +67,12 @@ export function getServerColumns({
               </button>
             )}
           </div>
+        ) : s.is_docker_host ? (
+          <button className="btn-secondary text-xs py-1 px-2 flex items-center gap-1.5"
+            onClick={() => navigate(`/servers/${s.id}/vms?type=container`)} title="Prikazi listu kontejnera">
+            <Server size={12} />
+            {s.container_count ?? 0} kontejnera
+          </button>
         ) : null
       )
     }] : []),

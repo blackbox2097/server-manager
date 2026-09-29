@@ -52,6 +52,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
     connectionMethod: 'auto',
     hvApiHost: '', hvApiPort: 8006, hvAuthId: '', hvSecret: '', hvVerifyTls: true,
     pollIntervalSec: '',
+    isDockerHost: false,
     ...(server ? {
       name:          server.name          || '',
       description:   server.description   || '',
@@ -76,6 +77,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
       hvAuthId:  server.hv_auth_id  || '',
       hvVerifyTls: server.hv_verify_tls ?? true,
       pollIntervalSec: server.poll_interval_sec ?? '',
+      isDockerHost: !!server.is_docker_host,
     } : {}),
   }));
 
@@ -308,6 +310,19 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
               onChange={e => set('sudoPassword', e.target.value)}
               placeholder={isEdit && server?.has_sudo_password ? '(postavljena — ostavi prazno da zadržiš)' : '(prazno = bez sudo-a)'} />
           </F>
+          {form.osType === 'linux' && (
+            <label className="flex items-start gap-2 text-sm text-gray-300 cursor-pointer">
+              <input type="checkbox" className="mt-0.5" checked={!!form.isDockerHost}
+                onChange={e => set('isDockerHost', e.target.checked)} />
+              <span>
+                Docker host
+                <span className="block text-xs text-gray-500">
+                  Kontejneri se prikazuju u zasebnoj sekciji. Ako korisnik nije u docker grupi,
+                  za docker ps se koristi sudo lozinka iz polja iznad.
+                </span>
+              </span>
+            </label>
+          )}
         </div>
       )}
 
@@ -500,7 +515,8 @@ export default function Servers() {
   const openProcesses = (server) => setProcModalServer(server);
 
   const hypervisors    = servers.filter(s => ['proxmox', 'hyperv', 'esxi'].includes(s.os_type));
-  const regularServers = servers.filter(s => !['proxmox', 'hyperv', 'esxi'].includes(s.os_type));
+  const dockerHosts    = servers.filter(s => s.is_docker_host && s.os_type === 'linux');
+  const regularServers = servers.filter(s => !['proxmox', 'hyperv', 'esxi'].includes(s.os_type) && !(s.is_docker_host && s.os_type === 'linux'));
 
   const q = searchQuery.trim().toLowerCase();
   const statusFilter = searchParams.get('status') || '';
@@ -508,6 +524,7 @@ export default function Servers() {
     .filter(Boolean).some(v => String(v).toLowerCase().includes(q));
   const matchesStatus = (s) => !statusFilter || s.status === statusFilter;
   const filteredHypervisors    = hypervisors.filter(s => matchesSearch(s) && matchesStatus(s));
+  const filteredDockerHosts    = dockerHosts.filter(s => matchesSearch(s) && matchesStatus(s));
   const filteredRegularServers = regularServers.filter(s => matchesSearch(s) && matchesStatus(s));
 
   const handleExport = async () => {
@@ -520,7 +537,7 @@ export default function Servers() {
       { label: 'Tagovi', get: s => (s.tags || []).join('; ') },
       { label: 'Opis', get: s => s.description },
     ];
-    await exportToXlsx(`serveri-${activeTenant?.name || 'export'}`, cols, [...filteredHypervisors, ...filteredRegularServers], 'Serveri');
+    await exportToXlsx(`serveri-${activeTenant?.name || 'export'}`, cols, [...filteredHypervisors, ...filteredDockerHosts, ...filteredRegularServers], 'Serveri');
   };
 
   const columns = getServerColumns({
@@ -580,7 +597,7 @@ export default function Servers() {
               <Plus size={14} /> Dodaj server
             </button>
           )} />
-      ) : (filteredHypervisors.length === 0 && filteredRegularServers.length === 0) ? (
+      ) : (filteredHypervisors.length === 0 && filteredDockerHosts.length === 0 && filteredRegularServers.length === 0) ? (
         <Empty icon={Search} title="Nema rezultata" subtitle={q ? `Ništa ne odgovara pretrazi "${searchQuery}"` : 'Nijedan server ne odgovara izabranom filteru'} />
       ) : (
         <div className="space-y-4">
@@ -592,9 +609,17 @@ export default function Servers() {
               </div>
             </div>
           )}
+          {filteredDockerHosts.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Docker hostovi</p>
+              <div className="card p-0 overflow-hidden">
+                <Table columns={columns} rows={filteredDockerHosts} />
+              </div>
+            </div>
+          )}
           {filteredRegularServers.length > 0 && (
             <div>
-              {filteredHypervisors.length > 0 && (
+              {(filteredHypervisors.length > 0 || filteredDockerHosts.length > 0) && (
                 <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Serveri</p>
               )}
               <div className="card p-0 overflow-hidden">

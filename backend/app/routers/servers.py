@@ -26,6 +26,7 @@ class ServerIn(BaseModel):
     hvApiHost: str | None = None; hvApiPort: int = 8006; hvAuthId: str | None = None
     hvSecret: str | None = None; hvVerifyTls: bool = True
     pollIntervalSec: int | None = None
+    isDockerHost: bool = False
 
     @field_validator("pollIntervalSec")
     @classmethod
@@ -66,6 +67,7 @@ class ServerUp(BaseModel):
     hvApiHost: str | None = None; hvApiPort: int | None = None; hvAuthId: str | None = None
     hvSecret: str | None = None; hvVerifyTls: bool | None = None
     pollIntervalSec: int | None = None
+    isDockerHost: bool | None = None
 
     @field_validator("pollIntervalSec")
     @classmethod
@@ -101,7 +103,7 @@ async def list_servers(tid: str, user=Depends(get_current_user)):
                   s.connection_method,
                   s.hv_api_host, s.hv_api_port, s.hv_auth_id, s.hv_verify_tls,
                   s.total_cpu_cores, s.total_ram_mb, s.total_disk_gb, s.virt_type,
-                  s.poll_interval_sec,
+                  s.poll_interval_sec, s.is_docker_host,
                   s.status, s.last_seen_at, s.last_error, s.active, s.created_at,
                   sk.name AS ssh_key_name,
                   (s.sudo_password IS NOT NULL) AS has_sudo_password,
@@ -132,9 +134,9 @@ async def create_server(tid: str, body: ServerIn, req: Request, user=Depends(get
                   ssh_password, sudo_password, winrm_port, winrm_https, winrm_auth_type,
                   winrm_user, winrm_password, connection_method,
                   hv_api_host, hv_api_port, hv_auth_id, hv_secret_enc, hv_verify_tls,
-                  poll_interval_sec, created_by)
+                  poll_interval_sec, is_docker_host, created_by)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-                       $22,$23,$24,$25,$26,$27,$28)
+                       $22,$23,$24,$25,$26,$27,$28,$29)
                RETURNING id, name, ip_address, os_type, status""",
             tid, body.name, _n(body.description), _n(body.hostname), body.ipAddress,
             body.osType, _n(body.osName), body.tags, body.environment,
@@ -149,6 +151,7 @@ async def create_server(tid: str, body: ServerIn, req: Request, user=Depends(get
             encrypt(body.hvSecret) if body.hvSecret else None,
             body.hvVerifyTls,
             body.pollIntervalSec,
+            (body.isDockerHost and body.osType == "linux"),
             user["id"])
         await log_event("server.create", user_id=user["id"], username=user.get("username"),
                         tenant_id=tid, ip_address=_ip(req),
@@ -181,8 +184,9 @@ async def update_server(tid: str, sid: str, body: ServerUp, req: Request, user=D
              hv_auth_id=COALESCE($22,hv_auth_id),
              hv_secret_enc = CASE WHEN $23::text IS NOT NULL THEN $23 ELSE hv_secret_enc END,
              hv_verify_tls=COALESCE($24,hv_verify_tls),
-             poll_interval_sec=$25
-           WHERE id=$26 AND tenant_id=$27 AND active=true
+             poll_interval_sec=$25,
+             is_docker_host = CASE WHEN os_type='linux' THEN COALESCE($26, is_docker_host) ELSE false END
+           WHERE id=$27 AND tenant_id=$28 AND active=true
            RETURNING id, name, ip_address, os_type""",
         _n(body.name), _n(body.description), _n(body.hostname), _n(body.ipAddress),
         _n(body.osName), body.tags, _n(body.environment),
@@ -196,6 +200,7 @@ async def update_server(tid: str, sid: str, body: ServerUp, req: Request, user=D
         encrypt(body.hvSecret) if body.hvSecret else None,
         body.hvVerifyTls,
         body.pollIntervalSec,
+        body.isDockerHost,
         sid, tid)
     if not row: raise HTTPException(404, "Server nije pronadjen")
     await log_event("server.update", user_id=user["id"], username=user.get("username"),
@@ -366,12 +371,12 @@ async def server_vms(tid: str, sid: str, vm_type: str | None = None, user=Depend
     if vm_type in ("vm", "container"):
         rows = await fetch(
             """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
-                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at
+                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at, stack_name
                FROM virtual_machines WHERE hypervisor_id=$1 AND vm_type=$2 ORDER BY name""", sid, vm_type)
     else:
         rows = await fetch(
             """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
-                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at
+                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at, stack_name
                FROM virtual_machines WHERE hypervisor_id=$1 ORDER BY name""", sid)
     return {"hypervisorName": srv["name"], "vms": [dict(r) for r in rows]}
 
