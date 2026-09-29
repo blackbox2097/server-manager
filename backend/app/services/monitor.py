@@ -272,8 +272,8 @@ async def poll_single(server_id: str):
 
 async def sync_vms():
     """Sinhronizuje VM inventar sa svih hipervizora (trenutno samo Proxmox).
-    Full-replace po hipervizoru -- jednostavnije od diff-a, prihvatljivo za
-    ocekivan broj VM-ova po hostu."""
+    UPSERT po (hypervisor_id, vm_id_on_host); nestali se brisu tek posle
+    uspesnog upisa svih. linked_server_id se pri sinhronizaciji ne dira."""
     rows = await fetch(
         """SELECT * FROM servers WHERE active=true AND os_type IN ('proxmox', 'hyperv', 'esxi')"""
     )
@@ -294,18 +294,32 @@ async def sync_vms():
             logger.warning(f"VM sync neuspesan za {srv['name']}: {e}")
             continue
         try:
-            await execute("DELETE FROM virtual_machines WHERE hypervisor_id=$1", srv["id"])
+            seen_ids = []
             for vm in vms:
+                vm_key = str(vm["vmIdOnHost"])
+                seen_ids.append(vm_key)
                 await execute(
                     """INSERT INTO virtual_machines
                          (hypervisor_id, tenant_id, vm_id_on_host, name, power_state,
                           cpu_cores, ram_mb, disk_gb, disk_sizes_gb, guest_os, ip_address,
                           vm_type, last_seen_at)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())""",
-                    srv["id"], srv["tenant_id"], vm["vmIdOnHost"], vm["name"], vm["powerState"],
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+                       ON CONFLICT (hypervisor_id, vm_id_on_host) DO UPDATE SET
+                          tenant_id=EXCLUDED.tenant_id, name=EXCLUDED.name,
+                          power_state=EXCLUDED.power_state, cpu_cores=EXCLUDED.cpu_cores,
+                          ram_mb=EXCLUDED.ram_mb, disk_gb=EXCLUDED.disk_gb,
+                          disk_sizes_gb=EXCLUDED.disk_sizes_gb, guest_os=EXCLUDED.guest_os,
+                          ip_address=EXCLUDED.ip_address, vm_type=EXCLUDED.vm_type,
+                          last_seen_at=NOW()""",
+                    srv["id"], srv["tenant_id"], vm_key, vm["name"], vm["powerState"],
                     vm.get("cpuCores"), vm.get("ramMb"), vm.get("diskGb"), vm.get("diskSizesGb"),
                     vm.get("guestOs"), vm.get("ipAddress"), vm.get("vmType", "vm"),
                 )
+            # brisu se samo nestali, tek posle uspesnog upisa svih
+            await execute(
+                "DELETE FROM virtual_machines WHERE hypervisor_id=$1 AND vm_id_on_host <> ALL($2::text[])",
+                srv["id"], seen_ids,
+            )
             logger.info(f"VM sync: {srv['name']} -- {len(vms)} VM/kontejnera")
         except Exception as e:
             logger.error(f"VM upis u bazu neuspesan za {srv['name']}: {e}")
