@@ -154,6 +154,7 @@ export default function VmList() {
                   className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-900/60 hover:bg-gray-900 border-b border-gray-800 text-left">
                   <span className="flex items-center gap-2 text-sm font-medium text-gray-200">
                     {collapsed[g.key] ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    {g.key !== '__none__' && <span className="text-gray-500 font-normal">Stack:</span>}
                     {g.label}
                   </span>
                   <span className={`flex items-center gap-1.5 text-xs ${g.warn ? 'text-yellow-500' : 'text-gray-500'}`}>
