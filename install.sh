@@ -471,6 +471,13 @@ CREATE INDEX IF NOT EXISTS idx_vm_tenant     ON virtual_machines (tenant_id);
 ALTER TABLE servers ADD COLUMN IF NOT EXISTS is_docker_host BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE virtual_machines ADD COLUMN IF NOT EXISTS stack_name VARCHAR(100);
 ALTER TABLE virtual_machines ADD COLUMN IF NOT EXISTS ports TEXT;
+ALTER TABLE virtual_machines ADD COLUMN IF NOT EXISTS monitor_override BOOLEAN;
+CREATE TABLE IF NOT EXISTS docker_stack_monitoring (
+    hypervisor_id UUID         NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    stack_name    VARCHAR(100) NOT NULL,
+    enabled       BOOLEAN      NOT NULL DEFAULT false,
+    PRIMARY KEY (hypervisor_id, stack_name)
+);
 
 CREATE OR REPLACE FUNCTION set_updated_at() RETURNS TRIGGER AS $$
 BEGIN NEW.updated_at = NOW(); RETURN NEW; END;

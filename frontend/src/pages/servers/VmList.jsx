@@ -1,7 +1,7 @@
 // src/pages/servers/VmList.jsx
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, RefreshCw, Server, Plus, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Server, Plus, ChevronDown, ChevronRight, AlertTriangle, Bell, BellOff } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 import api from '../../services/api';
 import { Table, Spinner, Empty } from '../../components/ui';
@@ -14,7 +14,7 @@ function fmtContainerPort(p) {
 
 // Fiksne sirine kolona za Docker liste -- da kolone budu iste u svim stack grupama.
 // Kolona 'name' nema sirinu i uzima ostatak.
-const DOCKER_COL_WIDTHS = { image: '24%', power: '120px', ip: '150px', ports: '26%' };
+const DOCKER_COL_WIDTHS = { image: '24%', power: '120px', ip: '150px', ports: '26%', monitor: '120px' };
 
 function formatMb(mb) {
   if (mb == null) return '—';
@@ -60,11 +60,29 @@ export default function VmList() {
   const [hypervisorName, setHypervisorName] = useState('');
   const [isDockerHost, setIsDockerHost] = useState(false);
   const [hypervisorIp, setHypervisorIp] = useState('');
+  const [stackMon, setStackMon] = useState({});
   const [vms, setVms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [collapsed, setCollapsed] = useState({});
   const toggleGroup = (key) => setCollapsed(c => ({ ...c, [key]: !c[key] }));
+
+  const setStackMonitor = async (stack, enabled) => {
+    try {
+      await api.put(`/tenants/${tenantId}/servers/${serverId}/docker/stack-monitor`, { stackName: stack, enabled });
+      fetchVms();
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Greška pri čuvanju praćenja stack-a');
+    }
+  };
+  const setVmMonitor = async (vm, enabled) => {
+    try {
+      await api.put(`/tenants/${tenantId}/servers/${serverId}/vms/${vm.id}/monitor`, { enabled });
+      fetchVms();
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Greška pri čuvanju praćenja kontejnera');
+    }
+  };
 
   // Grupisanje po stack-u samo kad barem jedna stavka ima stack_name (Docker);
   // Proxmox/ESXi/Hyper-V liste ostaju ravne.
@@ -85,10 +103,10 @@ export default function VmList() {
       const running = rows.filter(v => v.power_state === 'running').length;
       return {
         key: k, label: k === '__none__' ? 'Bez stack-a' : k, rows, showHeader: true,
-        running, total: rows.length, warn: running < rows.length,
+        running, total: rows.length, warn: running < rows.length, monitored: !!stackMon[k],
       };
     });
-  }, [vms]);
+  }, [vms, stackMon]);
 
   // Docker kontejneri nemaju CPU/RAM/disk -- te kolone se za Docker hostove ne prikazuju.
   const hiddenCols = isDockerHost ? new Set(['cpu', 'ram', 'disk']) : new Set();
@@ -103,6 +121,7 @@ export default function VmList() {
       setHypervisorName(data.hypervisorName);
       setIsDockerHost(!!data.isDockerHost);
       setHypervisorIp(data.hypervisorIp || '');
+      setStackMon(data.stackMonitoring || {});
       setVms(data.vms);
       setError('');
     } catch (err) {
@@ -150,6 +169,7 @@ export default function VmList() {
           {groups.map(g => (
             <div key={g.key} className="card p-0 overflow-hidden">
               {g.showHeader && (
+                <div className="flex items-stretch bg-gray-900/60">
                 <button type="button" onClick={() => toggleGroup(g.key)}
                   className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-900/60 hover:bg-gray-900 border-b border-gray-800 text-left">
                   <span className="flex items-center gap-2 text-sm font-medium text-gray-200">
@@ -162,6 +182,18 @@ export default function VmList() {
                     {g.running}/{g.total} aktivnih
                   </span>
                 </button>
+                {g.key !== '__none__' && (
+                  <button type="button" disabled={!canManage}
+                    onClick={() => setStackMonitor(g.key, !g.monitored)}
+                    title={g.monitored
+                      ? 'Praćenje stack-a je uključeno (klik isključuje sve kontejnere)'
+                      : 'Praćenje stack-a je isključeno (klik uključuje sve kontejnere)'}
+                    className={`flex-shrink-0 flex items-center gap-1.5 px-3 text-xs border-b border-gray-800 hover:bg-gray-900 disabled:cursor-default ${g.monitored ? 'text-green-500' : 'text-gray-500'}`}>
+                    {g.monitored ? <Bell size={13} /> : <BellOff size={13} />}
+                    {g.monitored ? 'Praćenje' : 'Ne prati se'}
+                  </button>
+                )}
+                </div>
               )}
               {!collapsed[g.key] && (
           <Table
@@ -209,6 +241,17 @@ export default function VmList() {
                       <span key={p} className="text-xs font-mono text-gray-300 bg-gray-800 rounded px-1.5 py-0.5">{fmtContainerPort(p)}</span>
                     ))}</div>
                   : <span className="text-xs text-gray-600">—</span>
+              )}] : []),
+              ...(isDockerHost ? [{ key: 'monitor', label: 'Praćenje', sortable: false, render: v => (
+                <button type="button" disabled={!canManage}
+                  onClick={() => setVmMonitor(v, !v.monitored)}
+                  title={v.monitor_override == null
+                    ? (v.monitored ? 'Nasleđeno od stack-a (klik isključuje samo ovaj kontejner)' : 'Isključeno (klik uključuje samo ovaj kontejner)')
+                    : (v.monitored ? 'Ručno uključeno' : 'Ručno isključeno')}
+                  className={`flex items-center gap-1.5 text-xs disabled:cursor-default ${v.monitored ? 'text-green-500' : 'text-gray-600 hover:text-gray-400'}`}>
+                  {v.monitored ? <Bell size={13} /> : <BellOff size={13} />}
+                  {v.monitored ? 'Uključeno' : 'Isključeno'}
+                </button>
               )}] : []),
               ...(canManage && !isDockerHost ? [{
                 key: 'actions', label: '', sortable: false, render: v => (

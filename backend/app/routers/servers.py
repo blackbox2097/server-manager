@@ -383,9 +383,77 @@ async def server_vms(tid: str, sid: str, vm_type: str | None = None, user=Depend
             """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
                       disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at, stack_name, ports
                FROM virtual_machines WHERE hypervisor_id=$1 ORDER BY name""", sid)
+    mon_rows = await fetch(
+        "SELECT id, monitor_override FROM virtual_machines WHERE hypervisor_id=$1", sid)
+    ov = {str(r["id"]): r["monitor_override"] for r in mon_rows}
+    st_rows = await fetch(
+        "SELECT stack_name, enabled FROM docker_stack_monitoring WHERE hypervisor_id=$1", sid)
+    stack_mon = {r["stack_name"]: bool(r["enabled"]) for r in st_rows}
+    vms_out = []
+    for r in rows:
+        d = dict(r)
+        o = ov.get(str(d["id"]))
+        d["monitor_override"] = o
+        d["monitored"] = o if o is not None else stack_mon.get(d.get("stack_name") or "", False)
+        vms_out.append(d)
     return {"hypervisorName": srv["name"], "isDockerHost": bool(srv["is_docker_host"]),
             "hypervisorIp": str(srv["ip_address"]) if srv["ip_address"] else None,
-            "vms": [dict(r) for r in rows]}
+            "vms": vms_out, "stackMonitoring": stack_mon}
+
+
+class MonitorToggle(BaseModel):
+    enabled: bool
+
+
+class StackMonitorToggle(BaseModel):
+    stackName: str
+    enabled: bool
+
+
+@router.put("/{tid}/servers/{sid}/docker/stack-monitor")
+async def set_stack_monitor(tid: str, sid: str, body: StackMonitorToggle, req: Request, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user, "perm_servers_manage")
+    srv = await fetchrow(
+        "SELECT id FROM servers WHERE id=$1 AND tenant_id=$2 AND active=true AND is_docker_host=true", sid, tid)
+    if not srv:
+        raise HTTPException(404, "Docker host nije pronadjen")
+    from app.database import execute as _db_execute
+    await _db_execute(
+        """INSERT INTO docker_stack_monitoring (hypervisor_id, stack_name, enabled) VALUES ($1,$2,$3)
+           ON CONFLICT (hypervisor_id, stack_name) DO UPDATE SET enabled=EXCLUDED.enabled""",
+        sid, body.stackName, body.enabled)
+    # prekidac stack-a vazi za sve njegove kontejnere: rucna odstupanja se brisu
+    await _db_execute(
+        "UPDATE virtual_machines SET monitor_override=NULL WHERE hypervisor_id=$1 AND stack_name=$2",
+        sid, body.stackName)
+    await log_event("server.docker_stack_monitor", user_id=user["id"], username=user.get("username"),
+                    tenant_id=tid, ip_address=_ip(req), resource_type="server", resource_id=sid,
+                    details={"stack": body.stackName, "enabled": body.enabled})
+    return {"stackName": body.stackName, "enabled": body.enabled}
+
+
+@router.put("/{tid}/servers/{sid}/vms/{vid}/monitor")
+async def set_vm_monitor(tid: str, sid: str, vid: str, body: MonitorToggle, req: Request, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user, "perm_servers_manage")
+    row = await fetchrow(
+        """SELECT v.id, v.name, COALESCE(m.enabled, false) AS stack_enabled
+           FROM virtual_machines v
+           JOIN servers s ON s.id=v.hypervisor_id
+           LEFT JOIN docker_stack_monitoring m
+                  ON m.hypervisor_id=v.hypervisor_id AND m.stack_name=v.stack_name
+           WHERE v.id=$1 AND v.hypervisor_id=$2 AND s.tenant_id=$3 AND s.active=true
+                 AND v.vm_type='container'""", vid, sid, tid)
+    if not row:
+        raise HTTPException(404, "Kontejner nije pronadjen")
+    # ako trazeno stanje odgovara stack-u, ne treba rucno odstupanje (NULL = nasledjuje)
+    override = None if body.enabled == row["stack_enabled"] else body.enabled
+    from app.database import execute as _db_execute
+    await _db_execute("UPDATE virtual_machines SET monitor_override=$1 WHERE id=$2", override, vid)
+    await log_event("server.docker_container_monitor", user_id=user["id"], username=user.get("username"),
+                    tenant_id=tid, ip_address=_ip(req), resource_type="server", resource_id=sid,
+                    details={"container": row["name"], "enabled": body.enabled})
+    return {"id": vid, "enabled": body.enabled, "override": override}
+
 
 
 # ── SSH kljucevi ──────────────────────────────────────────────────────────────
