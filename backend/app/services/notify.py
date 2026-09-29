@@ -215,6 +215,35 @@ async def notify_server_status(server: dict, old_status: str, new_status: str, m
     return
 
 
+async def notify_container_changes(server: dict, changes: list[dict]):
+    """Poziva se iz monitor.sync_vms za PRACENE Docker kontejnere. Isti tenant
+    prekidaci kao za servere (alerts_enabled, alert_on_offline/recovery/warning)
+    i isti pending_notifications/digest -- jedan zbirni mejl po tenantu.
+    online = running, warning = restarting/unhealthy, offline = stopped/paused/uklonjen."""
+    tenant = await fetchrow(
+        "SELECT alerts_enabled, alert_on_offline, alert_on_recovery, alert_on_warning FROM tenants WHERE id=$1",
+        server["tenant_id"])
+    if not tenant or not tenant["alerts_enabled"]:
+        return
+    for c in sorted(changes, key=lambda c: (c["stack"] or "~", c["name"])):
+        old, new = c["old"], c["new"]
+        is_recovery = new == "online" and old in ("offline", "warning")
+        is_offline = new == "offline"
+        is_warning = new == "warning" and old != "offline"
+        if not ((is_offline and tenant["alert_on_offline"]) or
+                (is_recovery and tenant["alert_on_recovery"]) or
+                (is_warning and tenant["alert_on_warning"])):
+            continue
+        name = " › ".join(p for p in (server["name"], c.get("stack"), c["name"]) if p)
+        if new != "online" and c.get("state"):
+            name += f" ({c['state']})"
+        await execute(
+            """INSERT INTO pending_notifications
+                 (tenant_id, resource_type, resource_id, resource_name, old_status, new_status)
+               VALUES ($1,'container',$2,$3,$4,$5)""",
+            server["tenant_id"], c["id"], name, old, new)
+
+
 async def notify_network_device_status(device: dict, old_status: str, new_status: str):
     """Poziva se iz snmp.py pri potvrdjenoj promeni statusa mreznog uredjaja.
     Ogledalo notify_server_status, ali koristi ODVOJENE tenant toggle-e

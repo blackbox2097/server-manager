@@ -36,6 +36,11 @@ export function actionLabel(action, details) {
     'server.restart': 'Server restartovan',
     'server.status_warning': 'Upozorenje počelo', 'server.status_offline': 'Server nedostupan',
     'server.status_online': 'Server online', 'server.recovery': 'Server se oporavio',
+    'container.status_offline': 'Kontejner nedostupan',
+    'container.status_warning': 'Kontejner nezdrav ili se restartuje',
+    'container.recovery': 'Kontejner ponovo radi',
+    'server.docker_container_monitor': 'Praćenje kontejnera promenjeno',
+    'server.docker_stack_monitor': 'Praćenje stack-a promenjeno',
     'networkdevice.create': 'Mrežni uređaj dodat', 'networkdevice.update': 'Mrežni uređaj izmenjen', 'networkdevice.delete': 'Mrežni uređaj obrisan',
     'networkdevice.status_warning': 'Upozorenje počelo', 'networkdevice.status_offline': 'Mrežni uređaj nedostupan',
     'networkdevice.status_online': 'Mrežni uređaj online', 'networkdevice.recovery': 'Mrežni uređaj se oporavio',
@@ -98,6 +103,20 @@ function detailsSummary(log) {
         {duration && <div className="truncate text-gray-600">Trajanje problema: {duration}</div>}
       </>
     );
+  }
+  if (log.action.startsWith('container.')) {
+    const was = d.from === 'warning' ? 'upozorenje' : d.from === 'offline' ? 'offline' : null;
+    return (
+      <>
+        {d.container && <div className="truncate">Kontejner: {d.container}{d.stack ? ` (stack: ${d.stack})` : ''}</div>}
+        {d.state && <div className="truncate text-gray-600">Stanje: {d.state}</div>}
+        {log.action === 'container.recovery' && was && <div className="truncate text-gray-600">Bio u stanju "{was}"</div>}
+      </>
+    );
+  }
+  if (log.action === 'server.docker_container_monitor' || log.action === 'server.docker_stack_monitor') {
+    const what = log.action === 'server.docker_stack_monitor' ? `Stack: ${d.stack}` : `Kontejner: ${d.container}`;
+    return <div className="truncate">{what} — praćenje {d.enabled ? 'uključeno' : 'isključeno'}</div>;
   }
   if (log.action.startsWith('server.status_') && d.name) {
     return <div className="truncate">Server: {d.name} ({d.from} → {d.to})</div>;
@@ -173,6 +192,29 @@ function detailsExpanded(log) {
           </div>
         )}
         {duration && <div>Trajanje problema: {duration}</div>}
+      </div>
+    );
+  }
+
+  if (log.action.startsWith('container.')) {
+    const duration = formatDuration(d.durationSeconds);
+    return (
+      <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
+        {d.container && <div>Kontejner: <span className="text-gray-300">{d.container}</span></div>}
+        {d.stack && <div>Stack: {d.stack}</div>}
+        {(d.from || d.to) && <div>Status: {STATUS_LABELS[d.from] || d.from} -&gt; {STATUS_LABELS[d.to] || d.to}</div>}
+        {d.state && <div>Stanje: {d.state}</div>}
+        {duration && <div>Trajanje problema: {duration}</div>}
+      </div>
+    );
+  }
+
+  if (log.action === 'server.docker_container_monitor' || log.action === 'server.docker_stack_monitor') {
+    return (
+      <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
+        {d.stack && <div>Stack: <span className="text-gray-300">{d.stack}</span></div>}
+        {d.container && <div>Kontejner: <span className="text-gray-300">{d.container}</span></div>}
+        <div>Praćenje: {d.enabled ? 'uključeno' : 'isključeno'}</div>
       </div>
     );
   }

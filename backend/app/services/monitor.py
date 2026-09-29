@@ -270,6 +270,59 @@ async def poll_single(server_id: str):
     return {"ok": True}
 
 
+_CT_CLASS = {"running": "online", "restarting": "warning", "unhealthy": "warning",
+             "stopped": "offline", "paused": "offline"}
+_CT_STATE_LABEL = {"stopped": "zaustavljen", "paused": "pauziran",
+                   "unhealthy": "nezdrav", "restarting": "restartuje se"}
+
+
+def _ct_monitored(override, stack, stack_on) -> bool:
+    """Override kontejnera ima prednost; inace nasledjuje pracenje stack-a."""
+    return override if override is not None else stack_on.get(stack or "", False)
+
+
+async def _alert_container_changes(srv, old_ct, vms, seen_ids, stack_on):
+    """Poredi stara stanja kontejnera (pre UPSERT-a) sa novim i za PRACENE
+    kontejnere upisuje audit i salje notifikaciju (isti digest kao serveri)."""
+    from app.services.audit import log_event
+    from app.services.notify import notify_container_changes
+    seen = set(seen_ids)
+    changes = []
+    for vm in vms:
+        old = old_ct.get(str(vm["vmIdOnHost"]))
+        if not old:
+            continue
+        stack = vm.get("stackName")
+        if not _ct_monitored(old["monitor_override"], stack, stack_on):
+            continue
+        o, n = _CT_CLASS.get(old["power_state"]), _CT_CLASS.get(vm["powerState"])
+        if o and n and o != n:
+            changes.append({"id": old["id"], "name": vm["name"], "stack": stack,
+                            "old": o, "new": n, "state": _CT_STATE_LABEL.get(vm["powerState"])})
+    for key, old in old_ct.items():
+        if key in seen:
+            continue
+        if not _ct_monitored(old["monitor_override"], old["stack_name"], stack_on):
+            continue
+        o = _CT_CLASS.get(old["power_state"])
+        if o and o != "offline":
+            changes.append({"id": old["id"], "name": old["name"], "stack": old["stack_name"],
+                            "old": o, "new": "offline", "state": "uklonjen"})
+    if not changes:
+        return
+    for c in changes:
+        action = "container.recovery" if c["new"] == "online" else f"container.status_{c['new']}"
+        try:
+            await log_event(action, tenant_id=str(srv["tenant_id"]),
+                            resource_type="server", resource_id=str(srv["id"]),
+                            details={"container": c["name"], "stack": c["stack"],
+                                     "from": c["old"], "to": c["new"], "state": c["state"]},
+                            success=(c["new"] != "offline"))
+        except Exception as e:
+            logger.warning(f"Audit za kontejner {c['name']} neuspesan: {e}")
+    await notify_container_changes(srv, changes)
+
+
 async def sync_vms():
     """Sinhronizuje VM inventar sa svih hipervizora (trenutno samo Proxmox).
     UPSERT po (hypervisor_id, vm_id_on_host); nestali se brisu tek posle
@@ -298,6 +351,16 @@ async def sync_vms():
             logger.warning(f"VM sync neuspesan za {srv['name']}: {e}")
             continue
         try:
+            is_docker = bool(srv.get("is_docker_host")) and srv["os_type"] == "linux"
+            old_ct, stack_on = {}, {}
+            if is_docker:
+                for r in await fetch(
+                        "SELECT id, vm_id_on_host, name, power_state, stack_name, monitor_override "
+                        "FROM virtual_machines WHERE hypervisor_id=$1 AND vm_type='container'", srv["id"]):
+                    old_ct[r["vm_id_on_host"]] = dict(r)
+                for r in await fetch(
+                        "SELECT stack_name, enabled FROM docker_stack_monitoring WHERE hypervisor_id=$1", srv["id"]):
+                    stack_on[r["stack_name"]] = bool(r["enabled"])
             seen_ids = []
             for vm in vms:
                 vm_key = str(vm["vmIdOnHost"])
@@ -326,6 +389,11 @@ async def sync_vms():
                 "DELETE FROM virtual_machines WHERE hypervisor_id=$1 AND vm_id_on_host <> ALL($2::text[])",
                 srv["id"], seen_ids,
             )
+            if is_docker and old_ct:
+                try:
+                    await _alert_container_changes(srv, old_ct, vms, seen_ids, stack_on)
+                except Exception as e:
+                    logger.warning(f"Docker alarmi neuspesni za {srv['name']}: {e}")
             logger.info(f"VM sync: {srv['name']} -- {len(vms)} VM/kontejnera")
         except Exception as e:
             logger.error(f"VM upis u bazu neuspesan za {srv['name']}: {e}")
