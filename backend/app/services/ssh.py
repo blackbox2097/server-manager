@@ -682,6 +682,75 @@ async def list_vms_hyperv(server: dict) -> list[dict]:
     return await asyncio.get_event_loop().run_in_executor(None, _run)
 
 
+async def list_vms_docker(server: dict) -> list[dict]:
+    """Lista Docker kontejnera preko SSH (docker ps -a). Ako korisnik nije u
+    docker grupi, pokusava sudo -n. Greska (docker nije instaliran, nema
+    dozvole) se PROPAGIRA -- sync_vms tada preskace host i ne brise postojece
+    kontejnere. vm_id_on_host = ime kontejnera (ID se menja pri recreate-u).
+    Stack = Compose labela, a ako je nema, Swarm labela."""
+    fmt = ('{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}|'
+           '{{.Label "com.docker.compose.project"}}|{{.Label "com.docker.stack.namespace"}}')
+    base = f"docker ps -a --format {shlex.quote(fmt)}"
+
+    def _map(state: str, status: str) -> str:
+        s = state.strip().lower()
+        if s == "running":
+            return "unhealthy" if "(unhealthy)" in status.lower() else "running"
+        return {"exited": "stopped", "created": "stopped", "dead": "stopped",
+                "paused": "paused", "restarting": "restarting"}.get(s, "unknown")
+
+    def _run():
+        client = _connect(server)
+        askpass = None
+        try:
+            out, err, code = _exec(client, base, timeout=30)
+            err = err or ""
+            if code != 0 and "permission denied" in err.lower():
+                sudo_pw = server.get("_sudo_password")
+                if sudo_pw and server.get("ssh_user", "") != "root":
+                    rand = "".join(random.choices(string.ascii_lowercase, k=8))
+                    askpass = f"/tmp/.sm_ask_{int(time.time() * 1000)}_{rand}.sh"
+                    _write_remote(client, askpass, f"#!/bin/bash\necho {shlex.quote(sudo_pw)}\n")
+                    cmd = f"SUDO_ASKPASS={askpass} sudo -A {base}; EC=$?; rm -f {askpass}; exit $EC"
+                else:
+                    cmd = "sudo -n " + base
+                out, err, code = _exec(client, cmd, timeout=30)
+                err = "\n".join(l for l in (err or "").splitlines() if not l.startswith("[sudo]")).strip()
+            if code != 0:
+                hint = ""
+                if "password is required" in err.lower() and not server.get("_sudo_password"):
+                    hint = " -- podesi sudo lozinku za server"
+                raise RuntimeError(f"docker ps neuspesan (exit {code}): {err.strip()[:200]}{hint}")
+            return out
+        finally:
+            if askpass:
+                try:
+                    _exec(client, f"rm -f {askpass}", timeout=10)
+                except Exception:
+                    pass
+            client.close()
+
+    out = await asyncio.get_event_loop().run_in_executor(None, _run)
+    vms = []
+    for line in out.splitlines():
+        parts = line.split("|")
+        if len(parts) < 6:
+            continue
+        name, state, status, image, compose, swarm = [p.strip() for p in parts[:6]]
+        if not name:
+            continue
+        stack = compose or swarm
+        vms.append({
+            "vmIdOnHost": name,
+            "name": name,
+            "powerState": _map(state, status),
+            "guestOs": image or None,
+            "stackName": stack[:100] if stack else None,
+            "vmType": "container",
+        })
+    return vms
+
+
 async def execute_script(server: dict, script_content: str, rid=None, on_chunk=None) -> dict:
     """Dispatch po os_type -- izvrsavanje skripti sad uvek preko SSH.
     rid = execution_results.id, opciono -- ako je prosledjen, registruje

@@ -275,15 +275,19 @@ async def sync_vms():
     UPSERT po (hypervisor_id, vm_id_on_host); nestali se brisu tek posle
     uspesnog upisa svih. linked_server_id se pri sinhronizaciji ne dira."""
     rows = await fetch(
-        """SELECT * FROM servers WHERE active=true AND os_type IN ('proxmox', 'hyperv', 'esxi')"""
+        """SELECT * FROM servers WHERE active=true AND (os_type IN ('proxmox', 'hyperv', 'esxi') OR is_docker_host=true)"""
     )
     for row in rows:
         srv = dict(row)
         if srv.get("hv_secret_enc"): srv["_hv_secret"] = decrypt(srv["hv_secret_enc"])
         if srv.get("private_key_enc"): srv["_private_key"]  = decrypt(srv["private_key_enc"])
         if srv.get("ssh_password"):    srv["_ssh_password"] = decrypt(srv["ssh_password"])
+        # docker sync: sudo lozinka za "sudo -A docker ps" kad korisnik nije u docker grupi
+        if srv.get("sudo_password"):   srv["_sudo_password"] = decrypt(srv["sudo_password"])
         try:
-            if srv["os_type"] == "proxmox":
+            if srv.get("is_docker_host") and srv["os_type"] == "linux":
+                from app.services.ssh import list_vms_docker as list_vms
+            elif srv["os_type"] == "proxmox":
                 from app.services.proxmox import list_vms
             elif srv["os_type"] == "esxi":
                 from app.services.esxi import list_vms
@@ -302,18 +306,19 @@ async def sync_vms():
                     """INSERT INTO virtual_machines
                          (hypervisor_id, tenant_id, vm_id_on_host, name, power_state,
                           cpu_cores, ram_mb, disk_gb, disk_sizes_gb, guest_os, ip_address,
-                          vm_type, last_seen_at)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+                          vm_type, stack_name, last_seen_at)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
                        ON CONFLICT (hypervisor_id, vm_id_on_host) DO UPDATE SET
                           tenant_id=EXCLUDED.tenant_id, name=EXCLUDED.name,
                           power_state=EXCLUDED.power_state, cpu_cores=EXCLUDED.cpu_cores,
                           ram_mb=EXCLUDED.ram_mb, disk_gb=EXCLUDED.disk_gb,
                           disk_sizes_gb=EXCLUDED.disk_sizes_gb, guest_os=EXCLUDED.guest_os,
                           ip_address=EXCLUDED.ip_address, vm_type=EXCLUDED.vm_type,
-                          last_seen_at=NOW()""",
+                          stack_name=EXCLUDED.stack_name, last_seen_at=NOW()""",
                     srv["id"], srv["tenant_id"], vm_key, vm["name"], vm["powerState"],
                     vm.get("cpuCores"), vm.get("ramMb"), vm.get("diskGb"), vm.get("diskSizesGb"),
                     vm.get("guestOs"), vm.get("ipAddress"), vm.get("vmType", "vm"),
+                    vm.get("stackName"),
                 )
             # brisu se samo nestali, tek posle uspesnog upisa svih
             await execute(
