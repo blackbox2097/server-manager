@@ -12,6 +12,7 @@ import { Spinner, Empty } from '../../components/ui';
 const CATEGORIES = [
   { label: 'Sve',        prefix: ''            },
   { label: 'Serveri',    prefix: 'server.'      },
+  { label: 'Mrežni uređaji', prefix: 'networkdevice.' },
   { label: 'Skripte',    prefix: 'script.'      },
   { label: 'Zakazivanje',prefix: 'schedule.'    },
   { label: 'Prijave',    prefix: 'auth.'        },

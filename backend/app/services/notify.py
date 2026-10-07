@@ -1,5 +1,6 @@
 # app/services/notify.py
 import asyncio
+import html
 import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -78,6 +79,8 @@ async def send_digest_emails():
         if not items:
             continue
         ids = [i["id"] for i in items]
+        _trows = await fetch("SELECT name FROM tenants WHERE id=$1", tenant_id)
+        tenant_label = html.escape(_trows[0]["name"]) if _trows else "?"
         recipients = await get_recipients(tenant_id)
         if not recipients:
             await execute("DELETE FROM pending_notifications WHERE id = ANY($1::bigint[])", ids)
@@ -116,7 +119,7 @@ async def send_digest_emails():
                           if last["error_message"] else "")
             line = f"""
                 <div style="padding:8px 0; border-bottom:1px solid #eee;">
-                  <strong>{last["resource_name"]}</strong>{flap_suffix} — {chain_str}
+                  <strong>[{tenant_label}] {last["resource_name"]}</strong>{flap_suffix} — {chain_str}
                   {metrics_html}
                   {error_html}
                 </div>"""
@@ -133,7 +136,7 @@ async def send_digest_emails():
         if offline_lines: subject_parts.append(f"{len(offline_lines)} offline")
         if warning_lines: subject_parts.append(f"{len(warning_lines)} upozorenja")
         if recovery_lines: subject_parts.append(f"{len(recovery_lines)} oporavka")
-        subject = f"[Server Manager] Sažetak: {' · '.join(subject_parts)}"
+        subject = f"[Server Manager] [{tenant_label}] Sažetak: {' · '.join(subject_parts)}"
         summary_bits = []
         if offline_lines:
             summary_bits.append(f'<span style="color:#ef4444; font-weight:600;">{len(offline_lines)} offline</span>')
