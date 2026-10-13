@@ -66,14 +66,25 @@ def _connect(server: dict) -> paramiko.SSHClient:
     return client
 
 
-def _exec(client: paramiko.SSHClient, cmd: str, timeout: int = 60, on_start=None) -> tuple[str, str, int]:
+def _exec(client: paramiko.SSHClient, cmd: str, timeout: int = 60, on_start=None, deadline=None) -> tuple[str, str, int]:
+    # SM-EXEC-DEADLINE-v1: recv_exit_status() nema svoj rok; komanda koja zaglavi na udaljenom
+    # hostu (npr. df na mrtvom NFS-u) drzi nit iz pool-a zauvek. deadline=None = staro ponasanje.
     _, out, err = client.exec_command(cmd, timeout=timeout)
     if on_start:
         try:
             on_start()
         except Exception:
             pass
-    code = out.channel.recv_exit_status()
+    if deadline is None:
+        code = out.channel.recv_exit_status()
+    else:
+        if not out.channel.status_event.wait(deadline):
+            try:
+                out.channel.close()
+            except Exception:
+                pass
+            raise TimeoutError(f"Komanda nije vratila exit status u {deadline}s")
+        code = out.channel.recv_exit_status()
     return (out.read().decode("utf-8", errors="replace"),
             err.read().decode("utf-8", errors="replace"),
             code)
@@ -144,9 +155,10 @@ async def _get_metrics_linux(server: dict) -> dict:
                 'printf "%s\\n" "${cpu:-0}"',
                 'echo "---RAM---"',
                 "free | awk '/^Mem:/{printf \"%.0f\\n\", ($3/$2)*100}'",
+                'SM_T=$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 2 10" || true)',
                 'echo "---DISKS---"',
                 # Sve realne particije (bez virtuelnih fs kao tmpfs/overlay), format: mount|procenat
-                "df -x tmpfs -x devtmpfs -x squashfs -x overlay -x proc -x sysfs -x cgroup -x cgroup2 "
+                "$SM_T df -l -x tmpfs -x devtmpfs -x squashfs -x overlay -x proc -x sysfs -x cgroup -x cgroup2 "
                 "--output=target,pcent 2>/dev/null | tail -n +2 | awk '{gsub(\"%\",\"\",$NF); print $1\"|\"$NF}'",
                 'echo "---UPTIME---"',
                 "awk '{print int($1)}' /proc/uptime",
@@ -161,7 +173,7 @@ async def _get_metrics_linux(server: dict) -> dict:
                 'echo "---VIRT---"',
                 "systemd-detect-virt 2>/dev/null || echo none",
             ])
-            stdout, stderr, code = _exec(client, cmd)
+            stdout, stderr, code = _exec(client, cmd, deadline=60)
             if code != 0 and stderr and not stdout:
                 raise RuntimeError(stderr[:200])
 
@@ -396,7 +408,7 @@ async def _get_metrics_windows(server: dict) -> dict:
             cmd = (
                 f'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{tmp}"'
             )
-            stdout, stderr, code = _exec(client, cmd, timeout=30)
+            stdout, stderr, code = _exec(client, cmd, timeout=30, deadline=90)
             try:
                 sftp = client.open_sftp()
                 sftp.remove(tmp)
