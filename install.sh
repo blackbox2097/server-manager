@@ -677,6 +677,93 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO se
 INSERT INTO schema_versions (version, description)
 VALUES (1, 'Inicijalna sema')
 ON CONFLICT (version) DO NOTHING;
+
+-- UPS uredjaji -- SOPSTVENA kategorija, ne mrezni uredjaji (nemaju funkciju
+-- u mrezi). Odluka 9.11.2026. Prva faza samo NUT izvor (source='nut'),
+-- SNMP (RFC 1628 / vendor MIB) se dodaje kad bude uredjaja za test.
+CREATE TABLE IF NOT EXISTS ups_devices (
+    id                    UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id             UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name                  TEXT        NOT NULL,
+    description           TEXT,
+    location              TEXT,
+    source                TEXT        NOT NULL DEFAULT 'nut',
+    host                  TEXT        NOT NULL,
+    nut_port              INTEGER     NOT NULL DEFAULT 3493,
+    nut_ups_name          TEXT        NOT NULL DEFAULT 'ups',
+    nut_username          TEXT,
+    nut_password_enc      TEXT,
+    poll_interval_sec     INTEGER     NOT NULL DEFAULT 60,
+    raw_retention_hours   INTEGER     NOT NULL DEFAULT 72,
+    rollup_bucket_minutes INTEGER     NOT NULL DEFAULT 5,
+    rollup_retention_days INTEGER     NOT NULL DEFAULT 90,
+    status                TEXT        NOT NULL DEFAULT 'unknown',
+    ups_status_raw        TEXT,
+    replace_battery       BOOLEAN     NOT NULL DEFAULT FALSE,
+    manufacturer          TEXT,
+    model                 TEXT,
+    firmware              TEXT,
+    ups_type              TEXT,
+    raw_vars              JSONB,
+    last_seen_at          TIMESTAMPTZ,
+    last_error            TEXT,
+    active                BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by            UUID        REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT ups_devices_source_check CHECK (source IN ('nut')),
+    CONSTRAINT ups_devices_status_check CHECK (status IN
+        ('online', 'warning', 'on_battery', 'low_battery', 'offline', 'unknown')),
+    CONSTRAINT ups_devices_poll_interval_check CHECK (poll_interval_sec >= 10),
+    CONSTRAINT ups_devices_retention_check CHECK (
+        raw_retention_hours > 0 AND rollup_bucket_minutes > 0 AND rollup_retention_days > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_ups_devices_tenant ON ups_devices (tenant_id);
+
+-- Raw UPS metrike. battery_charge je NULL kad je vrednost nepouzdana
+-- (npr. Megatec drajver javlja napon po celiji -> charge 0 uz OL bez LB).
+CREATE TABLE IF NOT EXISTS ups_metrics (
+    id                  BIGSERIAL   PRIMARY KEY,
+    ups_id              UUID        NOT NULL REFERENCES ups_devices(id) ON DELETE CASCADE,
+    collected_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status              TEXT,
+    battery_charge      NUMERIC(5,1),
+    battery_runtime_sec INTEGER,
+    battery_voltage     NUMERIC(7,2),
+    load_percent        NUMERIC(5,1),
+    input_voltage       NUMERIC(6,1),
+    output_voltage      NUMERIC(6,1),
+    input_frequency     NUMERIC(5,2),
+    temperature         NUMERIC(5,1)
+);
+CREATE INDEX IF NOT EXISTS idx_ups_metrics_ups_time ON ups_metrics (ups_id, collected_at DESC);
+
+CREATE TABLE IF NOT EXISTS ups_metrics_rollup (
+    id                  BIGSERIAL   PRIMARY KEY,
+    ups_id              UUID        NOT NULL REFERENCES ups_devices(id) ON DELETE CASCADE,
+    bucket_start        TIMESTAMPTZ NOT NULL,
+    bucket_minutes      INTEGER     NOT NULL,
+    sample_count        INTEGER     NOT NULL,
+    load_avg NUMERIC(5,1), load_min NUMERIC(5,1), load_max NUMERIC(5,1),
+    charge_avg NUMERIC(5,1), charge_min NUMERIC(5,1),
+    runtime_min_sec INTEGER,
+    input_v_avg NUMERIC(6,1), input_v_min NUMERIC(6,1), input_v_max NUMERIC(6,1),
+    output_v_avg NUMERIC(6,1),
+    temp_avg NUMERIC(5,1), temp_max NUMERIC(5,1),
+    on_battery_samples  INTEGER     NOT NULL DEFAULT 0,
+    CONSTRAINT ups_rollup_unique UNIQUE (ups_id, bucket_start, bucket_minutes)
+);
+
+-- Alarmi za UPS -- odvojen set toggle-a (odluka 9.11.2026).
+-- on_battery pokriva i on_battery i low_battery; ti statusi i oporavak
+-- posle baterije idu mejlom ODMAH (mimo digest kasnjenja).
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS alert_ups_on_battery BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS alert_ups_offline    BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS alert_ups_recovery   BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS alert_ups_warning    BOOLEAN NOT NULL DEFAULT false;
+
+-- Dozvola za upravljanje UPS uredjajima -- odvojena od perm_network_manage.
+ALTER TABLE operator_tenants ADD COLUMN IF NOT EXISTS perm_ups_manage BOOLEAN NOT NULL DEFAULT FALSE;
 SCHEMA
 
     # Superadmin lozinka — generisemo hash dinamicki
