@@ -116,16 +116,21 @@ async def dismiss(server_id: str, user=Depends(get_current_user)):
 async def network_stats(user=Depends(get_current_user)):
     tids = await _accessible_tenant_ids(user)
     if tids is None:
-        rows = await fetch("SELECT status FROM network_devices WHERE active=true")
+        rows = await fetch("SELECT status, device_type FROM network_devices WHERE active=true")
     else:
         rows = await fetch(
-            "SELECT status FROM network_devices WHERE active=true AND tenant_id = ANY($1::uuid[])", tids)
+            "SELECT status, device_type FROM network_devices WHERE active=true AND tenant_id = ANY($1::uuid[])", tids)
     online = warning = offline = 0
     for r in rows:
         if r["status"] == "online": online += 1
         elif r["status"] == "warning": warning += 1
         elif r["status"] == "offline": offline += 1
-    return {"total": len(rows), "online": online, "warning": warning, "offline": offline}
+    type_counts = {}
+    for r in rows:
+        t = r["device_type"] or "other"
+        type_counts[t] = type_counts.get(t, 0) + 1
+    return {"total": len(rows), "online": online, "warning": warning, "offline": offline,
+            "typeCounts": type_counts}
 _NETWORK_PROBLEMS_SELECT = """
     SELECT nd.id, nd.name, nd.ip_address, nd.device_type, nd.vendor, nd.model, nd.location,
            nd.status, nd.last_error, nd.last_seen_at, nd.tenant_id, t.name AS tenant_name

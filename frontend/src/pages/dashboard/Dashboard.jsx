@@ -27,8 +27,8 @@ function HostStatusBar() {
     return () => clearInterval(t);
   }, []);
 
-  const timeStr = now.toLocaleTimeString('sr-RS');
-  const dateStr = now.toLocaleDateString('sr-RS', { weekday: 'long', day: 'numeric', month: 'long' });
+  const timeStr = now.toLocaleTimeString('sr-Latn-RS');
+  const dateStr = now.toLocaleDateString('sr-Latn-RS', { weekday: 'long', day: 'numeric', month: 'long' });
 
   return (
     <div className="card flex items-center justify-between flex-wrap gap-4 py-3">
@@ -38,13 +38,13 @@ function HostStatusBar() {
       </div>
       {host && (
         <div className="flex items-center gap-4">
-          <div className="w-28">
+          <div className="w-36">
             <div className="flex justify-between text-xs text-gray-500 mb-1">
               <span>CPU (app server)</span><span className="w-7 text-right tabular-nums">{Math.round(host.cpuPercent)}%</span>
             </div>
             <MeterBar value={host.cpuPercent} />
           </div>
-          <div className="w-28">
+          <div className="w-36">
             <div className="flex justify-between text-xs text-gray-500 mb-1">
               <span>RAM (app server)</span><span className="w-7 text-right tabular-nums">{Math.round(host.ramPercent)}%</span>
             </div>
@@ -56,19 +56,40 @@ function HostStatusBar() {
   );
 }
 
-function StatCard({ icon: Icon, label, value, color = 'text-gray-100', onClick }) {
+function StatCard({ icon: Icon, label, value, color = 'text-gray-100', valueColor, mutedWhenZero = false, onClick }) {
+  const muted = mutedWhenZero && !value;
   return (
     <div
-      className={`card flex items-center gap-4${onClick ? ' cursor-pointer hover:bg-gray-800/40 transition-colors' : ''}`}
+      className={`card !py-2 !px-3 flex items-center gap-2.5${onClick ? ' cursor-pointer hover:bg-gray-800/40 transition-colors' : ''}`}
       onClick={onClick}
     >
-      <div className="p-2.5 bg-gray-800 rounded-lg">
-        <Icon size={20} className={color} />
+      <Icon size={16} className={muted ? 'text-gray-600' : color} />
+      <span className={`text-lg font-semibold tabular-nums ${muted ? 'text-gray-500' : (valueColor || 'text-gray-100')}`}>{value}</span>
+      <span className={`text-xs ${muted ? 'text-gray-600' : 'text-gray-500'}`}>{label}</span>
+    </div>
+  );
+}
+
+const NET_TYPE_ORDER = ['router', 'switch', 'ap', 'other'];
+const NET_TYPE_CHIP_LABELS = { router: 'Ruter', switch: 'Svič', ap: 'Access Point', other: 'Ostalo' };
+
+const STAT_ACCENTS = {
+  sky:    { bar: 'bg-sky-500',    icon: 'text-sky-400' },
+  violet: { bar: 'bg-violet-500', icon: 'text-violet-400' },
+  teal:   { bar: 'bg-teal-500',   icon: 'text-teal-400' },
+};
+
+function StatRow({ icon: Icon, title, accent = 'sky', footer, children }) {
+  const a = STAT_ACCENTS[accent] || STAT_ACCENTS.sky;
+  return (
+    <div className="rounded-xl border border-gray-800 bg-gray-900/40 p-2.5 grid gap-2 lg:grid-cols-[150px_minmax(0,1fr)] lg:items-center">
+      <div className="flex items-center gap-2 text-sm font-medium text-gray-200 pl-1">
+        <span className={`w-1 h-5 rounded-full ${a.bar}`} />
+        <Icon size={16} className={a.icon} />
+        {title}
       </div>
-      <div>
-        <p className="text-2xl font-semibold text-gray-100">{value}</p>
-        <p className="text-xs text-gray-500">{label}</p>
-      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">{children}</div>
+      {footer && <div className="lg:col-start-2">{footer}</div>}
     </div>
   );
 }
@@ -109,7 +130,7 @@ export default function Dashboard() {
 
   const [stats,       setStats]       = useState({ total: 0, online: 0, warning: 0, offline: 0, envCounts: {}, osCounts: {} });
   const [problems,    setProblems]    = useState([]);
-  const [networkStats,    setNetworkStats]    = useState({ total: 0, online: 0, warning: 0, offline: 0 });
+  const [networkStats,    setNetworkStats]    = useState({ total: 0, online: 0, warning: 0, offline: 0, typeCounts: {} });
   const [networkProblems, setNetworkProblems] = useState([]);
   const [executions,  setExecutions]  = useState([]);
   const [recentLogs,  setRecentLogs]  = useState([]);
@@ -294,45 +315,58 @@ export default function Dashboard() {
 
       <HostStatusBar />
 
-      {/* Stat cards */}
-      <div className="space-y-2">
-        <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wider">Serveri</h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <StatCard icon={Server}        label="Ukupno servera"  value={stats.total}   onClick={() => navigate('/servers')} />
-          <StatCard icon={Wifi}          label="Online"          value={stats.online}   color="text-green-400" onClick={() => navigate('/status-overview/servers?status=online')} />
-          <StatCard icon={AlertTriangle} label="Upozorenje"      value={stats.warning}  color="text-yellow-400" onClick={() => navigate('/status-overview/servers?status=warning')} />
-          <StatCard icon={WifiOff}       label="Offline"         value={stats.offline}  color="text-red-400" onClick={() => navigate('/status-overview/servers?status=offline')} />
-        </div>
+      {/* Semafori — kompaktni redovi: naslov levo, kartice desno */}
+      <div className="space-y-3">
+        <StatRow
+          icon={Server}
+          title="Serveri"
+          accent="sky"
+          footer={stats.total > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(stats.envCounts).map(([env, count]) => (
+                <span key={env} className="badge-gray">
+                  {env === 'production' ? 'Production' : env === 'staging' ? 'Staging' : 'Dev'}: {count}
+                </span>
+              ))}
+              {Object.entries(stats.osCounts).map(([os, count]) => (
+                <span key={os} className="badge-gray">
+                  {os === 'windows' ? '🪟 Windows' : os === 'proxmox' ? '🖥️ Proxmox' : os === 'hyperv' ? '🖥️ Hyper-V' : os === 'esxi' ? '🖥️ ESXi' : '🐧 Linux'}: {count}
+                </span>
+              ))}
+            </div>
+          )}
+        >
+          <StatCard icon={Server}        label="Ukupno"     value={stats.total}   onClick={() => navigate('/servers')} />
+          <StatCard icon={Wifi}          label="Online"     value={stats.online}  color="text-green-400" onClick={() => navigate('/status-overview/servers?status=online')} />
+          <StatCard icon={AlertTriangle} label="Upozorenje" value={stats.warning} color="text-yellow-400" valueColor="text-yellow-400" mutedWhenZero onClick={() => navigate('/status-overview/servers?status=warning')} />
+          <StatCard icon={WifiOff}       label="Offline"    value={stats.offline} color="text-red-400"    valueColor="text-red-400"    mutedWhenZero onClick={() => navigate('/status-overview/servers?status=offline')} />
+        </StatRow>
+
+        {networkStats.total > 0 && (
+          <StatRow
+            icon={Router}
+            title="Mrežni uređaji"
+            accent="violet"
+            footer={Object.keys(networkStats.typeCounts || {}).length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(networkStats.typeCounts)
+                  .sort(([a], [b]) => {
+                    const ia = NET_TYPE_ORDER.indexOf(a), ib = NET_TYPE_ORDER.indexOf(b);
+                    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+                  })
+                  .map(([t, count]) => (
+                    <span key={t} className="badge-gray">{NET_TYPE_CHIP_LABELS[t] || t}: {count}</span>
+                  ))}
+              </div>
+            )}
+          >
+            <StatCard icon={Router}        label="Ukupno"     value={networkStats.total}   onClick={() => navigate('/network-devices')} />
+            <StatCard icon={Wifi}          label="Online"     value={networkStats.online}  color="text-green-400" onClick={() => navigate('/status-overview/network-devices?status=online')} />
+            <StatCard icon={AlertTriangle} label="Upozorenje" value={networkStats.warning} color="text-yellow-400" valueColor="text-yellow-400" mutedWhenZero onClick={() => navigate('/status-overview/network-devices?status=warning')} />
+            <StatCard icon={WifiOff}       label="Offline"    value={networkStats.offline} color="text-red-400"    valueColor="text-red-400"    mutedWhenZero onClick={() => navigate('/status-overview/network-devices?status=offline')} />
+          </StatRow>
+        )}
       </div>
-
-      {/* Okruzenje / OS pregled */}
-      {stats.total > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {Object.entries(stats.envCounts).map(([env, count]) => (
-            <span key={env} className="badge-gray">
-              {env === 'production' ? 'Production' : env === 'staging' ? 'Staging' : 'Dev'}: {count}
-            </span>
-          ))}
-          {Object.entries(stats.osCounts).map(([os, count]) => (
-            <span key={os} className="badge-gray">
-              {os === 'windows' ? '🪟 Windows' : os === 'proxmox' ? '🖥️ Proxmox' : os === 'hyperv' ? '🖥️ Hyper-V' : os === 'esxi' ? '🖥️ ESXi' : '🐧 Linux'}: {count}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Mrezni uredjaji — semafor (isti obrazac kao za servere) */}
-      {networkStats.total > 0 && (
-        <div className="space-y-2">
-          <h2 className="text-xs font-medium text-gray-500 uppercase tracking-wider">Mrežni uređaji</h2>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard icon={Router}   label="Ukupno mrežnih uređaja" value={networkStats.total} onClick={() => navigate('/network-devices')} />
-            <StatCard icon={Wifi}     label="Online"     value={networkStats.online}  color="text-green-400" onClick={() => navigate('/status-overview/network-devices?status=online')} />
-            <StatCard icon={AlertTriangle} label="Upozorenje" value={networkStats.warning} color="text-yellow-400" onClick={() => navigate('/status-overview/network-devices?status=warning')} />
-            <StatCard icon={WifiOff}  label="Offline"    value={networkStats.offline} color="text-red-400" onClick={() => navigate('/status-overview/network-devices?status=offline')} />
-          </div>
-        </div>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Problematicni serveri + Problematicni mrezni uredjaji — jedna ispod druge,
