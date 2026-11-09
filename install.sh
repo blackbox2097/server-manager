@@ -548,7 +548,7 @@ CREATE TABLE IF NOT EXISTS network_devices (
     v3_priv_password_enc    TEXT,
     poll_interval_sec       INTEGER     NOT NULL DEFAULT 60,
     raw_retention_hours     INTEGER     NOT NULL DEFAULT 72,
-    rollup_bucket_minutes   INTEGER     NOT NULL DEFAULT 1,
+    rollup_bucket_minutes   INTEGER     NOT NULL DEFAULT 60,
     rollup_retention_days   INTEGER     NOT NULL DEFAULT 90,
     status                  TEXT        NOT NULL DEFAULT 'unknown',
     sys_descr               TEXT,
@@ -566,6 +566,7 @@ CREATE TABLE IF NOT EXISTS network_devices (
         raw_retention_hours > 0 AND rollup_bucket_minutes > 0 AND rollup_retention_days > 0
     )
 );
+ALTER TABLE network_devices ALTER COLUMN rollup_bucket_minutes SET DEFAULT 60;
 CREATE UNIQUE INDEX IF NOT EXISTS network_devices_name_tenant_active_unique
     ON network_devices (tenant_id, name) WHERE active = true;
 

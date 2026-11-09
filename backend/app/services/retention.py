@@ -17,6 +17,7 @@
 # istrure u razlicitim tik-ovima).
 
 import logging
+from datetime import datetime, timedelta, timezone
 from app.database import fetch, execute
 from app.services.monitor import scheduler
 from app.config import get_settings
@@ -100,6 +101,77 @@ async def _rollup_server(server: dict) -> int:
     return n_buckets
 
 
+async def _rollup_network_device(device: dict) -> int:
+    """Isto kao _rollup_server, ali za interface metrike mreznog uredjaja
+    (preko svih njegovih interfejsa). in/out_errors i discards su DELTE
+    (snmp._poll racuna razliku izmedju dva poll-a), pa je rollup SUM.
+    Cutoff se racuna JEDNOM i ista vrednost ide u INSERT i DELETE -- nema
+    prozora u kome red predje granicu izmedju dva NOW() poziva."""
+    did         = device["id"]
+    bucket_min  = device["rollup_bucket_minutes"]
+    bucket_sec  = bucket_min * 60
+    cutoff      = datetime.now(timezone.utc) - timedelta(hours=device["raw_retention_hours"])
+    rollup_cut  = datetime.now(timezone.utc) - timedelta(days=device["rollup_retention_days"])
+
+    result = await execute(
+        """
+        INSERT INTO network_device_interface_metrics_rollup
+            (interface_id, bucket_start, bucket_minutes, sample_count,
+             in_kbps_avg, in_kbps_min, in_kbps_max,
+             out_kbps_avg, out_kbps_min, out_kbps_max,
+             in_errors_sum, out_errors_sum, in_discards_sum, out_discards_sum)
+        SELECT
+            m.interface_id,
+            to_timestamp(floor(extract(epoch FROM m.collected_at) / $3) * $3),
+            $2,
+            COUNT(*),
+            AVG(m.in_kbps),  MIN(m.in_kbps),  MAX(m.in_kbps),
+            AVG(m.out_kbps), MIN(m.out_kbps), MAX(m.out_kbps),
+            SUM(m.in_errors), SUM(m.out_errors), SUM(m.in_discards), SUM(m.out_discards)
+        FROM network_device_interface_metrics m
+        JOIN network_device_interfaces i ON i.id = m.interface_id
+        WHERE i.device_id = $1::uuid AND m.collected_at < $4
+        GROUP BY 1, 2
+        ON CONFLICT (interface_id, bucket_start, bucket_minutes) DO UPDATE SET
+            in_kbps_avg = (r.in_kbps_avg * r.sample_count + EXCLUDED.in_kbps_avg * EXCLUDED.sample_count)
+                          / (r.sample_count + EXCLUDED.sample_count),
+            out_kbps_avg = (r.out_kbps_avg * r.sample_count + EXCLUDED.out_kbps_avg * EXCLUDED.sample_count)
+                          / (r.sample_count + EXCLUDED.sample_count),
+            in_kbps_min  = LEAST(r.in_kbps_min, EXCLUDED.in_kbps_min),
+            in_kbps_max  = GREATEST(r.in_kbps_max, EXCLUDED.in_kbps_max),
+            out_kbps_min = LEAST(r.out_kbps_min, EXCLUDED.out_kbps_min),
+            out_kbps_max = GREATEST(r.out_kbps_max, EXCLUDED.out_kbps_max),
+            in_errors_sum    = COALESCE(r.in_errors_sum, 0)    + COALESCE(EXCLUDED.in_errors_sum, 0),
+            out_errors_sum   = COALESCE(r.out_errors_sum, 0)   + COALESCE(EXCLUDED.out_errors_sum, 0),
+            in_discards_sum  = COALESCE(r.in_discards_sum, 0)  + COALESCE(EXCLUDED.in_discards_sum, 0),
+            out_discards_sum = COALESCE(r.out_discards_sum, 0) + COALESCE(EXCLUDED.out_discards_sum, 0),
+            sample_count = r.sample_count + EXCLUDED.sample_count
+        """.replace("ON CONFLICT", "ON CONFLICT").replace(
+            "INSERT INTO network_device_interface_metrics_rollup",
+            "INSERT INTO network_device_interface_metrics_rollup AS r"),
+        did, bucket_min, bucket_sec, cutoff,
+    )
+    try:
+        n_buckets = int(result.split()[-1])
+    except (ValueError, IndexError):
+        n_buckets = 0
+
+    if n_buckets:
+        await execute(
+            """DELETE FROM network_device_interface_metrics m
+               USING network_device_interfaces i
+               WHERE m.interface_id = i.id AND i.device_id = $1::uuid AND m.collected_at < $2""",
+            did, cutoff,
+        )
+    await execute(
+        """DELETE FROM network_device_interface_metrics_rollup r
+           USING network_device_interfaces i
+           WHERE r.interface_id = i.id AND i.device_id = $1::uuid AND r.bucket_start < $2""",
+        did, rollup_cut,
+    )
+    return n_buckets
+
+
 async def run_retention():
     """Scheduler tik -- agregira istekle raw metrike u rollup i cisti stare
     redove, PO SERVERU (svaki server ima svoj raw_retention_hours /
@@ -122,6 +194,26 @@ async def run_retention():
 
     if total_buckets:
         logger.info(f"Retention: agregirano {total_buckets} bucket-a preko {len(servers)} servera")
+
+    # --- mrezni uredjaji (interface metrike) -- svi, i neaktivni, da im podaci ne ostaju zauvek ---
+    try:
+        devices = await fetch(
+            "SELECT id, raw_retention_hours, rollup_bucket_minutes, rollup_retention_days "
+            "FROM network_devices"
+        )
+    except Exception as e:
+        logger.error(f"Retention: greska dohvatanja mreznih uredjaja: {e}")
+        return
+
+    net_buckets = 0
+    for d in devices:
+        try:
+            net_buckets += await _rollup_network_device(dict(d))
+        except Exception as e:
+            logger.error(f"Retention: greska za mrezni uredjaj {d['id']}: {e}")
+
+    if net_buckets:
+        logger.info(f"Retention: agregirano {net_buckets} interface bucket-a preko {len(devices)} mreznih uredjaja")
 
 
 def start():

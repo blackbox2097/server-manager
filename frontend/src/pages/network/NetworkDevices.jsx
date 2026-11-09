@@ -24,7 +24,7 @@ const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, locations, on
     snmpPort: 161, snmpVersion: 'v2c', community: '',
     v3Username: '', v3SecurityLevel: 'authPriv', v3AuthProtocol: 'SHA', v3AuthPassword: '',
     v3PrivProtocol: 'AES', v3PrivPassword: '',
-    pollIntervalSec: 60, rawRetentionHours: 72, rollupBucketMinutes: 1, rollupRetentionDays: 90,
+    pollIntervalSec: 60, rawRetentionHours: 72, rollupBucketMinutes: 60, rollupRetentionDays: 90,
     ...(isEdit ? {
       name: device.name, description: device.description || '', ipAddress: device.ip_address,
       deviceType: device.device_type, vendor: device.vendor || '', model: device.model || '', location: device.location || '',
@@ -159,7 +159,7 @@ const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, locations, on
           <F label="Raw retention (h)"><input className="input" type="number" value={form.rawRetentionHours}
             onChange={e => set('rawRetentionHours', parseInt(e.target.value) || 72)} /></F>
           <F label="Rollup bucket (min)"><input className="input" type="number" value={form.rollupBucketMinutes}
-            onChange={e => set('rollupBucketMinutes', parseInt(e.target.value) || 1)} /></F>
+            onChange={e => set('rollupBucketMinutes', parseInt(e.target.value) || 60)} /></F>
           <F label="Rollup retention (dana)"><input className="input" type="number" value={form.rollupRetentionDays}
             onChange={e => set('rollupRetentionDays', parseInt(e.target.value) || 90)} /></F>
         </div>

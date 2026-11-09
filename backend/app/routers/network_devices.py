@@ -32,7 +32,7 @@ class NetworkDeviceIn(BaseModel):
     v3PrivPassword: str | None = None
     pollIntervalSec: int = 60
     rawRetentionHours: int = 72
-    rollupBucketMinutes: int = 1
+    rollupBucketMinutes: int = 60
     rollupRetentionDays: int = 90
 
     @field_validator("snmpVersion")
