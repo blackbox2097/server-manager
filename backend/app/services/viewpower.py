@@ -102,6 +102,17 @@ def derive_status(wi: dict) -> tuple[str, bool, str | None]:
     return status, replace, reason
 
 
+_LABEL_RE = re.compile(r"^\[label\.([^\]]+)\]$")
+_LABELS = {"enable": "uključeno", "disable": "isključeno"}
+
+
+def _label(v) -> str:
+    """'[label.enable]' -> 'uključeno'; ostali '[label.x]' -> 'x'. Samo za prikaz."""
+    s = str(v).strip()
+    m = _LABEL_RE.match(s)
+    return (_LABELS.get(m.group(1), m.group(1))) if m else s
+
+
 def _flatten(d: dict, wi: dict) -> dict[str, str]:
     """Za prikaz 'svih promenljivih' u detaljima -- samo skalarne, neprazne vrednosti."""
     out: dict[str, str] = {}
@@ -117,7 +128,7 @@ def _flatten(d: dict, wi: dict) -> dict[str, str]:
             continue
         if v is None or v == "":
             continue
-        out[k] = str(v)
+        out[k] = _label(v)
     return out
 
 
