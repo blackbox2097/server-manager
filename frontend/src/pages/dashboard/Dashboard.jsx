@@ -3,7 +3,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Server, Wifi, WifiOff, AlertTriangle, PlayCircle, CheckCircle2,
-  XCircle, Loader2, Terminal as TerminalIcon, Mail, FileText, X, Router
+  XCircle, Loader2, Terminal as TerminalIcon, Mail, FileText, X, Router, BatteryCharging
 } from 'lucide-react';
 import api from '../../services/api';
 import ws from '../../services/ws';
@@ -131,6 +131,7 @@ export default function Dashboard() {
   const [stats,       setStats]       = useState({ total: 0, online: 0, warning: 0, offline: 0, envCounts: {}, osCounts: {} });
   const [problems,    setProblems]    = useState([]);
   const [networkStats,    setNetworkStats]    = useState({ total: 0, online: 0, warning: 0, offline: 0, typeCounts: {} });
+  const [upsStats, setUpsStats] = useState({ total: 0, online: 0, warning: 0, offline: 0, onBattery: 0, replaceBattery: 0 });
   const [networkProblems, setNetworkProblems] = useState([]);
   const [executions,  setExecutions]  = useState([]);
   const [recentLogs,  setRecentLogs]  = useState([]);
@@ -157,13 +158,14 @@ export default function Dashboard() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [statsRes, probRes, netStatsRes, netProbRes, execRes, logRes] = await Promise.all([
+      const [statsRes, probRes, netStatsRes, netProbRes, execRes, logRes, upsRes] = await Promise.all([
         api.get('/dashboard/stats').catch(() => ({ data: null })),
         api.get('/dashboard/problems').catch(() => ({ data: [] })),
         api.get('/dashboard/network-stats').catch(() => ({ data: null })),
         api.get('/dashboard/network-problems').catch(() => ({ data: [] })),
         api.get('/dashboard/executions?limit=5').catch(() => ({ data: [] })),
         api.get('/dashboard/logs?limit=6').catch(() => ({ data: [] })),
+        api.get('/dashboard/ups-stats').catch(() => ({ data: null })),
       ]);
       if (statsRes.data) setStats(statsRes.data);
       setProblems(Array.isArray(probRes.data) ? probRes.data : []);
@@ -171,6 +173,7 @@ export default function Dashboard() {
       setNetworkProblems(Array.isArray(netProbRes.data) ? netProbRes.data : []);
       setExecutions(Array.isArray(execRes.data) ? execRes.data : []);
       setRecentLogs(Array.isArray(logRes.data) ? logRes.data : []);
+      if (upsRes.data) setUpsStats(upsRes.data);
     } catch {}
     setLoading(false);
   }, []);
@@ -270,7 +273,11 @@ export default function Dashboard() {
 
     if (accessToken) ws.connect(accessToken);
 
-    return () => { unsub(); unsubExec(); unsubNet(); };
+    const unsubUps = ws.on('ups_status', () => {
+      api.get('/dashboard/ups-stats').then(r => setUpsStats(r.data)).catch(() => {});
+    });
+
+    return () => { unsub(); unsubExec(); unsubNet(); unsubUps(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
@@ -364,6 +371,25 @@ export default function Dashboard() {
             <StatCard icon={Wifi}          label="Online"     value={networkStats.online}  color="text-green-400" onClick={() => navigate('/status-overview/network-devices?status=online')} />
             <StatCard icon={AlertTriangle} label="Upozorenje" value={networkStats.warning} color="text-yellow-400" valueColor="text-yellow-400" mutedWhenZero onClick={() => navigate('/status-overview/network-devices?status=warning')} />
             <StatCard icon={WifiOff}       label="Offline"    value={networkStats.offline} color="text-red-400"    valueColor="text-red-400"    mutedWhenZero onClick={() => navigate('/status-overview/network-devices?status=offline')} />
+          </StatRow>
+        )}
+
+        {upsStats.total > 0 && (
+          <StatRow
+            icon={BatteryCharging}
+            title="UPS"
+            accent="teal"
+            footer={(upsStats.onBattery > 0 || upsStats.replaceBattery > 0) && (
+              <div className="flex flex-wrap gap-1.5">
+                {upsStats.onBattery > 0 && <span className="badge-orange">Na bateriji: {upsStats.onBattery}</span>}
+                {upsStats.replaceBattery > 0 && <span className="badge-orange">Zameni bateriju: {upsStats.replaceBattery}</span>}
+              </div>
+            )}
+          >
+            <StatCard icon={BatteryCharging} label="Ukupno"     value={upsStats.total}   onClick={() => navigate('/ups')} />
+            <StatCard icon={Wifi}            label="Online"     value={upsStats.online}  color="text-green-400" onClick={() => navigate('/ups?status=online')} />
+            <StatCard icon={AlertTriangle}   label="Upozorenje" value={upsStats.warning} color="text-yellow-400" valueColor="text-yellow-400" mutedWhenZero onClick={() => navigate('/ups')} />
+            <StatCard icon={WifiOff}         label="Offline"    value={upsStats.offline} color="text-red-400"    valueColor="text-red-400"    mutedWhenZero onClick={() => navigate('/ups?status=offline')} />
           </StatRow>
         )}
       </div>

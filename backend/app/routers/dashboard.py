@@ -131,6 +131,27 @@ async def network_stats(user=Depends(get_current_user)):
         type_counts[t] = type_counts.get(t, 0) + 1
     return {"total": len(rows), "online": online, "warning": warning, "offline": offline,
             "typeCounts": type_counts}
+
+
+@router.get("/ups-stats")
+async def ups_stats(user=Depends(get_current_user)):
+    """Semafor za UPS -- upozorenje obuhvata warning + on_battery + low_battery."""
+    tids = await _accessible_tenant_ids(user)
+    q = "SELECT status, replace_battery FROM ups_devices WHERE active=true"
+    if tids is None:
+        rows = await fetch(q)
+    else:
+        rows = await fetch(q + " AND tenant_id = ANY($1::uuid[])", tids)
+    online = warning = offline = on_battery = replace = 0
+    for r in rows:
+        s = r["status"]
+        if s == "online": online += 1
+        elif s in ("warning", "on_battery", "low_battery"): warning += 1
+        elif s == "offline": offline += 1
+        if s in ("on_battery", "low_battery"): on_battery += 1
+        if r["replace_battery"]: replace += 1
+    return {"total": len(rows), "online": online, "warning": warning, "offline": offline,
+            "onBattery": on_battery, "replaceBattery": replace}
 _NETWORK_PROBLEMS_SELECT = """
     SELECT nd.id, nd.name, nd.ip_address, nd.device_type, nd.vendor, nd.model, nd.location,
            nd.status, nd.last_error, nd.last_seen_at, nd.tenant_id, t.name AS tenant_name
