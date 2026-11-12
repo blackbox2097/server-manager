@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
   Server, Activity, Terminal, BookOpen, Users,
-  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail, FileText, Database, Zap, Router
+  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail, FileText, Database, Zap, Router, BatteryCharging
 } from 'lucide-react';
 import clsx from 'clsx';
 import useAuthStore from '../../store/authStore';
@@ -14,6 +14,7 @@ const navItems = [
   { to: '/dashboard',  icon: Activity, label: 'Dashboard'   },
   { to: '/servers',    icon: Server,   label: 'Serveri'     },
   { to: '/network-devices', icon: Router, label: 'Mrežni uređaji' },
+  { to: '/ups',        icon: BatteryCharging, label: 'UPS' },
   { to: '/ssh-keys',   icon: Key,      label: 'SSH Kljucevi'},
   { to: '/monitoring', icon: Activity, label: 'Monitoring'  },
   { to: '/scripts',    icon: BookOpen, label: 'Skripte'     },
