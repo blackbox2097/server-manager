@@ -389,7 +389,7 @@ export default function UpsDevices() {
   const TH = ({ children }) => (
     <th className="text-left py-2.5 px-3 text-xs font-medium text-gray-500 uppercase tracking-wider">{children}</th>
   );
-  const COLS = 11;
+  const COLS = 12;
 
   return (
     <div className="space-y-4">
@@ -429,7 +429,7 @@ export default function UpsDevices() {
             <thead>
               <tr className="border-b border-gray-800">
                 <TH></TH><TH>Naziv</TH><TH>Izvor</TH><TH>Status</TH><TH>Opterećenje</TH>
-                <TH>Baterija</TH><TH>Runtime</TH><TH>Ulaz / Izlaz</TH><TH>Temp.</TH><TH>Model</TH><TH></TH>
+                <TH>Baterija</TH><TH>Napon bat.</TH><TH>Runtime</TH><TH>Ulaz / Izlaz</TH><TH>Temp.</TH><TH>Model</TH><TH></TH>
               </tr>
             </thead>
             <tbody>
@@ -478,6 +478,7 @@ export default function UpsDevices() {
                           </div>
                         )}
                       </td>
+                      <td className="py-2.5 px-3 text-gray-300 whitespace-nowrap">{fmt(u.battery_voltage, ' V', num(u.battery_voltage) !== null && num(u.battery_voltage) < 10 ? 2 : 1)}</td>
                       <td className="py-2.5 px-3 text-gray-300">{fmtRuntime(u.battery_runtime_sec)}</td>
                       <td className="py-2.5 px-3 text-gray-300 whitespace-nowrap">
                         {fmt(u.input_voltage, '')} / {fmt(u.output_voltage, ' V')}

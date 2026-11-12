@@ -76,11 +76,11 @@ _LIST_SELECT = """
            u.poll_interval_sec, u.status, u.ups_status_raw, u.replace_battery,
            u.manufacturer, u.model, u.firmware, u.ups_type,
            u.last_seen_at, u.last_error, u.created_at,
-           m.battery_charge, m.battery_runtime_sec, m.load_percent,
+           m.battery_charge, m.battery_runtime_sec, m.battery_voltage, m.load_percent,
            m.input_voltage, m.output_voltage, m.temperature, m.collected_at AS last_metric_at
     FROM ups_devices u
     LEFT JOIN LATERAL (
-        SELECT battery_charge, battery_runtime_sec, load_percent,
+        SELECT battery_charge, battery_runtime_sec, battery_voltage, load_percent,
                input_voltage, output_voltage, temperature, collected_at
         FROM ups_metrics WHERE ups_id = u.id ORDER BY collected_at DESC LIMIT 1
     ) m ON true
