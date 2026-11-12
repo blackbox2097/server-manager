@@ -425,19 +425,19 @@ export default function UpsDevices() {
         <Empty icon={Search} title="Nema rezultata" subtitle={q ? `Ništa ne odgovara pretrazi "${searchQuery}"` : 'Nijedan UPS ne odgovara izabranom filteru'} />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm table-fixed min-w-[1400px]">
+          <table className="w-full text-sm table-fixed min-w-[1550px]">
             <colgroup>
               <col style={{ width: 28 }} />   {/* chevron */}
-              <col />                         {/* Naziv -- ostatak prostora */}
+              <col style={{ width: 340 }} />  {/* Naziv */}
               <col style={{ width: 150 }} />  {/* Izvor */}
-              <col style={{ width: 150 }} />  {/* Status */}
+              <col style={{ width: 160 }} />  {/* Status */}
               <col style={{ width: 120 }} />  {/* Opterecenje */}
               <col style={{ width: 120 }} />  {/* Baterija */}
               <col style={{ width: 85 }} />   {/* Napon bat. */}
               <col style={{ width: 85 }} />   {/* Runtime */}
               <col style={{ width: 120 }} />  {/* Ulaz / Izlaz */}
               <col style={{ width: 65 }} />   {/* Temp. */}
-              <col style={{ width: 160 }} />  {/* Model */}
+              <col />                         {/* Model -- ostatak prostora */}
               <col style={{ width: 100 }} />  {/* akcije */}
             </colgroup>
             <thead>
