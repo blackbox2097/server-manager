@@ -7,6 +7,7 @@
 # parsiranje defanzivno, a nepoznato stanje NIKAD ne postaje tiho "online".
 
 import logging
+import re
 
 import httpx
 
@@ -151,3 +152,78 @@ async def fetch(ups: dict) -> dict:
         },
         "raw_vars": _flatten(d, wi),
     }
+
+
+# ---------------------------------------------------------------------------
+# Autodetekcija UPS-ova na ViewPower racunaru (12.11.2026)
+# ---------------------------------------------------------------------------
+_TREE_LEAF_RE = re.compile(r'^\s*([A-Za-z]+)\s*\(id=([^)_]+)(?:_[^)]*)?\)\s*$')
+
+
+async def _device_tree(host: str, port: int, timeout: int = VP_TIMEOUT_SEC) -> list[dict]:
+    url = f"http://{host}:{port}/ViewPower/initDeviceTree"
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.get(url, headers={"X-Requested-With": "XMLHttpRequest"})
+    resp.raise_for_status()
+    nodes = resp.json()
+    if not isinstance(nodes, list):
+        raise ViewPowerError("Neocekivan format stabla uredjaja")
+    return [n for n in nodes if isinstance(n, dict)]
+
+
+def _tree_candidates(nodes: list[dict]) -> list[str]:
+    """CURRENT -> <hostName> -> 'USB (id=160CD9D7_P01)' => 'USB160CD9D7'.
+    LAN/INTERNET grane su DRUGE ViewPower instance -- ne diramo ih."""
+    current = {str(n.get("id")) for n in nodes if n.get("name") == "CURRENT"}
+    hosts = {str(n.get("id")) for n in nodes if str(n.get("pId")) in current}
+    out: list[str] = []
+    for n in nodes:
+        if str(n.get("pId")) in hosts:
+            m = _TREE_LEAF_RE.match(str(n.get("name") or ""))
+            if m and (m.group(1) + m.group(2)) not in out:
+                out.append(m.group(1) + m.group(2))
+    return out
+
+
+def _device_info(pn: str, d: dict) -> dict:
+    wi = d.get("workInfo") or {}
+    return {
+        "deviceName": pn,
+        "serial":   _text(wi.get("deviceId")) or None,
+        "workMode": _text(wi.get("workMode")) or None,
+        "type":     _text(wi.get("morphological")) or None,
+    }
+
+
+async def vp_discover(host: str, port: int) -> dict:
+    """Spisak UPS-ova na ViewPower racunaru. Primarno iz stabla (initDeviceTree);
+    SVAKI kandidat se proverava preko reqMonitorData (portName u odgovoru mora
+    da se poklopi i mora postojati workMode) -- format imena cvora zato ne mora
+    biti tacno pogodjen. Ako stablo ne uspe ili nista ne prodje proveru:
+    fallback na reqMonitorData bez portName (trenutni/jedini UPS).
+    Vise UPS-ova: implementirano, NETESTIRANO na masini sa vise UPS-ova."""
+    devices: list[dict] = []
+    meta: dict = {}
+    method = "tree"
+    try:
+        candidates = _tree_candidates(await _device_tree(host, port))
+    except Exception as e:
+        logger.info(f"ViewPower {host}: stablo uredjaja nedostupno ({e}), koristim fallback")
+        candidates = []
+    for pn in candidates:
+        try:
+            d = await vp_monitor_data(host, port, pn)
+        except Exception:
+            continue
+        if str(d.get("portName") or "") == pn and _text((d.get("workInfo") or {}).get("workMode")):
+            devices.append(_device_info(pn, d))
+            meta = meta or d
+    if not devices:
+        method = "fallback"
+        d = await vp_monitor_data(host, port, "")
+        pn = str(d.get("portName") or "").strip()
+        if pn:
+            devices.append(_device_info(pn, d))
+            meta = d
+    return {"version": meta.get("version"), "hostName": meta.get("hostName"),
+            "method": method, "devices": devices}

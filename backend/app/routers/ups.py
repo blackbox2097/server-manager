@@ -130,29 +130,26 @@ class UpsDiscoverIn(BaseModel):
 
 @router.post("/{tid}/ups/discover")
 async def discover_ups(tid: str, body: UpsDiscoverIn, user=Depends(get_current_user)):
-    """Autodetekcija uredjaja na izvoru. ViewPower: reqMonitorData BEZ portName
-    vraca podatke trenutnog/prvog UPS-a i popunjava portName (provereno
-    12.11.2026, ViewPowerHTML V1.04-25210). Vise UPS-ova po instanci -- za
-    sada samo prvi; odgovor je lista da bi se kasnije prosirio."""
+    """Autodetekcija uredjaja na izvoru (ViewPower): spisak UPS-ova na racunaru,
+    uz oznaku onih koji su vec dodati u ovom tenantu. Vidi viewpower.vp_discover."""
     await check_tenant_perm(tid, user, "perm_ups_manage")
     if body.source != "viewpower":
         raise HTTPException(400, "Autodetekcija je trenutno podrzana samo za ViewPower")
-    from app.services.viewpower import vp_monitor_data
+    from app.services.viewpower import vp_discover
+    host = body.host.strip()
     try:
-        d = await vp_monitor_data(body.host.strip(), body.port, "")
+        res = await vp_discover(host, body.port)
     except Exception as e:
         raise HTTPException(502, str(e))
-    wi = d.get("workInfo") or {}
-    pn = str(d.get("portName") or "").strip()
-    if not pn:
+    if not res["devices"]:
         raise HTTPException(404, "ViewPower nije vratio nijedan UPS")
-    return {
-        "version": d.get("version"), "hostName": d.get("hostName"),
-        "devices": [{
-            "deviceName": pn, "serial": wi.get("deviceId") or None,
-            "workMode": wi.get("workMode") or None, "type": wi.get("morphological") or None,
-        }],
-    }
+    rows = await fetch(
+        "SELECT name, device_name FROM ups_devices WHERE tenant_id=$1 AND source='viewpower' "
+        "AND host=$2 AND active=true", tid, host)
+    existing = {r["device_name"]: r["name"] for r in rows}
+    for dev in res["devices"]:
+        dev["existing"] = existing.get(dev["deviceName"])
+    return res
 
 
 @router.get("/{tid}/ups/{uid}")

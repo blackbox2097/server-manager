@@ -88,6 +88,7 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [discoverMsg, setDiscoverMsg] = useState(null);
+  const [discoverList, setDiscoverList] = useState([]);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const isVP = form.source === 'viewpower';
@@ -95,6 +96,7 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
   const changeSource = (src) => {
     setTestRes(null);
     setDiscoverMsg(null);
+    setDiscoverList([]);
     setForm(f => {
       const prev = SOURCE_DEFAULTS[f.source] || SOURCE_DEFAULTS.nut;
       const next = SOURCE_DEFAULTS[src];
@@ -108,14 +110,24 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
 
   const handleDiscover = async () => {
     if (!form.host) { setDiscoverMsg({ error: true, text: 'Prvo unesi IP ViewPower računara' }); return; }
-    setDiscovering(true); setDiscoverMsg(null);
+    setDiscovering(true); setDiscoverMsg(null); setDiscoverList([]);
     try {
       const { data } = await api.post(`/tenants/${tenantId}/ups/discover`,
         { source: form.source, host: form.host, port: form.port });
-      const d = data.devices[0];
-      set('deviceName', d.deviceName);
-      setDiscoverMsg({ text: [`Pronađen: ${d.deviceName}`, d.serial && `S/N ${d.serial}`, d.workMode, data.version]
-        .filter(Boolean).join(' · ') });
+      const devs = data.devices || [];
+      const label = d => [d.deviceName, d.serial && `S/N ${d.serial}`, d.workMode].filter(Boolean).join(' · ');
+      const ver = data.version ? ` · ${data.version}` : '';
+      setDiscoverList(devs);
+      if (devs.length === 1) {
+        set('deviceName', devs[0].deviceName);
+        setDiscoverMsg(devs[0].existing
+          ? { warn: true, text: `Pronađen: ${label(devs[0])}${ver} — već dodat kao "${devs[0].existing}"` }
+          : { text: `Pronađen: ${label(devs[0])}${ver}` });
+      } else {
+        const free = devs.find(d => !d.existing);
+        if (free) set('deviceName', free.deviceName);
+        setDiscoverMsg({ text: `Pronađeno ${devs.length} UPS-a — izaberi iz liste${ver}` });
+      }
     } catch (err) {
       setDiscoverMsg({ error: true, text: err.response?.data?.detail || 'Autodetekcija neuspešna' });
     } finally {
@@ -196,7 +208,17 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
             </button>
           </div>
           {discoverMsg && (
-            <p className={`text-xs mt-1 ${discoverMsg.error ? 'text-red-400' : 'text-gray-400'}`}>{discoverMsg.text}</p>
+            <p className={`text-xs mt-1 ${discoverMsg.error ? 'text-red-400' : discoverMsg.warn ? 'text-yellow-400' : 'text-gray-400'}`}>{discoverMsg.text}</p>
+          )}
+          {discoverList.length > 1 && (
+            <select className="input mt-2" value={form.deviceName} onChange={e => set('deviceName', e.target.value)}>
+              {discoverList.map(d => (
+                <option key={d.deviceName} value={d.deviceName}>
+                  {[d.deviceName, d.serial && `S/N ${d.serial}`, d.workMode].filter(Boolean).join(' · ')}
+                  {d.existing ? ` (već dodat: ${d.existing})` : ''}
+                </option>
+              ))}
+            </select>
           )}
         </F>
       ) : (
