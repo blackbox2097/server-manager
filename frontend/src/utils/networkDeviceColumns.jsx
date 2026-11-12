@@ -14,7 +14,6 @@ export const DEVICE_TYPES = [
   { value: 'router',  label: 'Ruter' },
   { value: 'switch',  label: 'Svic' },
   { value: 'ap',      label: 'Access Point' },
-  { value: 'ups',     label: 'UPS' },
   { value: 'other',   label: 'Ostalo' },
 ];
 

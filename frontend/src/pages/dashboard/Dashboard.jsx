@@ -311,7 +311,7 @@ export default function Dashboard() {
     networkGroups[networkGroupIndex.get(p.tenant_id)].items.push(p);
   }
 
-  const DEVICE_TYPE_LABELS = { router: 'Ruter', switch: 'Svič', ap: 'Access Point', ups: 'UPS', other: 'Uređaj' };
+  const DEVICE_TYPE_LABELS = { router: 'Ruter', switch: 'Svič', ap: 'Access Point', other: 'Uređaj' };
 
   return (
     <div className="space-y-6">
