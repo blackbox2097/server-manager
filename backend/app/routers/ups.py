@@ -134,7 +134,7 @@ async def create_ups(tid: str, req: Request, body: UpsIn, user=Depends(get_curre
     await log_event("ups.create", user_id=user["id"], username=user.get("username"),
                     tenant_id=tid, ip_address=_ip(req), resource_type="ups",
                     resource_id=str(row["id"]), details={"name": body.name, "host": body.host})
-    from app.services.nut import poll_ups_single
+    from app.services.ups_poller import poll_ups_single
     create_bg_task(poll_ups_single(str(row["id"])))  # prvi poll odmah, ne ceka 60s
     return dict(row)
 
@@ -183,7 +183,7 @@ async def test_ups(tid: str, uid: str, user=Depends(get_current_user)):
     row = await fetchrow("SELECT id FROM ups_devices WHERE id=$1 AND tenant_id=$2 AND active=true", uid, tid)
     if not row:
         raise HTTPException(404, "UPS nije pronadjen")
-    from app.services.nut import poll_ups_single
+    from app.services.ups_poller import poll_ups_single
     try:
         await poll_ups_single(uid)
     except Exception as e:

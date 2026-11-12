@@ -1,38 +1,20 @@
 # app/services/nut.py
-# UPS monitoring preko NUT protokola (Network UPS Tools, TCP 3493).
-# Prva faza UPS feature-a (9.11.2026): samo NUT izvor -- tipicno Synology/QNAP
-# NAS ili Linux server sa USB UPS-om koji izlaze NUT server.
-#
-# Isti operativni obrazac kao snmp.py: scheduler tik + per-uredjaj
-# poll_interval_sec, ograniceni paralelizam. Debounce SAMO za offline
-# (NUT nedostupan) -- promene ups.status (OB/LB/RB...) su autoritativne
-# i primenjuju se odmah.
+# NUT (Network UPS Tools, TCP 3493) ADAPTER za ups_poller.py.
+# Ovde je samo citanje i normalizacija -- debounce, upis, audit, notify i
+# scheduler su u ups_poller.py (refaktor 12.11.2026).
 #
 # Async-native preko asyncio.open_connection -- nema executora. Socket se
 # UVEK zatvara u finally (lekcija iz SNMP FD leak incidenta 11.8.2026).
 
 import asyncio
-import json
 import logging
 import re
-import time
 
-from app.config import get_settings
-from app.database import fetch, fetchrow, execute
-from app.services.bgtasks import create_bg_task
 from app.services.crypto import decrypt
-from app.services.monitor import scheduler
-from app.services.ws_manager import ws_manager
 
 logger = logging.getLogger(__name__)
 
-NUT_TICK_SEC     = 5    # koliko cesto scheduler proverava koji UPS-ovi su "dospeli"
-NUT_TIMEOUT_SEC  = 10   # cela NUT sesija (connect + LIST VAR)
-NUT_MAX_PARALLEL = 10
-
-_last_polled: dict[str, float] = {}
-# ups_id -> {"candidate": status, "count": int} -- debounce kes, SAMO za offline
-_status_pending: dict[str, dict] = {}
+NUT_TIMEOUT_SEC = 10   # cela NUT sesija (connect + LIST VAR)
 
 _VAR_RE = re.compile(r'^VAR\s+\S+\s+(\S+)\s+"((?:[^"\\]|\\.)*)"$')
 _UNESCAPE_RE = re.compile(r'\\(.)')
@@ -155,152 +137,22 @@ def extract_metrics(vars_: dict[str, str]) -> dict:
     }
 
 
-def _confirm_status(ups_id: str, old_status: str | None, raw_status: str) -> str | None:
-    """Vraca novi POTVRDJENI status ili None ako nema promene.
-    Ne-offline statusi su autoritativni (dolaze sa samog UPS-a) -> odmah.
-    Offline (NUT nedostupan) prolazi kroz debounce kao kod servera/SNMP-a."""
-    uid = str(ups_id)
-    if raw_status != "offline":
-        _status_pending.pop(uid, None)
-        return raw_status if raw_status != old_status else None
-
-    if not old_status or old_status == "unknown":
-        _status_pending.pop(uid, None)
-        return raw_status
-    if old_status == "offline":
-        _status_pending.pop(uid, None)
-        return None
-
-    pending = _status_pending.get(uid)
-    if pending and pending["candidate"] == raw_status:
-        pending["count"] += 1
-    else:
-        pending = {"candidate": raw_status, "count": 1}
-    _status_pending[uid] = pending
-    if pending["count"] >= get_settings().status_debounce_polls:
-        _status_pending.pop(uid, None)
-        return raw_status
-    return None
-
-
-async def _log_status_transition(ups: dict, old_status: str, new_status: str, reason: str | None = None):
-    from app.services.audit import log_event
-
-    is_recovery = new_status == "online" and old_status in ("warning", "on_battery", "low_battery", "offline")
-    action = "ups.recovery" if is_recovery else f"ups.status_{new_status}"
-    create_bg_task(log_event(
-        action, tenant_id=str(ups["tenant_id"]),
-        resource_type="ups", resource_id=str(ups["id"]),
-        details={"name": ups["name"], "from": old_status, "to": new_status, "reason": reason},
-        success=(new_status not in ("offline", "low_battery")),
-        error_message=(reason if new_status != "online" else None),
-    ))
-
-    try:
-        from app.services.notify import notify_ups_status
-    except ImportError:
-        notify_ups_status = None
-    if notify_ups_status:
-        notify_ups = dict(ups)
-        notify_ups["last_error"] = reason
-        create_bg_task(notify_ups_status(notify_ups, old_status, new_status))
-    else:
-        logger.info(f"UPS {ups['name']}: {old_status} -> {new_status} (notify_ups_status jos nije implementiran)")
-
-
-async def _broadcast(ups: dict, status: str, error: str | None):
-    await ws_manager.broadcast("ups_status", {
-        "upsId": str(ups["id"]), "tenantId": str(ups["tenant_id"]),
-        "status": status, "error": error,
-    }, tenant_id=str(ups["tenant_id"]))
-
-
-async def _poll_and_save(ups: dict):
-    uid = ups["id"]
-    old_status = ups.get("status")
-    try:
-        pw = decrypt(ups["password_enc"]) if ups.get("password_enc") else None
-        vars_ = await nut_list_vars(ups["host"], ups["port"], ups["device_name"],
-                                    ups.get("username"), pw)
-    except Exception as e:
-        err = str(e)[:500]
-        logger.warning(f"NUT poll neuspeo za {ups.get('name', uid)}: {err}")
-        confirmed = _confirm_status(uid, old_status, "offline")
-        display = confirmed or old_status or "offline"
-        await execute("UPDATE ups_devices SET status=$1, last_error=$2 WHERE id=$3", display, err, uid)
-        await _broadcast(ups, display, err)
-        if confirmed and old_status and old_status not in ("offline", "unknown"):
-            await _log_status_transition(ups, old_status, "offline", reason=err)
-        return
-
+async def fetch(ups: dict) -> dict:
+    """Ugovor adaptera (vidi ups_poller.py)."""
+    pw = decrypt(ups["password_enc"]) if ups.get("password_enc") else None
+    vars_ = await nut_list_vars(ups["host"], ups["port"], ups["device_name"], ups.get("username"), pw)
     status, replace_battery, reason = derive_status(vars_)
-    confirmed = _confirm_status(uid, old_status, status)
-    display = confirmed or old_status or status
-    m = extract_metrics(vars_)
-
-    await execute(
-        """UPDATE ups_devices
-           SET status=$1, ups_status_raw=$2, replace_battery=$3,
-               manufacturer=$4, model=$5, firmware=$6, ups_type=$7,
-               raw_vars=$8::text::jsonb, last_seen_at=NOW(), last_error=$9
-           WHERE id=$10""",
-        display, vars_.get("ups.status"), replace_battery,
-        vars_.get("device.mfr") or vars_.get("ups.mfr"),
-        vars_.get("device.model") or vars_.get("ups.model"),
-        vars_.get("ups.firmware"), vars_.get("ups.type"),
-        json.dumps(vars_), reason, uid,
-    )
-    await execute(
-        """INSERT INTO ups_metrics
-             (ups_id, status, battery_charge, battery_runtime_sec, battery_voltage,
-              load_percent, input_voltage, output_voltage, input_frequency, temperature)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)""",
-        uid, display, m["battery_charge"], m["battery_runtime_sec"], m["battery_voltage"],
-        m["load_percent"], m["input_voltage"], m["output_voltage"], m["input_frequency"], m["temperature"],
-    )
-    await _broadcast(ups, display, reason)
-
-    if confirmed and old_status and old_status != confirmed:
-        # prvi poll novog UPS-a (unknown -> online) nije dogadjaj vredan audita
-        if not (old_status == "unknown" and confirmed == "online"):
-            await _log_status_transition(ups, old_status, confirmed, reason=reason)
-
-
-async def _poll_guarded(ups: dict):
-    _last_polled[str(ups["id"])] = time.time()
-    try:
-        await asyncio.wait_for(_poll_and_save(ups), timeout=NUT_TIMEOUT_SEC * 3)
-    except Exception:
-        logger.exception(f"NUT: neocekivana greska za {ups.get('name', ups.get('id'))}")
-
-
-async def poll_ups_all():
-    try:
-        rows = await fetch("SELECT * FROM ups_devices WHERE active=true ORDER BY tenant_id, id")
-    except Exception as e:
-        logger.error(f"NUT: greska dohvatanja UPS uredjaja: {e}")
-        return
-    if not rows:
-        return
-    now = time.time()
-    due = []
-    for r in rows:
-        last = _last_polled.get(str(r["id"]))
-        if last is None or (now - last) >= r["poll_interval_sec"]:
-            due.append(dict(r))
-    for i in range(0, len(due), NUT_MAX_PARALLEL):
-        await asyncio.gather(*[_poll_guarded(u) for u in due[i:i + NUT_MAX_PARALLEL]],
-                             return_exceptions=True)
-
-
-async def poll_ups_single(ups_id: str):
-    row = await fetchrow("SELECT * FROM ups_devices WHERE id=$1 AND active=true", ups_id)
-    if not row:
-        raise ValueError("UPS nije pronadjen")
-    await _poll_guarded(dict(row))
-    return {"ok": True}
-
-
-def start():
-    scheduler.add_job(poll_ups_all, "interval", seconds=NUT_TICK_SEC, id="nut_poll")
-    logger.info(f"NUT (UPS) monitoring pokrenut (tick: {NUT_TICK_SEC}s)")
+    return {
+        "status": status,
+        "replace_battery": replace_battery,
+        "reason": reason,
+        "status_raw": vars_.get("ups.status"),
+        "metrics": extract_metrics(vars_),
+        "identity": {
+            "manufacturer": vars_.get("device.mfr") or vars_.get("ups.mfr"),
+            "model":        vars_.get("device.model") or vars_.get("ups.model"),
+            "firmware":     vars_.get("ups.firmware"),
+            "ups_type":     vars_.get("ups.type"),
+        },
+        "raw_vars": vars_,
+    }
