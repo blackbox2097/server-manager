@@ -216,7 +216,7 @@ async def update_ups(tid: str, uid: str, req: Request, body: UpsIn, user=Depends
 async def delete_ups(tid: str, uid: str, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_ups_manage")
     row = await fetchrow(
-        "UPDATE ups_devices SET active=false, updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND active=true RETURNING id, name",
+        "DELETE FROM ups_devices WHERE id=$1 AND tenant_id=$2 RETURNING id, name",
         uid, tid)
     if not row:
         raise HTTPException(404, "UPS nije pronadjen")

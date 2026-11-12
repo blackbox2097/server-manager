@@ -136,7 +136,7 @@ async def update_network_device(tid: str, did: str, req: Request, body: NetworkD
 async def delete_network_device(tid: str, did: str, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_network_manage")
     row = await fetchrow(
-        "UPDATE network_devices SET active=false WHERE id=$1 AND tenant_id=$2 RETURNING id, name",
+        "DELETE FROM network_devices WHERE id=$1 AND tenant_id=$2 RETURNING id, name",
         did, tid)
     if not row:
         raise HTTPException(404, "Uredjaj nije pronadjen")

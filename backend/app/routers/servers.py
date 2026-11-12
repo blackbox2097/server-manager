@@ -219,7 +219,10 @@ async def update_server(tid: str, sid: str, body: ServerUp, req: Request, user=D
 async def delete_server(tid: str, sid: str, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_servers_manage")
     row = await fetchrow(
-        "UPDATE servers SET active=false WHERE id=$1 AND tenant_id=$2 RETURNING id, name", sid, tid)
+        """WITH d AS (DELETE FROM servers WHERE id=$1 AND tenant_id=$2 RETURNING id, name),
+                u AS (UPDATE scheduled_jobs SET server_ids = array_remove(server_ids, d.id)
+                      FROM d WHERE d.id = ANY(scheduled_jobs.server_ids))
+           SELECT id, name FROM d""", sid, tid)
     if not row: raise HTTPException(404, "Server nije pronadjen")
     await log_event("server.delete", user_id=user["id"], username=user.get("username"),
                     tenant_id=tid, ip_address=_ip(req),
