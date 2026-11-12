@@ -51,6 +51,8 @@ async def lifespan(app: FastAPI):
     start_retention()
     from app.services.snmp import start as start_snmp
     start_snmp()
+    from app.services.nut import start as start_nut
+    start_nut()
     from app.services.notify import start as start_notify_digest
     start_notify_digest()
     from app.services.scheduler import load_all_jobs
