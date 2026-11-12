@@ -226,6 +226,32 @@ async def _poll_guarded(server: dict):
             logger.exception(f"Greska pri obradi watchdog timeout-a za {server.get('name')}")
 
 
+# Neblokirajuci ciklus: tik samo pokrece dospele servere kao zasebne taskove
+# i odmah se vraca (nema vise preskakanja tikova). Paralelizam ogranicava
+# semafor, a ne grupe -- spor server kasni samo sebi.
+_inflight: set[str] = set()
+_tasks: set[asyncio.Task] = set()
+_sem: asyncio.Semaphore | None = None
+
+
+def _get_sem() -> asyncio.Semaphore:
+    global _sem
+    if _sem is None:
+        _sem = asyncio.Semaphore(get_settings().monitor_max_parallel)
+    return _sem
+
+
+async def _run_limited(server: dict):
+    sid = str(server["id"])
+    try:
+        async with _get_sem():
+            await _poll_guarded(server)
+    except Exception:
+        logger.exception(f"Poll: neocekivana greska za {server.get('name', sid)}")
+    finally:
+        _inflight.discard(sid)
+
+
 async def poll_all():
     """Scheduler 'tik' -- zove se cesto (cfg.poll_tick_sec), ali stvarno
     poll-uje SAMO servere kojima je istekao njihov sopstveni poll_interval_sec
@@ -247,6 +273,8 @@ async def poll_all():
     due = []
     for r in rows:
         sid = str(r["id"])
+        if sid in _inflight:
+            continue
         interval = r["poll_interval_sec"] or cfg.monitor_interval_sec
         last = _last_polled.get(sid)
         if last is None or (now - last) >= interval:
@@ -254,9 +282,11 @@ async def poll_all():
     if not due:
         return
 
-    mp = cfg.monitor_max_parallel
-    for i in range(0, len(due), mp):
-        await asyncio.gather(*[_poll_guarded(r) for r in due[i:i+mp]], return_exceptions=True)
+    for r in due:
+        _inflight.add(str(r["id"]))
+        t = asyncio.create_task(_run_limited(r))
+        _tasks.add(t)
+        t.add_done_callback(_tasks.discard)
 
 
 async def poll_single(server_id: str):
