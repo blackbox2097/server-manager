@@ -11,6 +11,7 @@ const PERMS = [
   { key: 'permServersManage', label: 'Upravljanje serverima' },
   { key: 'permKeysManage',    label: 'SSH ključevi' },
   { key: 'permNetworkManage', label: 'Upravljanje mrežnim uređajima' },
+  { key: 'permUpsManage', label: 'Upravljanje UPS uređajima' },
 ];
 
 // ── Forma za kreiranje/editovanje operatera ───────────────────────────────────
@@ -33,6 +34,7 @@ function UserForm({ operator, tenants, onSave, onClose }) {
       permServersManage:  t.permServersManage  || false,
       permKeysManage:     t.permKeysManage     || false,
       permNetworkManage:  t.permNetworkManage  || false,
+      permUpsManage:      t.permUpsManage      || false,
     })) || []
   );
   const [saving, setSaving] = useState(false);
@@ -45,7 +47,7 @@ function UserForm({ operator, tenants, onSave, onClose }) {
     setAssignments(prev =>
       hasTenant(tenantId)
         ? prev.filter(a => a.tenantId !== tenantId)
-        : [...prev, { tenantId, permScriptsRun: false, permScriptsManage: false, permServersManage: false, permKeysManage: false, permNetworkManage: false }]
+        : [...prev, { tenantId, permScriptsRun: false, permScriptsManage: false, permServersManage: false, permKeysManage: false, permNetworkManage: false, permUpsManage: false }]
     );
   };
 

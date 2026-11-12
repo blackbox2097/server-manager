@@ -31,7 +31,7 @@ class UserUp(BaseModel):
 
 class Assignment(BaseModel):
     tenantId: str; permScriptsRun: bool = False; permScriptsManage: bool = False
-    permServersManage: bool = False; permKeysManage: bool = False; permNetworkManage: bool = False
+    permServersManage: bool = False; permKeysManage: bool = False; permNetworkManage: bool = False; permUpsManage: bool = False
 
 class AssignReq(BaseModel):
     assignments: list[Assignment]
@@ -102,7 +102,8 @@ async def list_users(user=Depends(require_superadmin)):
                       'permScriptsManage', ot.perm_scripts_manage,
                       'permServersManage', ot.perm_servers_manage,
                       'permKeysManage', ot.perm_keys_manage,
-                      'permNetworkManage', ot.perm_network_manage
+                      'permNetworkManage', ot.perm_network_manage,
+                      'permUpsManage', ot.perm_ups_manage
                   )) FILTER (WHERE t.id IS NOT NULL), '[]') AS tenants
            FROM users u
            LEFT JOIN operator_tenants ot ON ot.operator_id=u.id
@@ -174,10 +175,10 @@ async def assign_tenants(uid: str, body: AssignReq, req: Request, user=Depends(r
                 await conn.execute(
                     """INSERT INTO operator_tenants
                          (operator_id, tenant_id, perm_view, perm_scripts_run, perm_scripts_manage,
-                          perm_servers_manage, perm_keys_manage, perm_network_manage, assigned_by)
-                       VALUES ($1,$2,true,$3,$4,$5,$6,$7,$8)""",
+                          perm_servers_manage, perm_keys_manage, perm_network_manage, perm_ups_manage, assigned_by)
+                       VALUES ($1,$2,true,$3,$4,$5,$6,$7,$8,$9)""",
                     uid, a.tenantId, a.permScriptsRun, a.permScriptsManage,
-                    a.permServersManage, a.permKeysManage, a.permNetworkManage, user["id"])
+                    a.permServersManage, a.permKeysManage, a.permNetworkManage, a.permUpsManage, user["id"])
     await log_event("user.tenant_assign", user_id=user["id"], username=user.get("username"),
                     ip_address=_ip(req), resource_type="user", resource_id=uid,
                     details={"tenantCount": len(body.assignments)})
