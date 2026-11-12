@@ -21,23 +21,23 @@ class UpsIn(BaseModel):
     host: str
     description: str | None = None
     location: str | None = None
-    nutPort: int = 3493
-    nutUpsName: str = "ups"
-    nutUsername: str | None = None
-    nutPassword: str | None = None
+    port: int = 3493
+    deviceName: str = "ups"
+    username: str | None = None
+    password: str | None = None
     pollIntervalSec: int = 60
     rawRetentionHours: int = 72
     rollupBucketMinutes: int = 5
     rollupRetentionDays: int = 90
 
-    @field_validator("name", "host", "nutUpsName")
+    @field_validator("name", "host", "deviceName")
     @classmethod
     def not_empty(cls, v):
         if not v or not v.strip():
             raise ValueError("Polje je obavezno")
         return v.strip()
 
-    @field_validator("nutPort")
+    @field_validator("port")
     @classmethod
     def check_port(cls, v):
         if not 1 <= v <= 65535:
@@ -54,15 +54,15 @@ class UpsIn(BaseModel):
 
 class UpsTestIn(BaseModel):
     host: str
-    nutPort: int = 3493
-    nutUpsName: str = "ups"
-    nutUsername: str | None = None
-    nutPassword: str | None = None
+    port: int = 3493
+    deviceName: str = "ups"
+    username: str | None = None
+    password: str | None = None
 
 
 _LIST_SELECT = """
-    SELECT u.id, u.name, u.description, u.location, u.host, u.nut_port, u.nut_ups_name,
-           u.nut_username, (u.nut_password_enc IS NOT NULL) AS has_password,
+    SELECT u.id, u.name, u.description, u.location, u.host, u.port, u.device_name,
+           u.username, (u.password_enc IS NOT NULL) AS has_password,
            u.poll_interval_sec, u.status, u.ups_status_raw, u.replace_battery,
            u.manufacturer, u.model, u.firmware, u.ups_type,
            u.last_seen_at, u.last_error, u.created_at,
@@ -90,8 +90,8 @@ async def test_ups_connection(tid: str, body: UpsTestIn, user=Depends(get_curren
     await check_tenant_perm(tid, user, "perm_ups_manage")
     from app.services.nut import nut_list_vars, derive_status
     try:
-        v = await nut_list_vars(body.host.strip(), body.nutPort, body.nutUpsName.strip(),
-                                _n(body.nutUsername), _n(body.nutPassword))
+        v = await nut_list_vars(body.host.strip(), body.port, body.deviceName.strip(),
+                                _n(body.username), _n(body.password))
     except Exception as e:
         raise HTTPException(502, str(e))
     status, replace_battery, reason = derive_status(v)
@@ -121,14 +121,14 @@ async def create_ups(tid: str, req: Request, body: UpsIn, user=Depends(get_curre
     await check_tenant_perm(tid, user, "perm_ups_manage")
     row = await fetchrow(
         """INSERT INTO ups_devices
-             (tenant_id, name, description, location, host, nut_port, nut_ups_name,
-              nut_username, nut_password_enc, poll_interval_sec, raw_retention_hours,
+             (tenant_id, name, description, location, host, port, device_name,
+              username, password_enc, poll_interval_sec, raw_retention_hours,
               rollup_bucket_minutes, rollup_retention_days, created_by)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
            RETURNING id, name, host, status, created_at""",
-        tid, body.name, _n(body.description), _n(body.location), body.host, body.nutPort,
-        body.nutUpsName, _n(body.nutUsername),
-        encrypt(body.nutPassword) if body.nutPassword else None,
+        tid, body.name, _n(body.description), _n(body.location), body.host, body.port,
+        body.deviceName, _n(body.username),
+        encrypt(body.password) if body.password else None,
         body.pollIntervalSec, body.rawRetentionHours, body.rollupBucketMinutes,
         body.rollupRetentionDays, user["id"])
     await log_event("ups.create", user_id=user["id"], username=user.get("username"),
@@ -144,15 +144,15 @@ async def update_ups(tid: str, uid: str, req: Request, body: UpsIn, user=Depends
     await check_tenant_perm(tid, user, "perm_ups_manage")
     row = await fetchrow(
         """UPDATE ups_devices SET
-             name=$1, description=$2, location=$3, host=$4, nut_port=$5, nut_ups_name=$6,
-             nut_username=$7, nut_password_enc = COALESCE($8, nut_password_enc),
+             name=$1, description=$2, location=$3, host=$4, port=$5, device_name=$6,
+             username=$7, password_enc = COALESCE($8, password_enc),
              poll_interval_sec=$9, raw_retention_hours=$10, rollup_bucket_minutes=$11,
              rollup_retention_days=$12, updated_at=NOW()
            WHERE id=$13 AND tenant_id=$14 AND active=true
            RETURNING id, name, host, status""",
-        body.name, _n(body.description), _n(body.location), body.host, body.nutPort,
-        body.nutUpsName, _n(body.nutUsername),
-        encrypt(body.nutPassword) if body.nutPassword else None,
+        body.name, _n(body.description), _n(body.location), body.host, body.port,
+        body.deviceName, _n(body.username),
+        encrypt(body.password) if body.password else None,
         body.pollIntervalSec, body.rawRetentionHours, body.rollupBucketMinutes,
         body.rollupRetentionDays, uid, tid)
     if not row:

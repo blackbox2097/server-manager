@@ -219,9 +219,9 @@ async def _poll_and_save(ups: dict):
     uid = ups["id"]
     old_status = ups.get("status")
     try:
-        pw = decrypt(ups["nut_password_enc"]) if ups.get("nut_password_enc") else None
-        vars_ = await nut_list_vars(ups["host"], ups["nut_port"], ups["nut_ups_name"],
-                                    ups.get("nut_username"), pw)
+        pw = decrypt(ups["password_enc"]) if ups.get("password_enc") else None
+        vars_ = await nut_list_vars(ups["host"], ups["port"], ups["device_name"],
+                                    ups.get("username"), pw)
     except Exception as e:
         err = str(e)[:500]
         logger.warning(f"NUT poll neuspeo za {ups.get('name', uid)}: {err}")

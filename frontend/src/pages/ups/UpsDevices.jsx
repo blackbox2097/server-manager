@@ -63,13 +63,13 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
   const isEdit = !!ups?.id;
 
   const [form, setForm] = useState(() => ({
-    name: '', description: '', location: '', host: '', nutPort: 3493, nutUpsName: 'ups',
-    nutUsername: '', nutPassword: '',
+    name: '', description: '', location: '', host: '', port: 3493, deviceName: 'ups',
+    username: '', password: '',
     pollIntervalSec: 60, rawRetentionHours: 72, rollupBucketMinutes: 5, rollupRetentionDays: 90,
     ...(isEdit ? {
       name: ups.name, description: ups.description || '', location: ups.location || '',
-      host: ups.host, nutPort: ups.nut_port, nutUpsName: ups.nut_ups_name,
-      nutUsername: ups.nut_username || '',
+      host: ups.host, port: ups.port, deviceName: ups.device_name,
+      username: ups.username || '',
       pollIntervalSec: ups.poll_interval_sec,
       rawRetentionHours: ups.raw_retention_hours ?? 72,
       rollupBucketMinutes: ups.rollup_bucket_minutes ?? 5,
@@ -89,8 +89,8 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
     setTesting(true); setTestRes(null);
     try {
       const { data } = await api.post(`/tenants/${tenantId}/ups/test-connection`, {
-        host: form.host, nutPort: form.nutPort, nutUpsName: form.nutUpsName,
-        nutUsername: form.nutUsername || undefined, nutPassword: form.nutPassword || undefined,
+        host: form.host, port: form.port, deviceName: form.deviceName,
+        username: form.username || undefined, password: form.password || undefined,
       });
       setTestRes(data);
     } catch (err) {
@@ -104,7 +104,7 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
     if (!form.name || !form.host) { setError('Naziv i NUT server su obavezni'); return; }
     setSaving(true); setError('');
     try {
-      const payload = { ...form, nutPassword: form.nutPassword || undefined };
+      const payload = { ...form, password: form.password || undefined };
       if (isEdit) await api.put(`/tenants/${tenantId}/ups/${ups.id}`, payload);
       else        await api.post(`/tenants/${tenantId}/ups`, payload);
       onSave();
@@ -137,19 +137,19 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
           </F>
         </div>
         <F label="Port">
-          <input className="input" type="number" value={form.nutPort}
-            onChange={e => set('nutPort', parseInt(e.target.value) || 3493)} />
+          <input className="input" type="number" value={form.port}
+            onChange={e => set('port', parseInt(e.target.value) || 3493)} />
         </F>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <F label="Ime UPS-a na serveru">
-          <input className="input" value={form.nutUpsName} onChange={e => set('nutUpsName', e.target.value)} />
+          <input className="input" value={form.deviceName} onChange={e => set('deviceName', e.target.value)} />
         </F>
         <F label="Korisnik (opciono)">
-          <input className="input" value={form.nutUsername} onChange={e => set('nutUsername', e.target.value)} />
+          <input className="input" value={form.username} onChange={e => set('username', e.target.value)} />
         </F>
         <F label="Lozinka (opciono)">
-          <input className="input" type="password" value={form.nutPassword} onChange={e => set('nutPassword', e.target.value)}
+          <input className="input" type="password" value={form.password} onChange={e => set('password', e.target.value)}
             placeholder={isEdit && ups.has_password ? '(prazno = zadrži staru)' : ''} />
         </F>
       </div>
@@ -368,8 +368,8 @@ export default function UpsDevices() {
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-gray-400 text-xs">
-                        <div>{u.host}:{u.nut_port}</div>
-                        <div className="text-gray-600">{u.nut_ups_name}</div>
+                        <div>{u.host}:{u.port}</div>
+                        <div className="text-gray-600">{u.device_name}</div>
                       </td>
                       <td className="py-2.5 px-3">
                         <div className="flex items-center gap-1.5 flex-wrap">

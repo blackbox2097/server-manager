@@ -689,10 +689,10 @@ CREATE TABLE IF NOT EXISTS ups_devices (
     location              TEXT,
     source                TEXT        NOT NULL DEFAULT 'nut',
     host                  TEXT        NOT NULL,
-    nut_port              INTEGER     NOT NULL DEFAULT 3493,
-    nut_ups_name          TEXT        NOT NULL DEFAULT 'ups',
-    nut_username          TEXT,
-    nut_password_enc      TEXT,
+    port              INTEGER     NOT NULL DEFAULT 3493,
+    device_name          TEXT        NOT NULL DEFAULT 'ups',
+    username          TEXT,
+    password_enc      TEXT,
     poll_interval_sec     INTEGER     NOT NULL DEFAULT 60,
     raw_retention_hours   INTEGER     NOT NULL DEFAULT 72,
     rollup_bucket_minutes INTEGER     NOT NULL DEFAULT 5,
@@ -711,7 +711,7 @@ CREATE TABLE IF NOT EXISTS ups_devices (
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_by            UUID        REFERENCES users(id) ON DELETE SET NULL,
-    CONSTRAINT ups_devices_source_check CHECK (source IN ('nut')),
+    CONSTRAINT ups_devices_source_check CHECK (source IN ('nut', 'viewpower')),
     CONSTRAINT ups_devices_status_check CHECK (status IN
         ('online', 'warning', 'on_battery', 'low_battery', 'offline', 'unknown')),
     CONSTRAINT ups_devices_poll_interval_check CHECK (poll_interval_sec >= 10),
@@ -719,6 +719,26 @@ CREATE TABLE IF NOT EXISTS ups_devices (
         raw_retention_hours > 0 AND rollup_bucket_minutes > 0 AND rollup_retention_days > 0)
 );
 CREATE INDEX IF NOT EXISTS idx_ups_devices_tenant ON ups_devices (tenant_id);
+
+-- ups_devices_rename_2026_11: neutralna imena kolona (vise izvora: NUT, ViewPower...)
+-- i 'viewpower' kao dozvoljen izvor. Idempotentno za postojece instalacije.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ups_devices' AND column_name='nut_port') THEN
+    ALTER TABLE ups_devices RENAME COLUMN nut_port TO port;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ups_devices' AND column_name='nut_ups_name') THEN
+    ALTER TABLE ups_devices RENAME COLUMN nut_ups_name TO device_name;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ups_devices' AND column_name='nut_username') THEN
+    ALTER TABLE ups_devices RENAME COLUMN nut_username TO username;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ups_devices' AND column_name='nut_password_enc') THEN
+    ALTER TABLE ups_devices RENAME COLUMN nut_password_enc TO password_enc;
+  END IF;
+END $$;
+ALTER TABLE ups_devices DROP CONSTRAINT IF EXISTS ups_devices_source_check;
+ALTER TABLE ups_devices ADD CONSTRAINT ups_devices_source_check CHECK (source IN ('nut', 'viewpower'));
 
 -- Raw UPS metrike. battery_charge je NULL kad je vrednost nepouzdana
 -- (npr. Megatec drajver javlja napon po celiji -> charge 0 uz OL bez LB).
