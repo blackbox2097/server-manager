@@ -23,6 +23,11 @@ logging.basicConfig(
 # ogromnu kolicinu suma i gusi stvarno korisne poruke. Nasa app i dalje
 # loguje sve svoje INFO poruke normalno.
 logging.getLogger("paramiko").setLevel(logging.WARNING)
+# APScheduler na INFO loguje svaki tik (Running job / executed successfully)
+# -- desetine hiljada linija dnevno zakopavaju prave greske. Upozorenja i
+# greske scheduler-a ostaju vidljive.
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
