@@ -65,13 +65,17 @@ async def get_recipients(tenant_id: str) -> list[str]:
         "SELECT email FROM alert_recipients WHERE tenant_id=$1 AND active=true", tenant_id
     )
     return [r["email"] for r in rows]
-async def send_digest_emails():
+async def _send_digest_unlocked(only_tenant: str | None = None):
     """Periodicni posao (APScheduler, svakih notification_digest_interval_sec)
     -- sakuplja sve pending_notifications redove PO TENANTU i salje JEDAN
     zbirni email po tenantu, umesto pojedinacnog mejla po dogadjaju. Resava
     "alert storm" problem (masovni istovremeni pad vise uredjaja -> bujica
     pojedinacnih mejlova)."""
-    tenant_rows = await fetch("SELECT DISTINCT tenant_id FROM pending_notifications")
+    if only_tenant:
+        tenant_rows = await fetch(
+            "SELECT DISTINCT tenant_id FROM pending_notifications WHERE tenant_id=$1", only_tenant)
+    else:
+        tenant_rows = await fetch("SELECT DISTINCT tenant_id FROM pending_notifications")
     for trow in tenant_rows:
         tenant_id = str(trow["tenant_id"])
         items = await fetch(
@@ -125,7 +129,7 @@ async def send_digest_emails():
                 </div>"""
             if last["new_status"] == "offline":
                 offline_lines.append(line)
-            elif last["new_status"] == "warning":
+            elif last["new_status"] in ("warning", "on_battery", "low_battery"):
                 warning_lines.append(line)
             elif last["new_status"] == "online":
                 recovery_lines.append(line)
@@ -162,6 +166,19 @@ async def send_digest_emails():
         """
         await send_email(recipients, subject, body)
         await execute("DELETE FROM pending_notifications WHERE id = ANY($1::bigint[])", ids)
+
+# Lock sprecava da se periodicni digest i trenutni UPS flush preklope i
+# dvaput posalju iste pending_notifications redove (odluka 9.11.2026).
+_digest_lock = asyncio.Lock()
+
+
+async def send_digest_emails(tenant_id: str | None = None):
+    """Javni ulaz u digest. Bez argumenta = periodicni posao (svi tenanti);
+    sa tenant_id = trenutni flush (UPS baterijski dogadjaji)."""
+    async with _digest_lock:
+        await _send_digest_unlocked(only_tenant=tenant_id)
+
+
 def start():
     """Registruje periodicni digest posao -- poziva se iz main.py lifespan-a,
     isti obrazac kao monitor.start()/retention.start()/snmp.start()."""
@@ -176,7 +193,8 @@ def start():
 
 
 def _status_label(s: str) -> str:
-    return {"online": "ONLINE", "offline": "OFFLINE", "warning": "UPOZORENJE", "unknown": "NEPOZNATO"}.get(s, s)
+    return {"online": "ONLINE", "offline": "OFFLINE", "warning": "UPOZORENJE", "unknown": "NEPOZNATO",
+            "on_battery": "NA BATERIJI", "low_battery": "PRAZNA BATERIJA"}.get(s, s)
 
 
 async def notify_server_status(server: dict, old_status: str, new_status: str, metrics: dict | None = None):
@@ -285,6 +303,56 @@ async def notify_network_device_status(device: dict, old_status: str, new_status
         (device.get("last_error")[:300] if is_offline and device.get("last_error") else None),
     )
     return
+
+
+async def notify_ups_status(ups: dict, old_status: str, new_status: str):
+    """Poziva se iz nut.py pri potvrdjenoj promeni statusa UPS-a. Odvojeni
+    tenant toggle-i alert_ups_* (odluka 9.11.2026). Ulazak u bateriju i svaki
+    izlazak iz nje salju se ODMAH (pending + trenutni flush za taj tenant);
+    ostalo ide kroz periodicni digest."""
+    if old_status == new_status:
+        return
+
+    tenant = await fetchrow(
+        "SELECT alerts_enabled, alert_ups_on_battery, alert_ups_offline, "
+        "alert_ups_recovery, alert_ups_warning FROM tenants WHERE id=$1",
+        ups["tenant_id"]
+    )
+    if not tenant or not tenant["alerts_enabled"]:
+        return
+
+    battery = ("on_battery", "low_battery")
+    left_battery = old_status in battery and new_status not in battery
+    is_battery  = new_status in battery
+    is_offline  = new_status == "offline" and not left_battery
+    # izlazak iz baterije je UVEK oporavak (i kad je novi status warning, npr. RB)
+    is_recovery = left_battery or (new_status == "online" and old_status in ("warning", "offline"))
+    is_warning  = new_status == "warning" and not left_battery and old_status != "offline"
+
+    should_send = (
+        (is_battery  and tenant["alert_ups_on_battery"]) or
+        (is_offline  and tenant["alert_ups_offline"]) or
+        (is_recovery and tenant["alert_ups_recovery"]) or
+        (is_warning  and tenant["alert_ups_warning"])
+    )
+    if not should_send:
+        return
+
+    err = ups.get("last_error")
+    error_message = err[:300] if err and (is_offline or is_warning) else None
+    await execute(
+        """INSERT INTO pending_notifications
+             (tenant_id, resource_type, resource_id, resource_name, old_status, new_status,
+              error_message, cpu_percent, ram_percent, disk_percent)
+           VALUES ($1,'ups',$2,$3,$4,$5,$6,NULL,NULL,NULL)""",
+        ups["tenant_id"], ups["id"], ups["name"], old_status, new_status, error_message,
+    )
+
+    if is_battery or left_battery:
+        try:
+            await send_digest_emails(tenant_id=str(ups["tenant_id"]))
+        except Exception:
+            logger.exception("UPS: trenutno slanje alarma neuspesno -- ostaje za periodicni digest")
 
 
 async def notify_execution(execution_id: str):
