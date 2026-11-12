@@ -101,6 +101,69 @@ async def _rollup_server(server: dict) -> int:
     return n_buckets
 
 
+def _wavg(col: str) -> str:
+    """Ponderisan prosek za ON CONFLICT spajanje bucket-a, otporan na NULL
+    (UPS metrike poput battery_charge/runtime mogu biti NULL)."""
+    return (f"{col} = CASE WHEN r.{col} IS NULL THEN EXCLUDED.{col} "
+            f"WHEN EXCLUDED.{col} IS NULL THEN r.{col} "
+            f"ELSE (r.{col} * r.sample_count + EXCLUDED.{col} * EXCLUDED.sample_count) "
+            f"/ (r.sample_count + EXCLUDED.sample_count) END")
+
+
+_UPS_ROLLUP_SQL = f"""
+    INSERT INTO ups_metrics_rollup AS r
+        (ups_id, bucket_start, bucket_minutes, sample_count,
+         load_avg, load_min, load_max, charge_avg, charge_min, runtime_min_sec,
+         input_v_avg, input_v_min, input_v_max, output_v_avg, temp_avg, temp_max,
+         on_battery_samples)
+    SELECT
+        $1::uuid,
+        to_timestamp(floor(extract(epoch FROM collected_at) / $3) * $3),
+        $2,
+        COUNT(*),
+        AVG(load_percent), MIN(load_percent), MAX(load_percent),
+        AVG(battery_charge), MIN(battery_charge), MIN(battery_runtime_sec),
+        AVG(input_voltage), MIN(input_voltage), MAX(input_voltage),
+        AVG(output_voltage), AVG(temperature), MAX(temperature),
+        COUNT(*) FILTER (WHERE status IN ('on_battery', 'low_battery'))
+    FROM ups_metrics
+    WHERE ups_id = $1::uuid AND collected_at < $4
+    GROUP BY 2
+    ON CONFLICT (ups_id, bucket_start, bucket_minutes) DO UPDATE SET
+        {_wavg('load_avg')}, {_wavg('charge_avg')}, {_wavg('input_v_avg')},
+        {_wavg('output_v_avg')}, {_wavg('temp_avg')},
+        load_min = LEAST(r.load_min, EXCLUDED.load_min),
+        load_max = GREATEST(r.load_max, EXCLUDED.load_max),
+        charge_min = LEAST(r.charge_min, EXCLUDED.charge_min),
+        runtime_min_sec = LEAST(r.runtime_min_sec, EXCLUDED.runtime_min_sec),
+        input_v_min = LEAST(r.input_v_min, EXCLUDED.input_v_min),
+        input_v_max = GREATEST(r.input_v_max, EXCLUDED.input_v_max),
+        temp_max = GREATEST(r.temp_max, EXCLUDED.temp_max),
+        on_battery_samples = r.on_battery_samples + EXCLUDED.on_battery_samples,
+        sample_count = r.sample_count + EXCLUDED.sample_count
+"""
+
+
+async def _rollup_ups(ups: dict) -> int:
+    """Raw ups_metrics stariji od raw_retention_hours -> ups_metrics_rollup,
+    pa brisanje. Cutoff se racuna JEDNOM (isti za INSERT i DELETE)."""
+    uid        = ups["id"]
+    bucket_min = ups["rollup_bucket_minutes"]
+    cutoff     = datetime.now(timezone.utc) - timedelta(hours=ups["raw_retention_hours"])
+    rollup_cut = datetime.now(timezone.utc) - timedelta(days=ups["rollup_retention_days"])
+
+    result = await execute(_UPS_ROLLUP_SQL, uid, bucket_min, bucket_min * 60, cutoff)
+    try:
+        n_buckets = int(result.split()[-1])
+    except (ValueError, IndexError):
+        n_buckets = 0
+
+    if n_buckets:
+        await execute("DELETE FROM ups_metrics WHERE ups_id=$1 AND collected_at < $2", uid, cutoff)
+    await execute("DELETE FROM ups_metrics_rollup WHERE ups_id=$1 AND bucket_start < $2", uid, rollup_cut)
+    return n_buckets
+
+
 async def _rollup_network_device(device: dict) -> int:
     """Isto kao _rollup_server, ali za interface metrike mreznog uredjaja
     (preko svih njegovih interfejsa). in/out_errors i discards su DELTE
@@ -194,6 +257,24 @@ async def run_retention():
 
     if total_buckets:
         logger.info(f"Retention: agregirano {total_buckets} bucket-a preko {len(servers)} servera")
+
+    # --- UPS uredjaji -- PRE mreznih (mrezni blok ima return na gresku) ---
+    try:
+        ups_rows = await fetch(
+            "SELECT id, raw_retention_hours, rollup_bucket_minutes, rollup_retention_days "
+            "FROM ups_devices"
+        )
+    except Exception as e:
+        logger.error(f"Retention: greska dohvatanja UPS uredjaja: {e}")
+        ups_rows = []
+    ups_buckets = 0
+    for u in ups_rows:
+        try:
+            ups_buckets += await _rollup_ups(dict(u))
+        except Exception as e:
+            logger.error(f"Retention: greska za UPS {u['id']}: {e}")
+    if ups_buckets:
+        logger.info(f"Retention: agregirano {ups_buckets} UPS bucket-a preko {len(ups_rows)} UPS uredjaja")
 
     # --- mrezni uredjaji (interface metrike) -- svi, i neaktivni, da im podaci ne ostaju zauvek ---
     try:
