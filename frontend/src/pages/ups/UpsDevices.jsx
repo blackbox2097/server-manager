@@ -47,6 +47,17 @@ function fmtRuntime(sec) {
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}min` : `${m} min`;
 }
 
+// Isti izgled kao MeterBar (meter-bar/meter-fill), ali OBRNUTE boje:
+// kod baterije je visoka vrednost dobra, niska losa.
+function BatteryBar({ value }) {
+  const color = value < 20 ? 'bg-red-500' : value < 50 ? 'bg-yellow-500' : 'bg-green-500';
+  return (
+    <div className="meter-bar">
+      <div className={`meter-fill ${color}`} style={{ width: `${Math.max(0, Math.min(100, value || 0))}%` }} />
+    </div>
+  );
+}
+
 const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
   const ups = upsRef.current;
   const isEdit = !!ups?.id;
@@ -377,7 +388,14 @@ export default function UpsDevices() {
                           </div>
                         )}
                       </td>
-                      <td className="py-2.5 px-3 text-gray-300">{fmt(u.battery_charge, '%')}</td>
+                      <td className="py-2.5 px-3">
+                        {num(u.battery_charge) === null ? <span className="text-gray-600">—</span> : (
+                          <div className="w-24">
+                            <div className="flex justify-between text-xs text-gray-500 mb-1"><span></span><span>{Math.round(num(u.battery_charge))}%</span></div>
+                            <BatteryBar value={num(u.battery_charge)} />
+                          </div>
+                        )}
+                      </td>
                       <td className="py-2.5 px-3 text-gray-300">{fmtRuntime(u.battery_runtime_sec)}</td>
                       <td className="py-2.5 px-3 text-gray-300 whitespace-nowrap">
                         {fmt(u.input_voltage, '')} / {fmt(u.output_voltage, ' V')}
