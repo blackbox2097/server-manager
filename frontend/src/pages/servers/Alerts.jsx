@@ -17,6 +17,13 @@ const NETWORK_TRIGGERS = [
   { key: 'alertNetworkWarning',     dbKey: 'alert_network_warning',      label: 'Upozorenje na mrežnom uređaju' },
 ];
 
+const UPS_TRIGGERS = [
+  { key: 'alertUpsOnBattery',       dbKey: 'alert_ups_on_battery',       label: 'UPS pređe na bateriju ili je baterija skoro prazna (šalje se odmah)' },
+  { key: 'alertUpsRecovery',        dbKey: 'alert_ups_recovery',         label: 'UPS se oporavi — povratak struje šalje se odmah' },
+  { key: 'alertUpsOffline',         dbKey: 'alert_ups_offline',          label: 'UPS nedostupan (NUT server ne odgovara)' },
+  { key: 'alertUpsWarning',         dbKey: 'alert_ups_warning',          label: 'Upozorenje na UPS-u (zameni bateriju, preopterećenje, bypass)' },
+];
+
 const EXECUTION_TRIGGERS = [
   { key: 'alertOnExecutionFailure', dbKey: 'alert_on_execution_failure', label: 'Neuspešno izvršavanje skripte' },
   { key: 'alertOnExecutionReport',  dbKey: 'alert_on_execution_report',  label: 'Izveštaj posle SVAKOG izvršavanja skripte' },
@@ -135,6 +142,19 @@ export default function Alerts() {
       <div className="card space-y-3">
         <p className="text-sm font-medium text-gray-300">Mrežni uređaji — kada slati alarme</p>
         {NETWORK_TRIGGERS.map(t => (
+          <label key={t.key} className="flex items-center justify-between cursor-pointer py-1">
+            <span className="text-sm text-gray-400">{t.label}</span>
+            <input type="checkbox" className="accent-brand-500 w-4 h-4"
+              checked={settings?.[t.dbKey] || false}
+              disabled={!canManage || !settings?.alerts_enabled}
+              onChange={e => updateSetting(t.dbKey, t.key, e.target.checked)} />
+          </label>
+        ))}
+      </div>
+
+      <div className="card space-y-3">
+        <p className="text-sm font-medium text-gray-300">UPS — kada slati alarme</p>
+        {UPS_TRIGGERS.map(t => (
           <label key={t.key} className="flex items-center justify-between cursor-pointer py-1">
             <span className="text-sm text-gray-400">{t.label}</span>
             <input type="checkbox" className="accent-brand-500 w-4 h-4"

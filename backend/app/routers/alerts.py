@@ -17,6 +17,10 @@ class AlertSettingsUp(BaseModel):
     alertNetworkOffline:      bool | None = None
     alertNetworkRecovery:     bool | None = None
     alertNetworkWarning:      bool | None = None
+    alertUpsOnBattery:        bool | None = None
+    alertUpsOffline:          bool | None = None
+    alertUpsRecovery:         bool | None = None
+    alertUpsWarning:          bool | None = None
     alertOnExecutionFailure:  bool | None = None
     alertOnExecutionReport:   bool | None = None
 
@@ -33,6 +37,7 @@ async def get_alert_settings(tid: str, user=Depends(get_current_user)):
     row = await fetchrow(
         """SELECT alerts_enabled, alert_on_offline, alert_on_recovery, alert_on_warning,
                   alert_network_offline, alert_network_recovery, alert_network_warning,
+                  alert_ups_on_battery, alert_ups_offline, alert_ups_recovery, alert_ups_warning,
                   alert_on_execution_failure, alert_on_execution_report
            FROM tenants WHERE id=$1""", tid)
     if not row:
@@ -53,14 +58,20 @@ async def update_alert_settings(tid: str, body: AlertSettingsUp, user=Depends(ge
              alert_network_recovery     = COALESCE($6, alert_network_recovery),
              alert_network_warning      = COALESCE($7, alert_network_warning),
              alert_on_execution_failure = COALESCE($8, alert_on_execution_failure),
-             alert_on_execution_report  = COALESCE($9, alert_on_execution_report)
-           WHERE id=$10
+             alert_on_execution_report  = COALESCE($9, alert_on_execution_report),
+             alert_ups_on_battery       = COALESCE($10, alert_ups_on_battery),
+             alert_ups_offline          = COALESCE($11, alert_ups_offline),
+             alert_ups_recovery         = COALESCE($12, alert_ups_recovery),
+             alert_ups_warning          = COALESCE($13, alert_ups_warning)
+           WHERE id=$14
            RETURNING alerts_enabled, alert_on_offline, alert_on_recovery, alert_on_warning,
                      alert_network_offline, alert_network_recovery, alert_network_warning,
+                  alert_ups_on_battery, alert_ups_offline, alert_ups_recovery, alert_ups_warning,
                      alert_on_execution_failure, alert_on_execution_report""",
         body.alertsEnabled, body.alertOnOffline, body.alertOnRecovery, body.alertOnWarning,
         body.alertNetworkOffline, body.alertNetworkRecovery, body.alertNetworkWarning,
         body.alertOnExecutionFailure, body.alertOnExecutionReport,
+        body.alertUpsOnBattery, body.alertUpsOffline, body.alertUpsRecovery, body.alertUpsWarning,
         tid)
     if not row:
         raise HTTPException(404, "Tenant nije pronadjen")
