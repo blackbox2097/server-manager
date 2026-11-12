@@ -434,7 +434,7 @@ export default function UpsDevices() {
               <col style={{ width: 120 }} />  {/* Opterecenje */}
               <col style={{ width: 120 }} />  {/* Baterija */}
               <col style={{ width: 85 }} />   {/* Napon bat. */}
-              <col style={{ width: 85 }} />   {/* Runtime */}
+              <col style={{ width: 85 }} />   {/* Autonomija */}
               <col style={{ width: 120 }} />  {/* Ulaz / Izlaz */}
               <col style={{ width: 65 }} />   {/* Temp. */}
               <col />                         {/* Model -- ostatak prostora */}
@@ -443,7 +443,7 @@ export default function UpsDevices() {
             <thead>
               <tr className="border-b border-gray-800">
                 <TH></TH><TH>Naziv</TH><TH>Izvor</TH><TH>Status</TH><TH>Opterećenje</TH>
-                <TH>Baterija</TH><TH>Napon bat.</TH><TH>Runtime</TH><TH>Ulaz / Izlaz</TH><TH>Temp.</TH><TH>Model</TH><TH></TH>
+                <TH>Baterija</TH><TH>Napon bat.</TH><TH><span title="Procena rada na bateriji pri trenutnom opterećenju">Autonomija</span></TH><TH>Ulaz / Izlaz</TH><TH>Temp.</TH><TH>Model</TH><TH></TH>
               </tr>
             </thead>
             <tbody>
