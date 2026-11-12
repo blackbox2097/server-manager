@@ -117,6 +117,19 @@ def _num(vars_: dict[str, str], key: str) -> float | None:
         return None
 
 
+def _battery_voltage_total(vars_: dict[str, str]) -> float | None:
+    """Neki drajveri (nutdrv_qx/Megatec, npr. BORRI) javljaju napon PO CELIJI
+    (~2.2 V) ili po jednoj 12 V bateriji, a ne ceo string. Ako je izmereni napon
+    vise od 3x manji od nominalnog, preracunaj na ukupan (celija ~2 V,
+    baterija ~12 V). Inace vrati izmereno. Sirova vrednost ostaje u raw_vars."""
+    v = _num(vars_, "battery.voltage")
+    nom = _num(vars_, "battery.voltage.nominal")
+    if v is None or not nom or v <= 0 or nom / v < 3:
+        return v
+    n = round(nom / (2.0 if v < 3 else 12.0))
+    return round(v * n, 2) if n > 1 else v
+
+
 def extract_metrics(vars_: dict[str, str]) -> dict:
     tokens = set((vars_.get("ups.status") or "").split())
     charge = _num(vars_, "battery.charge")
@@ -128,7 +141,7 @@ def extract_metrics(vars_: dict[str, str]) -> dict:
     return {
         "battery_charge":      charge,
         "battery_runtime_sec": int(runtime) if runtime is not None else None,
-        "battery_voltage":     _num(vars_, "battery.voltage"),
+        "battery_voltage":     _battery_voltage_total(vars_),
         "load_percent":        _num(vars_, "ups.load"),
         "input_voltage":       _num(vars_, "input.voltage"),
         "output_voltage":      _num(vars_, "output.voltage"),
