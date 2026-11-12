@@ -58,17 +58,22 @@ function BatteryBar({ value }) {
   );
 }
 
+const SOURCE_DEFAULTS = {
+  nut:       { port: 3493,  deviceName: 'ups' },
+  viewpower: { port: 15178, deviceName: '' },
+};
+
 const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
   const ups = upsRef.current;
   const isEdit = !!ups?.id;
 
   const [form, setForm] = useState(() => ({
-    name: '', description: '', location: '', host: '', port: 3493, deviceName: 'ups',
+    name: '', description: '', location: '', source: 'nut', host: '', port: 3493, deviceName: 'ups',
     username: '', password: '',
     pollIntervalSec: 60, rawRetentionHours: 72, rollupBucketMinutes: 5, rollupRetentionDays: 90,
     ...(isEdit ? {
       name: ups.name, description: ups.description || '', location: ups.location || '',
-      host: ups.host, port: ups.port, deviceName: ups.device_name,
+      source: ups.source || 'nut', host: ups.host, port: ups.port, deviceName: ups.device_name,
       username: ups.username || '',
       pollIntervalSec: ups.poll_interval_sec,
       rawRetentionHours: ups.raw_retention_hours ?? 72,
@@ -81,15 +86,49 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
   const [testing, setTesting] = useState(false);
   const [testRes, setTestRes] = useState(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverMsg, setDiscoverMsg] = useState(null);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const isVP = form.source === 'viewpower';
+  // Promena izvora menja default-e SAMO ako korisnik nije sam uneo drugu vrednost
+  const changeSource = (src) => {
+    setTestRes(null);
+    setDiscoverMsg(null);
+    setForm(f => {
+      const prev = SOURCE_DEFAULTS[f.source] || SOURCE_DEFAULTS.nut;
+      const next = SOURCE_DEFAULTS[src];
+      return {
+        ...f, source: src,
+        port: f.port === prev.port ? next.port : f.port,
+        deviceName: f.deviceName === prev.deviceName ? next.deviceName : f.deviceName,
+      };
+    });
+  };
+
+  const handleDiscover = async () => {
+    if (!form.host) { setDiscoverMsg({ error: true, text: 'Prvo unesi IP ViewPower računara' }); return; }
+    setDiscovering(true); setDiscoverMsg(null);
+    try {
+      const { data } = await api.post(`/tenants/${tenantId}/ups/discover`,
+        { source: form.source, host: form.host, port: form.port });
+      const d = data.devices[0];
+      set('deviceName', d.deviceName);
+      setDiscoverMsg({ text: [`Pronađen: ${d.deviceName}`, d.serial && `S/N ${d.serial}`, d.workMode, data.version]
+        .filter(Boolean).join(' · ') });
+    } catch (err) {
+      setDiscoverMsg({ error: true, text: err.response?.data?.detail || 'Autodetekcija neuspešna' });
+    } finally {
+      setDiscovering(false);
+    }
+  };
 
   const handleTest = async () => {
-    if (!form.host) { setTestRes({ error: 'Unesi NUT server' }); return; }
+    if (!form.host) { setTestRes({ error: 'Unesi adresu servera' }); return; }
     setTesting(true); setTestRes(null);
     try {
       const { data } = await api.post(`/tenants/${tenantId}/ups/test-connection`, {
-        host: form.host, port: form.port, deviceName: form.deviceName,
+        source: form.source, host: form.host, port: form.port, deviceName: form.deviceName,
         username: form.username || undefined, password: form.password || undefined,
       });
       setTestRes(data);
@@ -101,7 +140,7 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.host) { setError('Naziv i NUT server su obavezni'); return; }
+    if (!form.name || !form.host || !form.deviceName) { setError(isVP ? 'Naziv, ViewPower računar i portName su obavezni' : 'Naziv, NUT server i ime UPS-a su obavezni'); return; }
     setSaving(true); setError('');
     try {
       const payload = { ...form, password: form.password || undefined };
@@ -130,29 +169,50 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
       <F label="Opis">
         <input className="input" value={form.description} onChange={e => set('description', e.target.value)} />
       </F>
+      <F label="Izvor podataka">
+        <select className="input" value={form.source} onChange={e => changeSource(e.target.value)}>
+          <option value="nut">NUT server (Synology / QNAP / Linux)</option>
+          <option value="viewpower">ViewPower (Windows računar sa UPS-om)</option>
+        </select>
+      </F>
       <div className="grid grid-cols-3 gap-3">
         <div className="col-span-2">
-          <F label="NUT server (IP ili hostname) *">
+          <F label={isVP ? 'ViewPower računar (IP ili hostname) *' : 'NUT server (IP ili hostname) *'}>
             <input className="input" value={form.host} onChange={e => set('host', e.target.value)} placeholder="192.168.1.10" />
           </F>
         </div>
         <F label="Port">
           <input className="input" type="number" value={form.port}
-            onChange={e => set('port', parseInt(e.target.value) || 3493)} />
+            onChange={e => set('port', parseInt(e.target.value) || SOURCE_DEFAULTS[form.source].port)} />
         </F>
       </div>
-      <div className="grid grid-cols-3 gap-3">
-        <F label="Ime UPS-a na serveru">
-          <input className="input" value={form.deviceName} onChange={e => set('deviceName', e.target.value)} />
+      {isVP ? (
+        <F label="portName uređaja u ViewPower-u *">
+          <div className="flex gap-2">
+            <input className="input flex-1" value={form.deviceName} onChange={e => set('deviceName', e.target.value)}
+              placeholder="klikni Pronađi ili unesi ručno (npr. USB160CD9D7)" />
+            <button type="button" className="btn btn-secondary whitespace-nowrap" onClick={handleDiscover} disabled={discovering}>
+              {discovering ? <Spinner size={14} /> : <Search size={16} />} Pronađi
+            </button>
+          </div>
+          {discoverMsg && (
+            <p className={`text-xs mt-1 ${discoverMsg.error ? 'text-red-400' : 'text-gray-400'}`}>{discoverMsg.text}</p>
+          )}
         </F>
-        <F label="Korisnik (opciono)">
-          <input className="input" value={form.username} onChange={e => set('username', e.target.value)} />
-        </F>
-        <F label="Lozinka (opciono)">
-          <input className="input" type="password" value={form.password} onChange={e => set('password', e.target.value)}
-            placeholder={isEdit && ups.has_password ? '(prazno = zadrži staru)' : ''} />
-        </F>
-      </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-3">
+          <F label="Ime UPS-a na serveru *">
+            <input className="input" value={form.deviceName} onChange={e => set('deviceName', e.target.value)} />
+          </F>
+          <F label="Korisnik (opciono)">
+            <input className="input" value={form.username} onChange={e => set('username', e.target.value)} />
+          </F>
+          <F label="Lozinka (opciono)">
+            <input className="input" type="password" value={form.password} onChange={e => set('password', e.target.value)}
+              placeholder={isEdit && ups.has_password ? '(prazno = zadrži staru)' : ''} />
+          </F>
+        </div>
+      )}
 
       <div className="flex items-center gap-3 flex-wrap">
         <button type="button" className="btn btn-secondary" onClick={handleTest} disabled={testing}>
@@ -337,7 +397,7 @@ export default function UpsDevices() {
 
       {items.length === 0 ? (
         <Empty icon={BatteryCharging} title="Nema UPS uređaja"
-          subtitle="Dodaj UPS koji prati NUT server (npr. Synology/QNAP NAS ili Linux server)"
+          subtitle="Dodaj UPS preko NUT servera (Synology/QNAP/Linux) ili ViewPower-a (Windows)"
           action={canManage && <button className="btn btn-primary" onClick={openAdd}><Plus size={16} /> Dodaj UPS</button>} />
       ) : filtered.length === 0 ? (
         <Empty icon={Search} title="Nema rezultata" subtitle={q ? `Ništa ne odgovara pretrazi "${searchQuery}"` : 'Nijedan UPS ne odgovara izabranom filteru'} />
@@ -346,7 +406,7 @@ export default function UpsDevices() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-800">
-                <TH></TH><TH>Naziv</TH><TH>NUT server</TH><TH>Status</TH><TH>Opterećenje</TH>
+                <TH></TH><TH>Naziv</TH><TH>Izvor</TH><TH>Status</TH><TH>Opterećenje</TH>
                 <TH>Baterija</TH><TH>Runtime</TH><TH>Ulaz / Izlaz</TH><TH>Temp.</TH><TH>Model</TH><TH></TH>
               </tr>
             </thead>
@@ -369,7 +429,7 @@ export default function UpsDevices() {
                       </td>
                       <td className="py-2.5 px-3 text-gray-400 text-xs">
                         <div>{u.host}:{u.port}</div>
-                        <div className="text-gray-600">{u.device_name}</div>
+                        <div className="text-gray-600">{u.source === 'viewpower' ? 'ViewPower' : 'NUT'} · {u.device_name}</div>
                       </td>
                       <td className="py-2.5 px-3">
                         <div className="flex items-center gap-1.5 flex-wrap">

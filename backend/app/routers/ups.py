@@ -19,6 +19,7 @@ def _ip(req: Request) -> str | None: return req.client.host if req.client else N
 class UpsIn(BaseModel):
     name: str
     host: str
+    source: str = "nut"
     description: str | None = None
     location: str | None = None
     port: int = 3493
@@ -52,8 +53,17 @@ class UpsIn(BaseModel):
         return v
 
 
+    @field_validator("source")
+    @classmethod
+    def check_source(cls, v):
+        if v not in ("nut", "viewpower"):
+            raise ValueError("Izvor mora biti nut ili viewpower")
+        return v
+
+
 class UpsTestIn(BaseModel):
     host: str
+    source: str = "nut"
     port: int = 3493
     deviceName: str = "ups"
     username: str | None = None
@@ -61,7 +71,7 @@ class UpsTestIn(BaseModel):
 
 
 _LIST_SELECT = """
-    SELECT u.id, u.name, u.description, u.location, u.host, u.port, u.device_name,
+    SELECT u.id, u.name, u.description, u.location, u.source, u.host, u.port, u.device_name,
            u.username, (u.password_enc IS NOT NULL) AS has_password,
            u.poll_interval_sec, u.status, u.ups_status_raw, u.replace_battery,
            u.manufacturer, u.model, u.firmware, u.ups_type,
@@ -88,10 +98,19 @@ async def list_ups(tid: str, user=Depends(get_current_user)):
 async def test_ups_connection(tid: str, body: UpsTestIn, user=Depends(get_current_user)):
     """Proba NUT konekcije PRE cuvanja -- podaci direktno iz forme."""
     await check_tenant_perm(tid, user, "perm_ups_manage")
-    from app.services.nut import nut_list_vars, derive_status
+    host, dev = body.host.strip(), body.deviceName.strip()
     try:
-        v = await nut_list_vars(body.host.strip(), body.port, body.deviceName.strip(),
-                                _n(body.username), _n(body.password))
+        if body.source == "viewpower":
+            from app.services.viewpower import fetch as vp_fetch
+            r = await vp_fetch({"host": host, "port": body.port, "device_name": dev})
+            return {
+                "ok": True, "varCount": len(r["raw_vars"]), "status": r["status"],
+                "reason": r["reason"], "replaceBattery": r["replace_battery"],
+                "upsStatusRaw": r["status_raw"], "manufacturer": None,
+                "model": r["raw_vars"].get("viewpower.version"),
+            }
+        from app.services.nut import nut_list_vars, derive_status
+        v = await nut_list_vars(host, body.port, dev, _n(body.username), _n(body.password))
     except Exception as e:
         raise HTTPException(502, str(e))
     status, replace_battery, reason = derive_status(v)
@@ -100,6 +119,39 @@ async def test_ups_connection(tid: str, body: UpsTestIn, user=Depends(get_curren
         "replaceBattery": replace_battery, "upsStatusRaw": v.get("ups.status"),
         "manufacturer": v.get("device.mfr") or v.get("ups.mfr"),
         "model": v.get("device.model") or v.get("ups.model"),
+    }
+
+
+class UpsDiscoverIn(BaseModel):
+    host: str
+    port: int = 15178
+    source: str = "viewpower"
+
+
+@router.post("/{tid}/ups/discover")
+async def discover_ups(tid: str, body: UpsDiscoverIn, user=Depends(get_current_user)):
+    """Autodetekcija uredjaja na izvoru. ViewPower: reqMonitorData BEZ portName
+    vraca podatke trenutnog/prvog UPS-a i popunjava portName (provereno
+    12.11.2026, ViewPowerHTML V1.04-25210). Vise UPS-ova po instanci -- za
+    sada samo prvi; odgovor je lista da bi se kasnije prosirio."""
+    await check_tenant_perm(tid, user, "perm_ups_manage")
+    if body.source != "viewpower":
+        raise HTTPException(400, "Autodetekcija je trenutno podrzana samo za ViewPower")
+    from app.services.viewpower import vp_monitor_data
+    try:
+        d = await vp_monitor_data(body.host.strip(), body.port, "")
+    except Exception as e:
+        raise HTTPException(502, str(e))
+    wi = d.get("workInfo") or {}
+    pn = str(d.get("portName") or "").strip()
+    if not pn:
+        raise HTTPException(404, "ViewPower nije vratio nijedan UPS")
+    return {
+        "version": d.get("version"), "hostName": d.get("hostName"),
+        "devices": [{
+            "deviceName": pn, "serial": wi.get("deviceId") or None,
+            "workMode": wi.get("workMode") or None, "type": wi.get("morphological") or None,
+        }],
     }
 
 
@@ -123,14 +175,14 @@ async def create_ups(tid: str, req: Request, body: UpsIn, user=Depends(get_curre
         """INSERT INTO ups_devices
              (tenant_id, name, description, location, host, port, device_name,
               username, password_enc, poll_interval_sec, raw_retention_hours,
-              rollup_bucket_minutes, rollup_retention_days, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+              rollup_bucket_minutes, rollup_retention_days, created_by, source)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
            RETURNING id, name, host, status, created_at""",
         tid, body.name, _n(body.description), _n(body.location), body.host, body.port,
         body.deviceName, _n(body.username),
         encrypt(body.password) if body.password else None,
         body.pollIntervalSec, body.rawRetentionHours, body.rollupBucketMinutes,
-        body.rollupRetentionDays, user["id"])
+        body.rollupRetentionDays, user["id"], body.source)
     await log_event("ups.create", user_id=user["id"], username=user.get("username"),
                     tenant_id=tid, ip_address=_ip(req), resource_type="ups",
                     resource_id=str(row["id"]), details={"name": body.name, "host": body.host})
@@ -147,14 +199,14 @@ async def update_ups(tid: str, uid: str, req: Request, body: UpsIn, user=Depends
              name=$1, description=$2, location=$3, host=$4, port=$5, device_name=$6,
              username=$7, password_enc = COALESCE($8, password_enc),
              poll_interval_sec=$9, raw_retention_hours=$10, rollup_bucket_minutes=$11,
-             rollup_retention_days=$12, updated_at=NOW()
+             rollup_retention_days=$12, source=$15, updated_at=NOW()
            WHERE id=$13 AND tenant_id=$14 AND active=true
            RETURNING id, name, host, status""",
         body.name, _n(body.description), _n(body.location), body.host, body.port,
         body.deviceName, _n(body.username),
         encrypt(body.password) if body.password else None,
         body.pollIntervalSec, body.rawRetentionHours, body.rollupBucketMinutes,
-        body.rollupRetentionDays, uid, tid)
+        body.rollupRetentionDays, uid, tid, body.source)
     if not row:
         raise HTTPException(404, "UPS nije pronadjen")
     await log_event("ups.update", user_id=user["id"], username=user.get("username"),
