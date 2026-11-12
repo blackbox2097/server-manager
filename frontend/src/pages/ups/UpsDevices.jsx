@@ -425,7 +425,21 @@ export default function UpsDevices() {
         <Empty icon={Search} title="Nema rezultata" subtitle={q ? `Ništa ne odgovara pretrazi "${searchQuery}"` : 'Nijedan UPS ne odgovara izabranom filteru'} />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm table-fixed min-w-[1400px]">
+            <colgroup>
+              <col style={{ width: 28 }} />   {/* chevron */}
+              <col />                         {/* Naziv -- ostatak prostora */}
+              <col style={{ width: 150 }} />  {/* Izvor */}
+              <col style={{ width: 150 }} />  {/* Status */}
+              <col style={{ width: 120 }} />  {/* Opterecenje */}
+              <col style={{ width: 120 }} />  {/* Baterija */}
+              <col style={{ width: 85 }} />   {/* Napon bat. */}
+              <col style={{ width: 85 }} />   {/* Runtime */}
+              <col style={{ width: 120 }} />  {/* Ulaz / Izlaz */}
+              <col style={{ width: 65 }} />   {/* Temp. */}
+              <col style={{ width: 160 }} />  {/* Model */}
+              <col style={{ width: 100 }} />  {/* akcije */}
+            </colgroup>
             <thead>
               <tr className="border-b border-gray-800">
                 <TH></TH><TH>Naziv</TH><TH>Izvor</TH><TH>Status</TH><TH>Opterećenje</TH>
@@ -444,14 +458,14 @@ export default function UpsDevices() {
                         {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       </td>
                       <td className="py-2.5 px-3">
-                        <div className="text-gray-200 font-medium">{u.name}</div>
+                        <div className="text-gray-200 font-medium truncate" title={u.name}>{u.name}</div>
                         {(u.location || u.description) && (
-                          <div className="text-xs text-gray-500">{[u.location, u.description].filter(Boolean).join(' · ')}</div>
+                          <div className="text-xs text-gray-500 truncate" title={[u.location, u.description].filter(Boolean).join(' · ')}>{[u.location, u.description].filter(Boolean).join(' · ')}</div>
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-gray-400 text-xs">
-                        <div>{u.host}:{u.port}</div>
-                        <div className="text-gray-600">{u.source === 'viewpower' ? 'ViewPower' : 'NUT'} · {u.device_name}</div>
+                        <div className="truncate" title={`${u.host}:${u.port}`}>{u.host}:{u.port}</div>
+                        <div className="text-gray-600 truncate" title={u.device_name}>{u.source === 'viewpower' ? 'ViewPower' : 'NUT'} · {u.device_name}</div>
                       </td>
                       <td className="py-2.5 px-3">
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -459,7 +473,7 @@ export default function UpsDevices() {
                           {u.replace_battery && <span className="badge-orange">Zameni bateriju</span>}
                         </div>
                         {u.status !== 'online' && u.last_error && (
-                          <div className="text-xs text-gray-500 mt-0.5 max-w-[220px] truncate" title={u.last_error}>{u.last_error}</div>
+                          <div className="text-xs text-gray-500 mt-0.5 truncate" title={u.last_error}>{u.last_error}</div>
                         )}
                       </td>
                       <td className="py-2.5 px-3">
@@ -484,7 +498,7 @@ export default function UpsDevices() {
                         {fmt(u.input_voltage, '')} / {fmt(u.output_voltage, ' V')}
                       </td>
                       <td className="py-2.5 px-3 text-gray-300">{fmt(u.temperature, '°C', 1)}</td>
-                      <td className="py-2.5 px-3 text-xs text-gray-400">
+                      <td className="py-2.5 px-3 text-xs text-gray-400 truncate" title={[u.manufacturer, u.model].filter(Boolean).join(' ')}>
                         {[u.manufacturer, u.model].filter(Boolean).join(' ') || '—'}
                       </td>
                       <td className="py-2.5 px-3" onClick={e => e.stopPropagation()}>
