@@ -425,7 +425,7 @@ export default function UpsDevices() {
         <Empty icon={Search} title="Nema rezultata" subtitle={q ? `Ništa ne odgovara pretrazi "${searchQuery}"` : 'Nijedan UPS ne odgovara izabranom filteru'} />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm table-fixed min-w-[1550px]">
+          <table className="w-full text-sm table-fixed min-w-[1575px]">
             <colgroup>
               <col style={{ width: 28 }} />   {/* chevron */}
               <col style={{ width: 340 }} />  {/* Naziv */}
@@ -434,7 +434,7 @@ export default function UpsDevices() {
               <col style={{ width: 120 }} />  {/* Opterecenje */}
               <col style={{ width: 120 }} />  {/* Baterija */}
               <col style={{ width: 85 }} />   {/* Napon bat. */}
-              <col style={{ width: 85 }} />   {/* Autonomija */}
+              <col style={{ width: 110 }} />  {/* Autonomija */}
               <col style={{ width: 120 }} />  {/* Ulaz / Izlaz */}
               <col style={{ width: 65 }} />   {/* Temp. */}
               <col />                         {/* Model -- ostatak prostora */}
