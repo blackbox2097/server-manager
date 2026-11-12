@@ -271,8 +271,6 @@ export default function Dashboard() {
       });
     });
 
-    if (accessToken) ws.connect(accessToken);
-
     const unsubUps = ws.on('ups_status', () => {
       api.get('/dashboard/ups-stats').then(r => setUpsStats(r.data)).catch(() => {});
     });
