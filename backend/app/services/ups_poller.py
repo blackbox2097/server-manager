@@ -34,8 +34,8 @@ _status_pending: dict[str, dict] = {}
 
 def _adapters() -> dict:
     """Lenji import -- adapteri ne smeju da uvoze ups_poller na nivou modula."""
-    from app.services import nut
-    return {"nut": nut.fetch}
+    from app.services import nut, viewpower
+    return {"nut": nut.fetch, "viewpower": viewpower.fetch}
 
 
 def _confirm_status(ups_id: str, old_status: str | None, raw_status: str) -> str | None:
