@@ -25,7 +25,8 @@ import Automation from './pages/automation/Automation';
 import NetworkDevices from './pages/network/NetworkDevices';
 import UpsDevices from './pages/ups/UpsDevices';
 import DeviceModels from './pages/rack/DeviceModels';
-import Rooms from './pages/infra/Rooms';
+import Sites from './pages/infra/Sites';
+import Site from './pages/infra/Site';
 import RoomView from './pages/infra/RoomView';
 import StatusOverview from './pages/dashboard/StatusOverview';
 
@@ -75,7 +76,8 @@ export default function App() {
       <Route path="/network-devices" element={<Page component={NetworkDevices} />} />
       <Route path="/ups" element={<Page component={UpsDevices} />} />
       <Route path="/admin/device-models" element={<Page component={DeviceModels} superadminOnly />} />
-      <Route path="/infra" element={<Page component={Rooms} />} />
+      <Route path="/infra" element={<Page component={Sites} />} />
+      <Route path="/infra/sites/:siteId" element={<Page component={Site} />} />
       <Route path="/infra/rooms/:roomId" element={<Page component={RoomView} />} />
       <Route path="/status-overview/:type" element={<Page component={StatusOverview} />} />
       <Route path="*"              element={<Navigate to="/dashboard" replace />} />

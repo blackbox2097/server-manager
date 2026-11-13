@@ -1,5 +1,5 @@
 // src/pages/infra/RoomView.jsx
-// Prikaz jedne lokacije: rackovi jedan pored drugog, uredjaji crtani iz
+// Prikaz jedne prostorije: rackovi jedan pored drugog, uredjaji crtani iz
 // biblioteke modela, drag & drop po U pozicijama (i izmedju rackova), traka
 // "bez mesta u racku", panel izabranog uredjaja sa zivim stanjem portova.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -11,7 +11,7 @@ import { Modal, ConfirmDialog, Alert, Spinner } from '../../components/ui';
 import Faceplate, { STATUS_LED } from '../../components/rack/Faceplate';
 import { loadModelList, loadModel, mapInterfaces, portStates as computePortStates } from '../../components/rack/deviceModels';
 import PortStrip, { STATE_LABEL, STRIP_CLS, STRIP_HIDDEN } from '../../components/rack/PortStrip';
-import { RoomForm } from './Rooms';
+import { RoomForm } from './Site';
 import { PortDetail, CableDialog, indexCables, cableMarks } from './Cabling';
 
 const ROW_H = 46;                                    // px po 1U u normalnom prikazu
@@ -168,14 +168,26 @@ function RackColumn({ rack, devices, models, canManage, selectedId, onSelect, on
 }
 
 // ── forme ───────────────────────────────────────────────────────────────────
-function RackForm({ open, rack, roomId, tenantId, onClose, onSaved }) {
+function RoomSelect({ rooms, value, onChange }) {
+  const bySite = {};
+  (rooms || []).forEach(r => { (bySite[r.site_name] ||= []).push(r); });
+  return (
+    <select className="input" value={value} onChange={e => onChange(e.target.value)}>
+      {Object.entries(bySite).map(([s, rs]) => (
+        <optgroup key={s} label={s}>{rs.map(r => <option key={r.id} value={r.id}>{r.name}{r.floor ? ` (${r.floor})` : ''}</option>)}</optgroup>
+      ))}
+    </select>
+  );
+}
+
+function RackForm({ open, rack, roomId, tenantId, rooms, onClose, onSaved }) {
   const [f, setF] = useState({});
   const [err, setErr] = useState('');
   useEffect(() => {
-    if (open) { setF({ name: rack?.name || '', heightU: rack?.height_u || 42, unitsFromTop: !!rack?.units_from_top, notes: rack?.notes || '' }); setErr(''); }
-  }, [open, rack]);
+    if (open) { setF({ name: rack?.name || '', heightU: rack?.height_u || 42, unitsFromTop: !!rack?.units_from_top, notes: rack?.notes || '', roomId }); setErr(''); }
+  }, [open, rack, roomId]);
   const save = async () => {
-    const body = { ...f, roomId, heightU: Number(f.heightU) };
+    const body = { ...f, roomId: f.roomId || roomId, heightU: Number(f.heightU) };
     try {
       if (rack?.id) await api.put(`/tenants/${tenantId}/infra/racks/${rack.id}`, body);
       else await api.post(`/tenants/${tenantId}/infra/racks`, body);
@@ -192,6 +204,12 @@ function RackForm({ open, rack, roomId, tenantId, onClose, onSaved }) {
           <input className="input" value={f.name || ''} onChange={e => setF(p => ({ ...p, name: e.target.value }))} placeholder="Rack 1-1" autoFocus /></div>
         <div><label className="label">Visina (U)</label>
           <input className="input w-32" type="number" min={1} max={60} value={f.heightU || ''} onChange={e => setF(p => ({ ...p, heightU: e.target.value }))} /></div>
+        {rack?.id && rooms?.length > 1 && (
+          <div><label className="label">Prostorija</label>
+            <RoomSelect rooms={rooms} value={f.roomId || roomId} onChange={v => setF(p => ({ ...p, roomId: v }))} />
+            {f.roomId && f.roomId !== roomId && <p className="text-xs text-yellow-400 mt-1">Rack prelazi u drugu prostoriju zajedno sa uređajima i njihovim kablovima.</p>}
+          </div>
+        )}
         <label className="flex items-center gap-2 text-sm text-gray-300">
           <input type="checkbox" checked={!!f.unitsFromTop} onChange={e => setF(p => ({ ...p, unitsFromTop: e.target.checked }))} />
           U1 je na vrhu (kako je odštampano na racku)
@@ -238,7 +256,7 @@ function ModelTile({ m, full, active, onClick }) {
   );
 }
 
-function DeviceForm({ open, device, preset, room, racks, devices, tenantId, modelList, models, onClose, onSaved }) {
+function DeviceForm({ open, device, preset, room, rooms, racks, devices, tenantId, modelList, models, onClose, onSaved }) {
   const [kind, setKind] = useState('passive');     // passive | monitoring | other (samo pri dodavanju)
   const [f, setF] = useState({});
   const [cands, setCands] = useState(null);
@@ -254,7 +272,7 @@ function DeviceForm({ open, device, preset, room, racks, devices, tenantId, mode
     const link = device?.network_device_id ? `network:${device.network_device_id}`
       : device?.server_id ? `server:${device.server_id}` : device?.ups_id ? `ups:${device.ups_id}` : '';
     setF({ name: device?.name || '', modelId: device?.model_id || '', heightU: device?.height_u || 1,
-           serialNumber: device?.serial_number || '', notes: device?.notes || '', link,
+           serialNumber: device?.serial_number || '', notes: device?.notes || '', link, roomId: room.id,
            rackId: preset?.rackId ?? (device ? (device.rack_id || '') : (racks[0]?.id || '')),
            pos: preset?.position ?? device?.rack_position ?? null });
     api.get(`/tenants/${tenantId}/infra/link-candidates`).then(r => setCands(r.data)).catch(() => setCands({ network: [], servers: [], ups: [] }));
@@ -286,19 +304,20 @@ function DeviceForm({ open, device, preset, room, racks, devices, tenantId, mode
     if (!f.name?.trim()) { setErr('Naziv je obavezan'); return; }
     const [lk, id] = (f.link || ':').split(':');
     const body = {
-      name: f.name, roomId: room.id, modelId: f.modelId || null,
+      name: f.name, roomId: f.roomId || room.id, modelId: f.modelId || null,
       heightU: f.modelId ? null : Number(f.heightU) || 1,
       serialNumber: f.serialNumber, notes: f.notes,
       networkDeviceId: lk === 'network' ? id : null, serverId: lk === 'server' ? id : null, upsId: lk === 'ups' ? id : null,
     };
-    const wantRack = rackable && f.rackId ? f.rackId : null;
+    const otherRoom = isEdit && f.roomId && f.roomId !== room.id;
+    const wantRack = !otherRoom && rackable && f.rackId ? f.rackId : null;
     const wantPos = wantRack ? f.pos : null;
     if (wantRack && !wantPos) { setErr('Izaberi poziciju u racku (ili "van racka")'); return; }
     setSaving(true); setErr('');
     try {
       if (isEdit) {
         const D = `/tenants/${tenantId}/infra/devices/${device.id}`;
-        const moved = (device.rack_id || null) !== wantRack || (device.rack_position || null) !== wantPos;
+        const moved = !otherRoom && ((device.rack_id || null) !== wantRack || (device.rack_position || null) !== wantPos);
         if (moved && device.rack_id) await api.patch(`${D}/place`, { rackId: null, position: null });
         await api.put(D, body);
         if (moved && wantRack) await api.patch(`${D}/place`, { rackId: wantRack, position: wantPos });
@@ -372,7 +391,9 @@ function DeviceForm({ open, device, preset, room, racks, devices, tenantId, mode
   const placeBlock = (
     <div className="flex items-center gap-2 flex-1 min-w-0 mr-4">
       <span className="text-sm text-gray-400 flex-shrink-0">Mesto:</span>
-      {!rackable ? (
+      {isEdit && f.roomId && f.roomId !== room.id ? (
+        <span className="text-sm text-yellow-400">prelazi u drugu prostoriju, van racka</span>
+      ) : !rackable ? (
         <span className="text-sm text-gray-400">ovaj model ne ide u rack — biće van racka</span>
       ) : (<>
         <select className="input w-64" value={f.rackId || ''} onChange={e => setF(p => ({ ...p, rackId: e.target.value, pos: null }))}>
@@ -397,6 +418,8 @@ function DeviceForm({ open, device, preset, room, racks, devices, tenantId, mode
       {!f.modelId && <div><label className="label">Visina (U)</label>
         <input className="input" type="number" min={1} max={60} value={f.heightU || 1} onChange={e => setF(p => ({ ...p, heightU: e.target.value }))} /></div>}
       {isEdit && <div className="col-span-2"><label className="label">Povezan sa monitoringom</label>{linkSelect}</div>}
+      {isEdit && rooms?.length > 1 && <div className="col-span-2"><label className="label">Prostorija</label>
+        <RoomSelect rooms={rooms} value={f.roomId || room.id} onChange={v => setF(p => ({ ...p, roomId: v }))} /></div>}
       <div><label className="label">Serijski broj</label>
         <input className="input" value={f.serialNumber || ''} onChange={e => setF(p => ({ ...p, serialNumber: e.target.value }))} /></div>
       <div className="col-span-2"><label className="label">Napomena</label>
@@ -638,6 +661,7 @@ export default function RoomView() {
   const [selPort, setSelPort] = useState(null);
   const [portStates, setPortStates] = useState({});
   const [cabling, setCabling] = useState({ ports: {}, cables: [] });
+  const [allRooms, setAllRooms] = useState([]);
   const [trace, setTrace] = useState(null);
   const [cableDlg, setCableDlg] = useState({ open: false });
   // Uvecan prikaz racka (kartice uredjaja sa trakama portova)
@@ -686,6 +710,9 @@ export default function RoomView() {
     setSelectedId(st?.dev || null); setSelPort(st?.port || null);
   }, [roomId, location.key]);  // eslint-disable-line
   useEffect(() => { loadModelList().then(setModelList).catch(() => {}); }, []);
+  useEffect(() => {
+    if (tenantId) api.get(`/tenants/${tenantId}/infra/rooms`).then(r => setAllRooms(r.data)).catch(() => {});
+  }, [tenantId, roomId]);
   // promena tenanta -- lokacija pripada drugom tenantu
   useEffect(() => { if (firstTenant.current && tenantId !== firstTenant.current) navigate('/infra'); }, [tenantId, navigate]);
 
@@ -799,12 +826,17 @@ export default function RoomView() {
     <div className="space-y-4">
       <div className="flex justify-between items-center sticky top-0 z-10 bg-gray-950 py-2 border-b border-gray-800/50">
         <div className="flex items-center gap-3 min-w-0">
-          <Link to="/infra" className="btn-ghost p-1.5"><ArrowLeft size={16} /></Link>
+          <Link to={`/infra/sites/${room.site_id}`} className="btn-ghost p-1.5" title={room.site_name}><ArrowLeft size={16} /></Link>
           <div className="min-w-0">
+            <p className="text-xs text-gray-500">
+              <Link to="/infra" className="hover:text-gray-300">Lokacije</Link>
+              <span className="mx-1.5">/</span>
+              <Link to={`/infra/sites/${room.site_id}`} className="hover:text-gray-300">{room.site_name}</Link>
+              {room.floor && <span className="text-gray-600"> · {room.floor}</span>}
+            </p>
             <h1 className="text-xl font-semibold truncate">{room.name}</h1>
-            <p className="text-xs text-gray-500">{[room.location, room.floor].filter(Boolean).join(' · ') || '—'}</p>
           </div>
-          {canManage && <button className="btn-ghost p-1.5" title="Izmeni lokaciju" onClick={() => setRoomForm(true)}><Pencil size={14} /></button>}
+          {canManage && <button className="btn-ghost p-1.5" title="Izmeni prostoriju" onClick={() => setRoomForm(true)}><Pencil size={14} /></button>}
         </div>
         <div className="flex gap-2 items-center">
         {canManage && (
@@ -867,7 +899,7 @@ export default function RoomView() {
         <div className="flex-1 min-w-0 space-y-4">
           {racks.length === 0 ? (
             <div className="card text-sm text-gray-400">
-              Lokacija još nema rack. {canManage && <button className="text-brand-400 hover:underline" onClick={() => setRackForm({ open: true, rack: null })}>Dodaj rack</button>}
+              Prostorija još nema rack. {canManage && <button className="text-brand-400 hover:underline" onClick={() => setRackForm({ open: true, rack: null })}>Dodaj rack</button>}
             </div>
           ) : (
             <div className="overflow-x-auto pb-2">
@@ -911,7 +943,7 @@ export default function RoomView() {
       </div>
       )}
 
-      <DeviceForm open={devForm.open} device={devForm.device} preset={devForm.preset} room={room} racks={racks}
+      <DeviceForm open={devForm.open} device={devForm.device} preset={devForm.preset} room={room} rooms={allRooms} racks={racks}
         devices={devices} models={models}
         tenantId={tenantId} modelList={modelList}
         onClose={() => setDevForm({ open: false })}
@@ -919,7 +951,7 @@ export default function RoomView() {
       <CableDialog open={cableDlg.open} tenantId={tenantId} room={room} from={cableDlg.from} edit={cableDlg.edit}
         onClose={() => setCableDlg({ open: false })}
         onSaved={() => { setCableDlg({ open: false }); loadCabling(); }} />
-      <RackForm open={rackForm.open} rack={rackForm.rack} roomId={room.id} tenantId={tenantId}
+      <RackForm open={rackForm.open} rack={rackForm.rack} roomId={room.id} tenantId={tenantId} rooms={allRooms}
         onClose={() => setRackForm({ open: false })}
         onSaved={() => { setRackForm({ open: false }); load(); }} />
       <RoomForm open={roomForm} room={room} tenantId={tenantId}

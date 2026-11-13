@@ -45,6 +45,12 @@ export function cableMarks(idx, deviceId) {
   return out;
 }
 
+// gde je drugi kraj, gledano iz prostorije koju korisnik gleda
+const placeOf = (x, room) => [
+  x.siteId && x.siteId !== room.site_id ? x.siteName : null,
+  x.roomId !== room.id ? x.roomName : null,
+].filter(Boolean).join(' · ');
+
 const cableText = c => [c.cableType, c.color, c.lengthM ? `${c.lengthM} m` : null].filter(Boolean).join(' · ');
 
 function ColorDot({ color }) {
@@ -148,7 +154,7 @@ export function PortDetail({ tenantId, device, model, port, mapping, info, cable
                     {e.other.side === 'rear' && <span className="text-xs text-gray-500">(pozadi)</span>}
                   </button>
                   <p className="text-xs text-gray-500">
-                    {e.other.roomId !== room.id ? `${e.other.roomName} · ` : ''}{e.other.rackName || 'van racka'}
+                    {placeOf(e.other, room) ? `${placeOf(e.other, room)} · ` : ''}{e.other.rackName || 'van racka'}
                   </p>
                   {(cableText(e.cable) || e.cable.label) && (
                     <p className="text-xs text-gray-300 flex items-center gap-1.5 flex-wrap">
@@ -196,7 +202,7 @@ export function PortDetail({ tenantId, device, model, port, mapping, info, cable
                   <span className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${i === 0 || i === trace.length - 1 ? 'bg-brand-500' : 'bg-gray-600'}`} />
                   <span className="min-w-0">
                     <span className="font-mono">{x.deviceName} · {x.portName}</span>
-                    <span className="block text-gray-500">{x.roomId !== room.id ? `${x.roomName} · ` : ''}{x.rackName ? `${x.rackName} U${x.rackPosition}` : 'van racka'}{x.passthrough ? ' · panel' : ''}</span>
+                    <span className="block text-gray-500">{placeOf(x, room) ? `${placeOf(x, room)} · ` : ''}{x.rackName ? `${x.rackName} U${x.rackPosition}` : 'van racka'}{x.passthrough ? ' · panel' : ''}</span>
                   </span>
                 </button>
               </li>
@@ -334,9 +340,13 @@ export function CableDialog({ open, tenantId, room, from, edit, onClose, onSaved
         {!edit && (
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="label">Lokacija drugog kraja</label>
+              <div><label className="label">Prostorija drugog kraja</label>
                 <select className="input" value={roomId} onChange={e => setRoomId(e.target.value)}>
-                  {(rooms.length ? rooms : [room]).map(r => <option key={r.id} value={r.id}>{r.name}{r.location ? ` (${r.location})` : ''}</option>)}
+                  {rooms.length ? Object.entries(rooms.reduce((g, r) => ((g[r.site_name] ||= []).push(r), g), {})).map(([site, rs]) => (
+                    <optgroup key={site} label={site}>
+                      {rs.map(r => <option key={r.id} value={r.id}>{r.name}{r.id === room.id ? ' (ova prostorija)' : ''}</option>)}
+                    </optgroup>
+                  )) : <option value={room.id}>{room.name}</option>}
                 </select></div>
               <div><label className="label">Uređaj</label>
                 <select className="input" value={devId} disabled={!roomData} onChange={e => { setDevId(e.target.value); setPort(null); setSide('front'); }}>

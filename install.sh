@@ -933,6 +933,47 @@ CREATE TRIGGER trg_infra_cable_ends_cleanup
     FOR EACH ROW EXECUTE FUNCTION infra_cable_ends_cleanup();
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON infra_port_info, infra_cables, infra_cable_ends TO servermanager;
+
+-- ── Infrastruktura: lokacija (objekat) -> prostorija -> rack (13.11.2026) ──
+-- infra_rooms su do sada bile "lokacije"; sada su PROSTORIJE unutar lokacije.
+-- Postojece prostorije dobijaju lokaciju po polju "Zgrada / adresa"
+-- (infra_rooms.location); bez njega idu u "Glavna lokacija".
+
+CREATE TABLE IF NOT EXISTS infra_sites (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name        TEXT        NOT NULL,
+    address     TEXT,
+    notes       TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT infra_sites_name_unique UNIQUE (tenant_id, name)
+);
+
+ALTER TABLE infra_rooms ADD COLUMN IF NOT EXISTS site_id UUID REFERENCES infra_sites(id) ON DELETE RESTRICT;
+
+INSERT INTO infra_sites (tenant_id, name)
+SELECT DISTINCT tenant_id, COALESCE(NULLIF(btrim(location), ''), 'Glavna lokacija')
+FROM infra_rooms WHERE site_id IS NULL
+ON CONFLICT (tenant_id, name) DO NOTHING;
+
+UPDATE infra_rooms r SET site_id = s.id
+FROM infra_sites s
+WHERE r.site_id IS NULL AND s.tenant_id = r.tenant_id
+  AND s.name = COALESCE(NULLIF(btrim(r.location), ''), 'Glavna lokacija');
+
+ALTER TABLE infra_rooms ALTER COLUMN site_id SET NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_infra_rooms_site ON infra_rooms (site_id);
+
+-- naziv prostorije je jedinstven u okviru lokacije (ne vise celog tenanta)
+ALTER TABLE infra_rooms DROP CONSTRAINT IF EXISTS infra_rooms_name_unique;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'infra_rooms_site_name_unique') THEN
+        ALTER TABLE infra_rooms ADD CONSTRAINT infra_rooms_site_name_unique UNIQUE (site_id, name);
+    END IF;
+END $$;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON infra_sites TO servermanager;
 SCHEMA
 
     # Superadmin lozinka — generisemo hash dinamicki

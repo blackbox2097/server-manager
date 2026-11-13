@@ -1,5 +1,6 @@
 # app/routers/infra.py
-# Infrastruktura (13.11.2026): lokacije (sobe), rackovi i uredjaji u racku.
+# Infrastruktura (13.11.2026): lokacije (objekti) -> prostorije -> rackovi,
+# uredjaji u racku, portovi i kablovi.
 # Fizicka dokumentacija, po tenantu. Izgled uredjaja iz biblioteke modela.
 # Dozvola za izmene: perm_network_manage (isti domen kao mrezni uredjaji;
 # moze se kasnije odvojiti u sopstvenu dozvolu).
@@ -42,8 +43,13 @@ class _Name(BaseModel):
         return v.strip()
 
 
+class SiteIn(_Name):
+    address: str | None = None
+    notes: str | None = None
+
+
 class RoomIn(_Name):
-    location: str | None = None
+    siteId: str
     floor: str | None = None
     notes: str | None = None
 
@@ -97,7 +103,14 @@ def _height_for(model_id: str | None, height_u: int | None) -> int:
 
 
 async def _check_room(tid: str, room_id: str):
-    row = await fetchrow("SELECT id, name FROM infra_rooms WHERE id=$1 AND tenant_id=$2", room_id, tid)
+    row = await fetchrow("SELECT id, name, site_id FROM infra_rooms WHERE id=$1 AND tenant_id=$2", room_id, tid)
+    if not row:
+        raise HTTPException(404, "Prostorija nije pronadjena")
+    return row
+
+
+async def _check_site(tid: str, site_id: str):
+    row = await fetchrow("SELECT id, name FROM infra_sites WHERE id=$1 AND tenant_id=$2", site_id, tid)
     if not row:
         raise HTTPException(404, "Lokacija nije pronadjena")
     return row
@@ -125,7 +138,7 @@ async def _place(conn, tid: str, device_id: str | None, room_id: str, rack_id: s
     if not rack:
         raise HTTPException(404, "Rack nije pronadjen")
     if str(rack["room_id"]) != str(room_id):
-        raise HTTPException(400, "Rack nije u istoj lokaciji kao uredjaj")
+        raise HTTPException(400, "Rack nije u istoj prostoriji kao uredjaj")
     if height < 1:
         raise HTTPException(400, "Ovaj model ne ide u rack")
     if position is None or position < 1:
@@ -148,38 +161,114 @@ async def _place(conn, tid: str, device_id: str | None, room_id: str, rack_id: s
 def _unique_msg(e: asyncpg.UniqueViolationError) -> str:
     c = e.constraint_name or ""
     return {
-        "infra_rooms_name_unique": "Lokacija sa tim nazivom vec postoji",
-        "infra_racks_name_unique": "Rack sa tim nazivom vec postoji u ovoj lokaciji",
+        "infra_sites_name_unique": "Lokacija sa tim nazivom vec postoji",
+        "infra_rooms_site_name_unique": "Prostorija sa tim nazivom vec postoji u ovoj lokaciji",
+        "infra_racks_name_unique": "Rack sa tim nazivom vec postoji u ovoj prostoriji",
         "infra_devices_netdev_unique": "Taj mrezni uredjaj je vec povezan sa drugim uredjajem u racku",
         "infra_devices_server_unique": "Taj server je vec povezan sa drugim uredjajem u racku",
         "infra_devices_ups_unique": "Taj UPS je vec povezan sa drugim uredjajem u racku",
     }.get(c, "Zapis vec postoji")
 
 
-# ── lokacije ─────────────────────────────────────────────────────────────────
+# ── lokacije (objekti) ───────────────────────────────────────────────────────
+
+_ROOM_STATS = """
+    (SELECT COUNT(*) FROM infra_racks r WHERE r.room_id = ro.id) AS rack_count,
+    (SELECT COUNT(*) FROM infra_devices d WHERE d.room_id = ro.id) AS device_count,
+    (SELECT COALESCE(SUM(r.height_u), 0) FROM infra_racks r WHERE r.room_id = ro.id) AS units_total,
+    (SELECT COALESCE(SUM(d.height_u), 0) FROM infra_devices d
+      WHERE d.room_id = ro.id AND d.rack_id IS NOT NULL) AS units_used"""
+
+
+@router.get("/{tid}/infra/sites")
+async def list_sites(tid: str, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user)
+    rows = await fetch(
+        """SELECT s.id, s.name, s.address, s.notes,
+                  (SELECT COUNT(*) FROM infra_rooms ro WHERE ro.site_id = s.id) AS room_count,
+                  (SELECT COUNT(*) FROM infra_racks r JOIN infra_rooms ro ON ro.id = r.room_id
+                    WHERE ro.site_id = s.id) AS rack_count,
+                  (SELECT COUNT(*) FROM infra_devices d JOIN infra_rooms ro ON ro.id = d.room_id
+                    WHERE ro.site_id = s.id) AS device_count
+           FROM infra_sites s WHERE s.tenant_id=$1 ORDER BY s.name""", tid)
+    return [dict(r) for r in rows]
+
+
+@router.get("/{tid}/infra/sites/{sid}")
+async def get_site(tid: str, sid: str, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user)
+    site = await fetchrow("SELECT id, name, address, notes FROM infra_sites WHERE id=$1 AND tenant_id=$2", sid, tid)
+    if not site:
+        raise HTTPException(404, "Lokacija nije pronadjena")
+    rooms = await fetch(
+        f"""SELECT ro.id, ro.name, ro.floor, ro.notes, {_ROOM_STATS}
+            FROM infra_rooms ro WHERE ro.site_id=$1 ORDER BY ro.floor NULLS LAST, ro.name""", sid)
+    return {"site": dict(site), "rooms": [dict(r) for r in rooms]}
+
+
+@router.post("/{tid}/infra/sites", status_code=201)
+async def create_site(tid: str, req: Request, body: SiteIn, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user, PERM)
+    try:
+        row = await fetchrow(
+            """INSERT INTO infra_sites (tenant_id, name, address, notes) VALUES ($1,$2,$3,$4)
+               RETURNING id, name""", tid, body.name, _n(body.address), _n(body.notes))
+    except asyncpg.UniqueViolationError as e:
+        raise HTTPException(409, _unique_msg(e))
+    await _log("infra.site.create", req, user, tid, row["id"], {"name": body.name})
+    return dict(row)
+
+
+@router.put("/{tid}/infra/sites/{sid}")
+async def update_site(tid: str, sid: str, req: Request, body: SiteIn, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user, PERM)
+    try:
+        row = await fetchrow(
+            """UPDATE infra_sites SET name=$1, address=$2, notes=$3, updated_at=NOW()
+               WHERE id=$4 AND tenant_id=$5 RETURNING id, name""",
+            body.name, _n(body.address), _n(body.notes), sid, tid)
+    except asyncpg.UniqueViolationError as e:
+        raise HTTPException(409, _unique_msg(e))
+    if not row:
+        raise HTTPException(404, "Lokacija nije pronadjena")
+    await _log("infra.site.update", req, user, tid, sid, {"name": body.name})
+    return dict(row)
+
+
+@router.delete("/{tid}/infra/sites/{sid}")
+async def delete_site(tid: str, sid: str, req: Request, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user, PERM)
+    site = await _check_site(tid, sid)
+    n = await fetchrow("SELECT COUNT(*) AS c FROM infra_rooms WHERE site_id=$1", sid)
+    if n["c"]:
+        raise HTTPException(409, f"Lokacija ima {n['c']} prostorija -- prvo ih obrisi ili premesti")
+    await fetchrow("DELETE FROM infra_sites WHERE id=$1 AND tenant_id=$2 RETURNING id", sid, tid)
+    await _log("infra.site.delete", req, user, tid, sid, {"name": site["name"]})
+    return {"ok": True}
+
+
+# ── prostorije ───────────────────────────────────────────────────────────────
 
 @router.get("/{tid}/infra/rooms")
 async def list_rooms(tid: str, user=Depends(get_current_user)):
+    """Sve prostorije tenanta (za izbor drugog kraja kabla, premestanje racka)."""
     await check_tenant_perm(tid, user)
     rows = await fetch(
-        """SELECT ro.id, ro.name, ro.location, ro.floor, ro.notes, ro.created_at,
-                  (SELECT COUNT(*) FROM infra_racks r WHERE r.room_id = ro.id) AS rack_count,
-                  (SELECT COUNT(*) FROM infra_devices d WHERE d.room_id = ro.id) AS device_count,
-                  (SELECT COALESCE(SUM(r.height_u), 0) FROM infra_racks r WHERE r.room_id = ro.id) AS units_total,
-                  (SELECT COALESCE(SUM(d.height_u), 0) FROM infra_devices d
-                    WHERE d.room_id = ro.id AND d.rack_id IS NOT NULL) AS units_used
-           FROM infra_rooms ro WHERE ro.tenant_id=$1 ORDER BY ro.location NULLS LAST, ro.name""", tid)
+        f"""SELECT ro.id, ro.name, ro.floor, ro.notes, ro.site_id, s.name AS site_name, {_ROOM_STATS}
+            FROM infra_rooms ro JOIN infra_sites s ON s.id = ro.site_id
+            WHERE ro.tenant_id=$1 ORDER BY s.name, ro.floor NULLS LAST, ro.name""", tid)
     return [dict(r) for r in rows]
 
 
 @router.post("/{tid}/infra/rooms", status_code=201)
 async def create_room(tid: str, req: Request, body: RoomIn, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, PERM)
+    await _check_site(tid, body.siteId)
     try:
         row = await fetchrow(
-            """INSERT INTO infra_rooms (tenant_id, name, location, floor, notes)
+            """INSERT INTO infra_rooms (tenant_id, site_id, name, floor, notes)
                VALUES ($1,$2,$3,$4,$5) RETURNING id, name""",
-            tid, body.name, _n(body.location), _n(body.floor), _n(body.notes))
+            tid, body.siteId, body.name, _n(body.floor), _n(body.notes))
     except asyncpg.UniqueViolationError as e:
         raise HTTPException(409, _unique_msg(e))
     await _log("infra.room.create", req, user, tid, row["id"], {"name": body.name})
@@ -188,16 +277,18 @@ async def create_room(tid: str, req: Request, body: RoomIn, user=Depends(get_cur
 
 @router.put("/{tid}/infra/rooms/{rid}")
 async def update_room(tid: str, rid: str, req: Request, body: RoomIn, user=Depends(get_current_user)):
+    """Izmena prostorije; promena lokacije premesta prostoriju sa svim rackovima."""
     await check_tenant_perm(tid, user, PERM)
+    await _check_site(tid, body.siteId)
     try:
         row = await fetchrow(
-            """UPDATE infra_rooms SET name=$1, location=$2, floor=$3, notes=$4, updated_at=NOW()
+            """UPDATE infra_rooms SET name=$1, floor=$2, notes=$3, site_id=$4, updated_at=NOW()
                WHERE id=$5 AND tenant_id=$6 RETURNING id, name""",
-            body.name, _n(body.location), _n(body.floor), _n(body.notes), rid, tid)
+            body.name, _n(body.floor), _n(body.notes), body.siteId, rid, tid)
     except asyncpg.UniqueViolationError as e:
         raise HTTPException(409, _unique_msg(e))
     if not row:
-        raise HTTPException(404, "Lokacija nije pronadjena")
+        raise HTTPException(404, "Prostorija nije pronadjena")
     await _log("infra.room.update", req, user, tid, rid, {"name": body.name})
     return dict(row)
 
@@ -208,7 +299,7 @@ async def delete_room(tid: str, rid: str, req: Request, user=Depends(get_current
     room = await _check_room(tid, rid)
     n = await fetchrow("SELECT COUNT(*) AS c FROM infra_devices WHERE room_id=$1", rid)
     if n["c"]:
-        raise HTTPException(409, f"Lokacija ima {n['c']} uredjaja -- prvo ih obrisi ili premesti")
+        raise HTTPException(409, f"Prostorija ima {n['c']} uredjaja -- prvo ih obrisi ili premesti")
     await fetchrow("DELETE FROM infra_rooms WHERE id=$1 AND tenant_id=$2 RETURNING id", rid, tid)
     await _log("infra.room.delete", req, user, tid, rid, {"name": room["name"]})
     return {"ok": True}
@@ -219,9 +310,11 @@ async def get_room(tid: str, rid: str, user=Depends(get_current_user)):
     """Sve za prikaz lokacije: rackovi + uredjaji (sa stanjem povezanog monitoringa)."""
     await check_tenant_perm(tid, user)
     room = await fetchrow(
-        "SELECT id, name, location, floor, notes FROM infra_rooms WHERE id=$1 AND tenant_id=$2", rid, tid)
+        """SELECT ro.id, ro.name, ro.floor, ro.notes, ro.site_id, s.name AS site_name
+           FROM infra_rooms ro JOIN infra_sites s ON s.id = ro.site_id
+           WHERE ro.id=$1 AND ro.tenant_id=$2""", rid, tid)
     if not room:
-        raise HTTPException(404, "Lokacija nije pronadjena")
+        raise HTTPException(404, "Prostorija nije pronadjena")
     racks = await fetch(
         """SELECT id, name, height_u, units_from_top, sort_order, notes FROM infra_racks
            WHERE room_id=$1 ORDER BY sort_order, name""", rid)
@@ -294,8 +387,11 @@ async def update_rack(tid: str, kid: str, req: Request, body: RackIn, user=Depen
                    WHERE r.id=$1 AND ro.tenant_id=$2 FOR UPDATE OF r""", kid, tid)
             if not rack:
                 raise HTTPException(404, "Rack nije pronadjen")
-            if str(rack["room_id"]) != body.roomId:
-                raise HTTPException(400, "Rack se ne premesta izmedju lokacija")
+            moved = str(rack["room_id"]) != body.roomId
+            if moved:
+                ok = await conn.fetchrow("SELECT 1 FROM infra_rooms WHERE id=$1 AND tenant_id=$2", body.roomId, tid)
+                if not ok:
+                    raise HTTPException(404, "Prostorija nije pronadjena")
             over = await conn.fetchrow(
                 """SELECT name FROM infra_devices WHERE rack_id=$1
                    AND rack_position + height_u - 1 > $2 LIMIT 1""", kid, body.heightU)
@@ -304,17 +400,22 @@ async def update_rack(tid: str, kid: str, req: Request, body: RackIn, user=Depen
             try:
                 await conn.execute(
                     """UPDATE infra_racks SET name=$1, height_u=$2, units_from_top=$3, notes=$4,
-                       updated_at=NOW() WHERE id=$5""",
-                    body.name, body.heightU, body.unitsFromTop, _n(body.notes), kid)
+                       room_id=$5, updated_at=NOW() WHERE id=$6""",
+                    body.name, body.heightU, body.unitsFromTop, _n(body.notes), body.roomId, kid)
             except asyncpg.UniqueViolationError as e:
                 raise HTTPException(409, _unique_msg(e))
-    await _log("infra.rack.update", req, user, tid, kid, {"name": body.name, "heightU": body.heightU})
+            if moved:
+                # uredjaji idu sa rackom (kablovi ostaju -- vezani su za uredjaje)
+                await conn.execute(
+                    "UPDATE infra_devices SET room_id=$1, updated_at=NOW() WHERE rack_id=$2", body.roomId, kid)
+    await _log("infra.rack.update", req, user, tid, kid,
+               {"name": body.name, "heightU": body.heightU, **({"movedToRoom": body.roomId} if moved else {})})
     return {"ok": True}
 
 
 @router.delete("/{tid}/infra/racks/{kid}")
 async def delete_rack(tid: str, kid: str, req: Request, user=Depends(get_current_user)):
-    """Brisanje racka NE brise uredjaje -- ostaju u lokaciji, bez mesta."""
+    """Brisanje racka NE brise uredjaje -- ostaju u prostoriji, van racka."""
     await check_tenant_perm(tid, user, PERM)
     row = await fetchrow(
         """DELETE FROM infra_racks r USING infra_rooms ro
@@ -567,11 +668,13 @@ async def room_cabling(tid: str, rid: str, user=Depends(get_current_user)):
     rows = await fetch(
         """SELECT c.id, c.cable_type, c.color, c.length_m, c.label, c.notes,
                   e.end_no, e.device_id, e.port_key, e.side,
-                  d.name AS device_name, d.room_id, ro.name AS room_name, r.name AS rack_name
+                  d.name AS device_name, d.room_id, ro.name AS room_name, r.name AS rack_name,
+                  ro.site_id, si.name AS site_name
            FROM infra_cables c
            JOIN infra_cable_ends e ON e.cable_id = c.id
            JOIN infra_devices d    ON d.id = e.device_id
            JOIN infra_rooms ro     ON ro.id = d.room_id
+           JOIN infra_sites si     ON si.id = ro.site_id
            LEFT JOIN infra_racks r ON r.id = d.rack_id
            WHERE c.tenant_id = $2 AND c.id IN (
                SELECT e2.cable_id FROM infra_cable_ends e2
@@ -586,7 +689,8 @@ async def room_cabling(tid: str, rid: str, user=Depends(get_current_user)):
         c = cables.setdefault(str(r["id"]), {**_cable_dict(r), "ends": []})
         c["ends"].append({"deviceId": str(r["device_id"]), "deviceName": r["device_name"],
                           "port": r["port_key"], "side": r["side"],
-                          "roomId": str(r["room_id"]), "roomName": r["room_name"], "rackName": r["rack_name"]})
+                          "roomId": str(r["room_id"]), "roomName": r["room_name"], "rackName": r["rack_name"],
+                          "siteId": str(r["site_id"]), "siteName": r["site_name"]})
     return {"ports": ports, "cables": [c for c in cables.values() if len(c["ends"]) == 2],
             "modules": MODULES}
 
@@ -704,11 +808,13 @@ async def trace(tid: str, deviceId: str, port: str, user=Depends(get_current_use
             if did not in devs:
                 r = await conn.fetchrow(
                     """SELECT d.name, d.model_id, d.rack_position, ro.id AS room_id, ro.name AS room_name,
-                              r.name AS rack_name
+                              r.name AS rack_name, ro.site_id, si.name AS site_name
                        FROM infra_devices d JOIN infra_rooms ro ON ro.id=d.room_id
+                       JOIN infra_sites si ON si.id=ro.site_id
                        LEFT JOIN infra_racks r ON r.id=d.rack_id WHERE d.id=$1""", did)
                 m = dm.get_model(r["model_id"]) if r["model_id"] else None
                 devs[did] = {"deviceName": r["name"], "roomId": str(r["room_id"]), "roomName": r["room_name"],
+                             "siteId": str(r["site_id"]), "siteName": r["site_name"],
                              "rackName": r["rack_name"], "rackPosition": r["rack_position"],
                              "passthrough": bool(m and m.passthrough)}
             return {"kind": "port", "deviceId": did, "port": key, "portName": _port_label(key), **devs[did]}
