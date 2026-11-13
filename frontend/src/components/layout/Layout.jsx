@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
   Server, Activity, Terminal, BookOpen, Users,
-  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail, FileText, Database, Zap, Router, BatteryCharging
+  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail, FileText, Database, Zap, Router, BatteryCharging, Boxes, Building2, Warehouse
 } from 'lucide-react';
 import clsx from 'clsx';
 import useAuthStore from '../../store/authStore';
@@ -25,12 +25,20 @@ const navItems = [
   { to: '/logs',       icon: FileText, label: 'Logovi'      },
 ];
 
+// Grupe u sidebaru (podstavke se otvaraju/zatvaraju; stanje u localStorage)
+const navGroups = [
+  { label: 'Infrastruktura', icon: Building2, items: [
+    { to: '/infra', icon: Warehouse, label: 'Lokacije i rackovi' },
+  ] },
+];
+
 const adminItems = [
   { to: '/admin/tenants', icon: Shield,   label: 'Tenanti'   },
   { to: '/admin/users',   icon: Users,    label: 'Operateri' },
   { to: '/admin/smtp',    icon: Mail,     label: 'SMTP'      },
   { to: '/admin/logs',    icon: FileText, label: 'Logovi (svi tenanti)' },
   { to: '/admin/backup',  icon: Database, label: 'Backup' },
+  { to: '/admin/device-models', icon: Boxes, label: 'Modeli uređaja' },
 ];
 
 // ── Change password modal ─────────────────────────────────────────────────────
@@ -207,6 +215,34 @@ export default function Layout({ children }) {
     </NavLink>
   );
 
+  const [openGroups, setOpenGroups] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('sm-nav-groups') || '{}'); } catch { return {}; }
+  });
+  const toggleGroup = (label) => setOpenGroups(p => {
+    const n = { ...p, [label]: !(p[label] ?? true) };
+    try { localStorage.setItem('sm-nav-groups', JSON.stringify(n)); } catch {}
+    return n;
+  });
+  const NavGroup = ({ label, icon: Icon, items }) => {
+    const active = items.some(i => location.pathname.startsWith(i.to));
+    const open = active || (openGroups[label] ?? true);
+    return (
+      <div>
+        <button onClick={() => toggleGroup(label)}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-gray-100 hover:bg-gray-800 transition-colors">
+          <Icon size={16} />
+          <span className="flex-1 text-left">{label}</span>
+          <ChevronDown size={14} className={clsx('transition-transform', !open && '-rotate-90')} />
+        </button>
+        {open && (
+          <div className="ml-4 pl-2 border-l border-gray-800 space-y-0.5 mt-0.5">
+            {items.map(i => <NavItem key={i.to} {...i} />)}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="flex h-screen overflow-hidden">
       {sideOpen && (
@@ -233,6 +269,7 @@ export default function Layout({ children }) {
         {/* Navigacija */}
         <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
           {navItems.map(item => <NavItem key={item.to} {...item} />)}
+          {navGroups.map(g => <NavGroup key={g.label} {...g} />)}
 
           {isSuperadmin && (
             <>

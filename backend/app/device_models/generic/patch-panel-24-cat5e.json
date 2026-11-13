@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "id": "generic/patch-panel-24-cat5e",
+  "vendor": "Generic",
+  "model": "Patch panel 24 Cat5e 1U",
+  "type": "patch_panel",
+  "match": {},
+  "form": {
+    "height_u": 1,
+    "mount": "rack",
+    "body_width_mm": 482.6
+  },
+  "look": {
+    "chassis": "#3d3f43",
+    "text": "#D3D1C7"
+  },
+  "front": {
+    "start_mm": 67,
+    "blocks": [
+      {
+        "name": "{n}",
+        "from": 1,
+        "to": 24,
+        "type": "rj45",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 6
+        },
+        "gap_before_mm": 2.0
+      }
+    ]
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

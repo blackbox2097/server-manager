@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "id": "mikrotik/sxt-5nd-r2",
+  "vendor": "MikroTik",
+  "model": "SXT Lite5 (RB SXT 5nD r2)",
+  "type": "ap",
+  "match": {
+    "sys_descr": [
+      "SXT 5nD r2"
+    ]
+  },
+  "form": {
+    "height_u": 0,
+    "mount": "none",
+    "body_width_mm": 120
+  },
+  "look": {},
+  "front": {
+    "start_mm": 10,
+    "blocks": [
+      {
+        "name": "ether1",
+        "type": "rj45",
+        "speed": "100M",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 2.0,
+        "poe": "in"
+      }
+    ]
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

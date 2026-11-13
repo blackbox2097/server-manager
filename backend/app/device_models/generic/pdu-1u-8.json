@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "id": "generic/pdu-1u-8",
+  "vendor": "Generic",
+  "model": "PDU 1U (8 utičnica)",
+  "type": "pdu",
+  "match": {},
+  "form": {
+    "height_u": 1,
+    "mount": "rack",
+    "body_width_mm": 482.6
+  },
+  "look": {
+    "chassis": "#2C2C2A",
+    "text": "#D3D1C7"
+  },
+  "front": {
+    "start_mm": 70,
+    "blocks": [
+      {
+        "name": "{n}",
+        "from": 1,
+        "to": 8,
+        "type": "outlet",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 6
+      }
+    ],
+    "label": {
+      "text": "PDU",
+      "x": 0.04,
+      "y": 0.4
+    }
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

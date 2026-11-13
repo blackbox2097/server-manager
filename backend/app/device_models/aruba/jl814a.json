@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "id": "aruba/jl814a",
+  "vendor": "Aruba",
+  "model": "Instant On 1830 48G 4SFP",
+  "sku": "JL814A",
+  "type": "switch",
+  "match": {
+    "sys_descr": [
+      "JL814A"
+    ]
+  },
+  "form": {
+    "height_u": 1,
+    "mount": "rack",
+    "body_width_mm": 442
+  },
+  "look": {
+    "chassis": "#ecebe7",
+    "text": "#444441"
+  },
+  "front": {
+    "start_mm": 14.5,
+    "blocks": [
+      {
+        "name": "{n}",
+        "from": 1,
+        "to": 48,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 2,
+          "order": "odd-top",
+          "group_cols": 6
+        },
+        "gap_before_mm": 2.0
+      },
+      {
+        "name": "{n}",
+        "from": 49,
+        "to": 52,
+        "type": "sfp",
+        "speed": "1G",
+        "layout": {
+          "rows": 2,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 6.8
+      }
+    ],
+    "label": {
+      "text": "aruba",
+      "x": 0.92,
+      "y": 0.25
+    }
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

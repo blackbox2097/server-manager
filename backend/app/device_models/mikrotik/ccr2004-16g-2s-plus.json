@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "id": "mikrotik/ccr2004-16g-2s-plus",
+  "vendor": "MikroTik",
+  "model": "CCR2004-16G-2S+",
+  "sku": "CCR2004-16G-2S+",
+  "type": "router",
+  "match": {
+    "sys_descr": [
+      "CCR2004-16G-2S+"
+    ]
+  },
+  "form": {
+    "height_u": 1,
+    "mount": "rack",
+    "body_width_mm": 442
+  },
+  "look": {
+    "chassis": "#f4f4f2",
+    "text": "#2C2C2A"
+  },
+  "front": {
+    "start_mm": 19,
+    "blocks": [
+      {
+        "name": "sfp-sfpplus{n}",
+        "from": 1,
+        "to": 2,
+        "type": "sfp+",
+        "speed": "10G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 2.0
+      },
+      {
+        "name": "ether{n}",
+        "from": 1,
+        "to": 16,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 2,
+          "order": "even-top",
+          "group_cols": 4
+        },
+        "gap_before_mm": 10
+      },
+      {
+        "name": "console",
+        "type": "console",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 58
+      },
+      {
+        "name": "usb1",
+        "type": "usb",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 14
+      }
+    ],
+    "label": {
+      "text": "MikroTik",
+      "x": 0.86,
+      "y": 0.25
+    }
+  },
+  "snmp": {
+    "map": "ethernet-order"
+  },
+  "notes": "Polozaj USB-a na rack verziji nije potvrdjen."
+}

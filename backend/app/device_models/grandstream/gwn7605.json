@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "id": "grandstream/gwn7605",
+  "vendor": "Grandstream",
+  "model": "GWN7605",
+  "type": "ap",
+  "match": {},
+  "form": {
+    "height_u": 0,
+    "mount": "none",
+    "body_width_mm": 120
+  },
+  "look": {},
+  "front": {
+    "start_mm": 10,
+    "blocks": [
+      {
+        "name": "eth0",
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 2.0,
+        "poe": "in"
+      },
+      {
+        "name": "eth1",
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 2.0
+      }
+    ]
+  },
+  "snmp": {
+    "map": "name"
+  },
+  "notes": "sys_descr ne sadrzi model -- dodeljuje se rucno (ili kasnije po sysObjectID)."
+}

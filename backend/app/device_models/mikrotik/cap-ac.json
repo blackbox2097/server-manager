@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "id": "mikrotik/cap-ac",
+  "vendor": "MikroTik",
+  "model": "cAP ac (RBcAPGi-5acD2nD)",
+  "type": "ap",
+  "match": {
+    "sys_descr": [
+      "RBcAPGi-5acD2nD"
+    ]
+  },
+  "form": {
+    "height_u": 0,
+    "mount": "none",
+    "body_width_mm": 120
+  },
+  "look": {},
+  "front": {
+    "start_mm": 10,
+    "blocks": [
+      {
+        "name": "ether1",
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 2.0,
+        "poe": "in"
+      },
+      {
+        "name": "ether2",
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 2.0,
+        "poe": "out"
+      }
+    ]
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

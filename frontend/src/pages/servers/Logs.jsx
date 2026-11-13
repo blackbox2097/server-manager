@@ -9,10 +9,16 @@ import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import { Spinner, Empty } from '../../components/ui';
 
+const UPS_STATUS_LABELS = {
+  online: 'Online', on_battery: 'Na bateriji', low_battery: 'Prazna baterija',
+  warning: 'Upozorenje', offline: 'Offline', unknown: 'Nepoznato',
+};
+
 const CATEGORIES = [
   { label: 'Sve',        prefix: ''            },
   { label: 'Serveri',    prefix: 'server.'      },
   { label: 'Mrežni uređaji', prefix: 'networkdevice.' },
+  { label: 'UPS', prefix: 'ups.' },
   { label: 'Skripte',    prefix: 'script.'      },
   { label: 'Zakazivanje',prefix: 'schedule.'    },
   { label: 'Prijave',    prefix: 'auth.'        },
@@ -45,6 +51,11 @@ export function actionLabel(action, details) {
     'networkdevice.create': 'Mrežni uređaj dodat', 'networkdevice.update': 'Mrežni uređaj izmenjen', 'networkdevice.delete': 'Mrežni uređaj obrisan',
     'networkdevice.status_warning': 'Upozorenje počelo', 'networkdevice.status_offline': 'Mrežni uređaj nedostupan',
     'networkdevice.status_online': 'Mrežni uređaj online', 'networkdevice.recovery': 'Mrežni uređaj se oporavio',
+    'ups.create': 'UPS dodat', 'ups.update': 'UPS izmenjen', 'ups.delete': 'UPS obrisan',
+    'ups.status_on_battery': 'UPS na bateriji', 'ups.status_low_battery': 'UPS — prazna baterija',
+    'ups.status_offline': 'UPS nedostupan', 'ups.status_warning': 'Upozorenje na UPS-u',
+    'ups.status_online': 'UPS online', 'ups.recovery': 'UPS se oporavio',
+    'ups.event': 'UPS događaj', 'ups.power_blip': 'UPS — kratak prekid napajanja',
     'script.create': 'Skripta dodata', 'script.update': 'Skripta izmenjena', 'script.delete': 'Skripta obrisana',
     'script.execute': 'Skripta izvrsena',
     'schedule.create': 'Zakazivanje dodato', 'schedule.update': 'Zakazivanje izmenjeno',
@@ -135,6 +146,23 @@ function detailsSummary(log) {
         {d.name && <div className="truncate">Uređaj: {d.name} — bio u stanju "{d.from === 'warning' ? 'upozorenje' : 'offline'}"</div>}
       </>
     );
+  }
+  if (log.action === 'ups.power_blip' && d.name) {
+    return <div className="truncate">UPS: {d.name} — prekid {d.start} – {d.end}{d.duration != null ? ` (${d.duration} s)` : ''}</div>;
+  }
+  if (log.action === 'ups.event' && d.name) {
+    return <div className="truncate">UPS: {d.name} — {d.event}{d.at ? ` (${d.at})` : ''}</div>;
+  }
+  if ((log.action.startsWith('ups.status_') || log.action === 'ups.recovery') && d.name) {
+    return (
+      <div className="truncate">
+        UPS: {d.name}{d.from ? ` (${UPS_STATUS_LABELS[d.from] || d.from} → ${UPS_STATUS_LABELS[d.to] || d.to})` : ''}
+        {d.reason && log.action !== 'ups.recovery' ? ` — ${d.reason}` : ''}
+      </div>
+    );
+  }
+  if (['ups.create', 'ups.update', 'ups.delete'].includes(log.action) && d.name) {
+    return <div className="truncate">UPS: {d.name}{d.host ? ` (${d.host})` : ''}</div>;
   }
   if (['networkdevice.create', 'networkdevice.update', 'networkdevice.delete'].includes(log.action) && d.name) {
     return <div className="truncate">Uređaj: {d.name}</div>;
@@ -263,6 +291,21 @@ function detailsExpanded(log) {
         {(d.from || d.to) && (
           <div>Status: {STATUS_LABELS[d.from] || d.from} -&gt; {STATUS_LABELS[d.to] || d.to}</div>
         )}
+      </div>
+    );
+  }
+  if (log.action.startsWith('ups.') && (d.name || d.from || d.event)) {
+    return (
+      <div className="text-xs text-gray-400 bg-gray-900 rounded-lg p-3 space-y-1">
+        {d.name && <div>UPS: <span className="text-gray-300">{d.name}</span></div>}
+        {d.host && <div>NUT server: <span className="text-gray-300">{d.host}</span></div>}
+        {(d.from || d.to) && (
+          <div>Status: {UPS_STATUS_LABELS[d.from] || d.from} -&gt; {UPS_STATUS_LABELS[d.to] || d.to}</div>
+        )}
+        {d.reason && <div>Razlog: <span className="text-gray-300">{d.reason}</span></div>}
+        {d.event && <div>Događaj: <span className="text-gray-300">{d.event}</span>{d.type ? ` (${d.type})` : ''}</div>}
+        {d.at && <div>Vreme (izvor): <span className="text-gray-300">{d.at}</span></div>}
+        {d.start && <div>Prekid: <span className="text-gray-300">{d.start} – {d.end}</span>{d.duration != null ? ` (${d.duration} s)` : ''}</div>}
       </div>
     );
   }

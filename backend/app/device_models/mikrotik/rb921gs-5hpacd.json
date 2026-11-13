@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "id": "mikrotik/rb921gs-5hpacd",
+  "vendor": "MikroTik",
+  "model": "RB921GS-5HPacD",
+  "type": "ap",
+  "match": {
+    "sys_descr": [
+      "RB921GS-5HPacD"
+    ]
+  },
+  "form": {
+    "height_u": 0,
+    "mount": "none",
+    "body_width_mm": 120
+  },
+  "look": {},
+  "front": {
+    "start_mm": 10,
+    "blocks": [
+      {
+        "name": "ether1",
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 2.0,
+        "poe": "in"
+      },
+      {
+        "name": "sfp1",
+        "type": "sfp",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 4
+      }
+    ]
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

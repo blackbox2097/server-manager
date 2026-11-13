@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "id": "mikrotik/css318-16g-2s-plus",
+  "vendor": "MikroTik",
+  "model": "CSS318-16G-2S+",
+  "sku": "CSS318-16G-2S+",
+  "type": "switch",
+  "match": {
+    "sys_descr": [
+      "CSS318-16G-2S+"
+    ]
+  },
+  "form": {
+    "height_u": 1,
+    "mount": "ears",
+    "body_width_mm": 272
+  },
+  "look": {
+    "chassis": "#f4f4f2",
+    "text": "#2C2C2A"
+  },
+  "front": {
+    "start_mm": 29,
+    "blocks": [
+      {
+        "name": "Port{n}",
+        "from": 1,
+        "to": 16,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 2,
+          "order": "even-top",
+          "group_cols": 4
+        },
+        "gap_before_mm": 2.0
+      },
+      {
+        "name": "SFP+{n}",
+        "from": 1,
+        "to": 2,
+        "type": "sfp+",
+        "speed": "10G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 14,
+        "valign": "bottom"
+      }
+    ],
+    "label": {
+      "text": "mikrotik",
+      "x": 0.8,
+      "y": 0.2
+    }
+  },
+  "snmp": {
+    "map": "ethernet-order"
+  }
+}

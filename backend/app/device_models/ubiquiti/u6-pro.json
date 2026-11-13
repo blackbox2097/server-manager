@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "id": "ubiquiti/u6-pro",
+  "vendor": "Ubiquiti",
+  "model": "UniFi U6-Pro",
+  "type": "ap",
+  "match": {
+    "sys_descr": [
+      "U6-Pro"
+    ]
+  },
+  "form": {
+    "height_u": 0,
+    "mount": "none",
+    "body_width_mm": 120
+  },
+  "look": {},
+  "front": {
+    "start_mm": 10,
+    "blocks": [
+      {
+        "name": "eth0",
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 2.0,
+        "poe": "in"
+      }
+    ]
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

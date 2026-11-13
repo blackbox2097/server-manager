@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "id": "alliedtelesis/at-gs950-24",
+  "vendor": "Allied Telesis",
+  "model": "AT-GS950/24",
+  "sku": "AT-GS950/24",
+  "type": "switch",
+  "match": {
+    "sys_descr": [
+      "AT-GS950/24"
+    ]
+  },
+  "form": {
+    "height_u": 1,
+    "mount": "rack",
+    "body_width_mm": 442
+  },
+  "look": {
+    "chassis": "#dcddd8",
+    "text": "#27500A"
+  },
+  "front": {
+    "start_mm": 101,
+    "blocks": [
+      {
+        "name": "{n}",
+        "from": 1,
+        "to": 24,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 2,
+          "order": "odd-top",
+          "group_cols": 4
+        },
+        "gap_before_mm": 2.0,
+        "snmp_name": "Slot0/{n}"
+      },
+      {
+        "name": "{n}",
+        "from": 21,
+        "to": 24,
+        "type": "sfp",
+        "speed": "1G",
+        "layout": {
+          "rows": 2,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 55,
+        "combo": true,
+        "snmp_name": "Slot0/{n}"
+      }
+    ],
+    "leds_mm": [
+      10,
+      87
+    ],
+    "label": {
+      "text": "AT-GS950/24",
+      "x": 0.02,
+      "y": 0.18
+    }
+  },
+  "snmp": {
+    "map": "name"
+  },
+  "notes": "SFP 21-24 su combo sa RJ45 21R-24R (isti ifIndex)."
+}

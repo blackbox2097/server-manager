@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "id": "mikrotik/rb5009ug-s-plus",
+  "vendor": "MikroTik",
+  "model": "RB5009UG+S+IN",
+  "sku": "RB5009UG+S+IN",
+  "type": "router",
+  "match": {
+    "sys_descr": [
+      "RB5009UG+S+"
+    ]
+  },
+  "form": {
+    "height_u": 1,
+    "mount": "bracket",
+    "body_width_mm": 220,
+    "body_height_mm": 22
+  },
+  "look": {
+    "chassis": "#2f3134",
+    "text": "#D3D1C7"
+  },
+  "front": {
+    "start_mm": 14,
+    "blocks": [
+      {
+        "name": "dc",
+        "type": "power",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 2.0
+      },
+      {
+        "name": "sfp-sfpplus1",
+        "type": "sfp+",
+        "speed": "10G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 5
+      },
+      {
+        "name": "usb1",
+        "type": "usb",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 4
+      },
+      {
+        "name": "ether1",
+        "type": "rj45",
+        "speed": "2.5G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 5,
+        "poe": "in"
+      },
+      {
+        "name": "ether{n}",
+        "from": 2,
+        "to": 4,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 1
+      },
+      {
+        "name": "ether{n}",
+        "from": 5,
+        "to": 8,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 4
+      }
+    ],
+    "label": {
+      "text": "mikrotik",
+      "x": 0.02,
+      "y": 0.15
+    }
+  },
+  "snmp": {
+    "map": "ethernet-order"
+  }
+}

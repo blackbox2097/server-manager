@@ -70,7 +70,7 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
   const [form, setForm] = useState(() => ({
     name: '', description: '', location: '', source: 'nut', host: '', port: 3493, deviceName: 'ups',
     username: '', password: '',
-    pollIntervalSec: 60, rawRetentionHours: 72, rollupBucketMinutes: 5, rollupRetentionDays: 90,
+    pollIntervalSec: 15, rawRetentionHours: 72, rollupBucketMinutes: 5, rollupRetentionDays: 90,
     ...(isEdit ? {
       name: ups.name, description: ups.description || '', location: ups.location || '',
       source: ups.source || 'nut', host: ups.host, port: ups.port, deviceName: ups.device_name,
@@ -254,7 +254,7 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
 
       <F label="Interval osvežavanja (sekunde)">
         <input className="input" type="number" min={10} value={form.pollIntervalSec}
-          onChange={e => set('pollIntervalSec', parseInt(e.target.value) || 60)} />
+          onChange={e => set('pollIntervalSec', parseInt(e.target.value) || 15)} />
       </F>
 
       <button type="button" className="text-xs text-blue-400 hover:underline"

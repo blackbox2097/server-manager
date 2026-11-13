@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "id": "mikrotik/css610-8g-2s-plus",
+  "vendor": "MikroTik",
+  "model": "CSS610-8G-2S+",
+  "sku": "CSS610-8G-2S+",
+  "type": "switch",
+  "match": {
+    "sys_descr": [
+      "CSS610-8G-2S+"
+    ]
+  },
+  "form": {
+    "height_u": 1,
+    "mount": "ears",
+    "body_width_mm": 200
+  },
+  "look": {
+    "chassis": "#f4f4f2",
+    "text": "#2C2C2A"
+  },
+  "front": {
+    "start_mm": 48,
+    "blocks": [
+      {
+        "name": "dc",
+        "type": "power",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 2.0
+      },
+      {
+        "name": "Port{n}",
+        "from": 1,
+        "to": 8,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 2,
+          "order": "even-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 24,
+        "poe_in": [
+          "Port1"
+        ]
+      },
+      {
+        "name": "SFP+{n}",
+        "from": 1,
+        "to": 2,
+        "type": "sfp+",
+        "speed": "10G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 6
+      }
+    ],
+    "label": {
+      "text": "MikroTik",
+      "x": 0.04,
+      "y": 0.3
+    }
+  },
+  "snmp": {
+    "map": "ethernet-order"
+  }
+}

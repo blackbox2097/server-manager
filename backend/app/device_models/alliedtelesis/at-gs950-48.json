@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "id": "alliedtelesis/at-gs950-48",
+  "vendor": "Allied Telesis",
+  "model": "AT-GS950/48",
+  "sku": "AT-GS950/48",
+  "type": "switch",
+  "match": {
+    "sys_descr": [
+      "AT-GS950/48"
+    ]
+  },
+  "form": {
+    "height_u": 1,
+    "mount": "rack",
+    "body_width_mm": 442
+  },
+  "look": {
+    "chassis": "#dcddd8",
+    "text": "#27500A"
+  },
+  "front": {
+    "start_mm": 19,
+    "blocks": [
+      {
+        "name": "{n}",
+        "from": 1,
+        "to": 48,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 2,
+          "order": "odd-top",
+          "group_cols": 6
+        },
+        "gap_before_mm": 2.0,
+        "snmp_name": "Slot0/{n}"
+      },
+      {
+        "name": "{n}",
+        "from": 45,
+        "to": 48,
+        "type": "sfp",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 6,
+        "combo": true,
+        "snmp_name": "Slot0/{n}"
+      }
+    ],
+    "label": {
+      "text": "AT-GS950/48",
+      "x": 0.87,
+      "y": 0.12
+    }
+  },
+  "snmp": {
+    "map": "name"
+  },
+  "notes": "SFP 45-48 combo (po analogiji sa /24); raspored SFP 1x4 nije potvrdjen."
+}

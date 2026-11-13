@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "id": "cisco/rv345",
+  "vendor": "Cisco",
+  "model": "RV345",
+  "sku": "RV345",
+  "type": "router",
+  "match": {
+    "sys_descr": [
+      "RV345"
+    ]
+  },
+  "form": {
+    "height_u": 1,
+    "mount": "ears",
+    "body_width_mm": 280
+  },
+  "look": {
+    "chassis": "#34373b",
+    "text": "#D3D1C7"
+  },
+  "front": {
+    "start_mm": 39,
+    "blocks": [
+      {
+        "name": "USB1",
+        "type": "usb",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 2.0
+      },
+      {
+        "name": "WAN{n}",
+        "from": 1,
+        "to": 2,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 2,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 6
+      },
+      {
+        "name": "LAN{n}",
+        "from": 1,
+        "to": 16,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 2,
+          "order": "row-major",
+          "group_cols": 4
+        },
+        "gap_before_mm": 24
+      }
+    ],
+    "leds_mm": [
+      5,
+      29
+    ],
+    "label": {
+      "text": "CISCO",
+      "x": 0.02,
+      "y": 0.2
+    }
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

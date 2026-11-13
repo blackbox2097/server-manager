@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "id": "generic/fiber-panel-24-lc",
+  "vendor": "Generic",
+  "model": "Optički panel 24× LC duplex 1U",
+  "type": "fiber_panel",
+  "match": {},
+  "form": {
+    "height_u": 1,
+    "mount": "rack",
+    "body_width_mm": 482.6
+  },
+  "look": {
+    "chassis": "#3d3f43",
+    "text": "#D3D1C7"
+  },
+  "front": {
+    "start_mm": 40,
+    "blocks": [
+      {
+        "name": "{n}",
+        "from": 1,
+        "to": 24,
+        "type": "lc",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 6
+        },
+        "gap_before_mm": 2.0
+      }
+    ]
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

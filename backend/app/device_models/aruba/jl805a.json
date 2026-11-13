@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "id": "aruba/jl805a",
+  "vendor": "Aruba",
+  "model": "Instant On 1960 12XGT 4SFP+",
+  "sku": "JL805A",
+  "type": "switch",
+  "match": {
+    "sys_descr": [
+      "JL805A"
+    ]
+  },
+  "form": {
+    "height_u": 1,
+    "mount": "rack",
+    "body_width_mm": 442
+  },
+  "look": {
+    "chassis": "#ecebe7",
+    "text": "#444441"
+  },
+  "front": {
+    "start_mm": 111,
+    "blocks": [
+      {
+        "name": "{n}",
+        "from": 1,
+        "to": 12,
+        "type": "rj45",
+        "speed": "10G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 4
+        },
+        "gap_before_mm": 2.0,
+        "snmp_name": "1/{n}"
+      },
+      {
+        "name": "{n}",
+        "from": 13,
+        "to": 16,
+        "type": "sfp+",
+        "speed": "10G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 6.8,
+        "snmp_name": "1/{n}"
+      }
+    ],
+    "label": {
+      "text": "Instant On 1960",
+      "x": 0.86,
+      "y": 0.25
+    }
+  },
+  "snmp": {
+    "map": "name"
+  },
+  "notes": "SNMP prijavljuje 4 stack slota (1/1-4/52); fizicki portovi su 1/1-1/16."
+}

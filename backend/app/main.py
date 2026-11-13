@@ -111,6 +111,10 @@ app.include_router(dashboard.router)
 app.include_router(network_devices.router)
 from app.routers import ups as ups_router
 app.include_router(ups_router.router)
+from app.routers import device_models as device_models_router
+app.include_router(device_models_router.router)
+from app.routers import infra as infra_router
+app.include_router(infra_router.router)
 
 
 @app.get("/health")

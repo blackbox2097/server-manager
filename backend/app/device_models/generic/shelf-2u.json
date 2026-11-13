@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "id": "generic/shelf-2u",
+  "vendor": "Generic",
+  "model": "Polica 2U",
+  "type": "shelf",
+  "match": {},
+  "form": {
+    "height_u": 2,
+    "mount": "rack",
+    "body_width_mm": 482.6
+  },
+  "look": {
+    "chassis": "#888780",
+    "text": "#2C2C2A"
+  },
+  "front": {
+    "start_mm": 10,
+    "blocks": []
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

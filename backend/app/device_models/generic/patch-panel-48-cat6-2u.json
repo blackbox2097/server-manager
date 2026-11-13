@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "id": "generic/patch-panel-48-cat6-2u",
+  "vendor": "Generic",
+  "model": "Patch panel 48 Cat6 2U",
+  "type": "patch_panel",
+  "match": {},
+  "form": {
+    "height_u": 2,
+    "mount": "rack",
+    "body_width_mm": 482.6
+  },
+  "look": {
+    "chassis": "#3d3f43",
+    "text": "#D3D1C7"
+  },
+  "front": {
+    "start_mm": 67,
+    "blocks": [
+      {
+        "name": "{n}",
+        "from": 1,
+        "to": 48,
+        "type": "rj45",
+        "layout": {
+          "rows": 2,
+          "order": "row-major",
+          "group_cols": 6
+        },
+        "gap_before_mm": 2.0
+      }
+    ]
+  },
+  "snmp": {
+    "map": "name"
+  },
+  "notes": "Gornji red 1-24, donji 25-48."
+}

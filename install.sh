@@ -791,6 +791,87 @@ ALTER TABLE tenants ADD COLUMN IF NOT EXISTS alert_ups_warning    BOOLEAN NOT NU
 
 -- Dozvola za upravljanje UPS uredjajima -- odvojena od perm_network_manage.
 ALTER TABLE operator_tenants ADD COLUMN IF NOT EXISTS perm_ups_manage BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- ── Infrastruktura: lokacije (sobe), rackovi, uredjaji u racku (13.11.2026) ──
+-- Fizicka dokumentacija -- nista ovde ne menja mrezu. Sve je po tenantu.
+-- Izgled uredjaja dolazi iz biblioteke modela (backend/app/device_models),
+-- infra_devices.model_id je MEKA referenca na id modela (nije FK).
+
+CREATE TABLE IF NOT EXISTS infra_rooms (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name        TEXT        NOT NULL,
+    location    TEXT,                       -- zgrada / adresa (isti duh kao network_devices.location)
+    floor       TEXT,
+    notes       TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT infra_rooms_name_unique UNIQUE (tenant_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS infra_racks (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    room_id         UUID        NOT NULL REFERENCES infra_rooms(id) ON DELETE CASCADE,
+    name            TEXT        NOT NULL,
+    height_u        INTEGER     NOT NULL DEFAULT 42,
+    units_from_top  BOOLEAN     NOT NULL DEFAULT FALSE,  -- U1 na vrhu (kako je odstampano na racku)
+    sort_order      INTEGER     NOT NULL DEFAULT 0,
+    notes           TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT infra_racks_name_unique UNIQUE (room_id, name),
+    CONSTRAINT infra_racks_height_check CHECK (height_u BETWEEN 1 AND 60)
+);
+CREATE INDEX IF NOT EXISTS idx_infra_racks_room ON infra_racks (room_id);
+
+-- Uredjaj u sobi: u racku (rack_id + rack_position) ili "bez mesta" u sobi.
+-- rack_position = NAJNIZI broj U koji uredjaj zauzima (nezavisno od smera
+-- numeracije racka). Preklapanje se proverava u aplikaciji (u transakciji,
+-- uz zakljucan red racka).
+-- Veza sa monitoringom: najvise jedna od tri (mreza / server / UPS); brisanje
+-- monitorisanog uredjaja NE brise dokumentaciju (SET NULL).
+CREATE TABLE IF NOT EXISTS infra_devices (
+    id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id          UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    room_id            UUID        NOT NULL REFERENCES infra_rooms(id) ON DELETE CASCADE,
+    rack_id            UUID        REFERENCES infra_racks(id) ON DELETE SET NULL,
+    rack_position      INTEGER,
+    height_u           INTEGER     NOT NULL DEFAULT 1,  -- kopija iz modela pri dodavanju
+    model_id           TEXT,
+    name               TEXT        NOT NULL,
+    serial_number      TEXT,
+    notes              TEXT,
+    network_device_id  UUID        REFERENCES network_devices(id) ON DELETE SET NULL,
+    server_id          UUID        REFERENCES servers(id) ON DELETE SET NULL,
+    ups_id             UUID        REFERENCES ups_devices(id) ON DELETE SET NULL,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT infra_devices_place_check CHECK ((rack_id IS NULL) = (rack_position IS NULL)),
+    CONSTRAINT infra_devices_pos_check CHECK (rack_position IS NULL OR rack_position >= 1),
+    CONSTRAINT infra_devices_height_check CHECK (height_u BETWEEN 1 AND 60),
+    CONSTRAINT infra_devices_link_check CHECK (num_nonnulls(network_device_id, server_id, ups_id) <= 1)
+);
+CREATE INDEX IF NOT EXISTS idx_infra_devices_room ON infra_devices (room_id);
+CREATE INDEX IF NOT EXISTS idx_infra_devices_rack ON infra_devices (rack_id);
+CREATE UNIQUE INDEX IF NOT EXISTS infra_devices_netdev_unique ON infra_devices (network_device_id) WHERE network_device_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS infra_devices_server_unique ON infra_devices (server_id) WHERE server_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS infra_devices_ups_unique    ON infra_devices (ups_id) WHERE ups_id IS NOT NULL;
+
+-- Kad rack nestane (ON DELETE SET NULL) pozicija gubi smisao -- brise se i ona,
+-- inace bi infra_devices_place_check oborio brisanje racka.
+CREATE OR REPLACE FUNCTION infra_devices_clear_position() RETURNS trigger AS $$
+BEGIN
+    IF NEW.rack_id IS NULL THEN
+        NEW.rack_position := NULL;
+    END IF;
+    RETURN NEW;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_infra_devices_clear_position ON infra_devices;
+CREATE TRIGGER trg_infra_devices_clear_position
+    BEFORE UPDATE OF rack_id ON infra_devices
+    FOR EACH ROW EXECUTE FUNCTION infra_devices_clear_position();
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON infra_rooms, infra_racks, infra_devices TO servermanager;
 SCHEMA
 
     # Superadmin lozinka — generisemo hash dinamicki

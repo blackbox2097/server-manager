@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "id": "hpe/jl381a",
+  "vendor": "HPE",
+  "model": "OfficeConnect 1920S 24G 2SFP",
+  "sku": "JL381A",
+  "type": "switch",
+  "match": {
+    "sys_descr": [
+      "JL381A"
+    ]
+  },
+  "form": {
+    "height_u": 1,
+    "mount": "rack",
+    "body_width_mm": 442
+  },
+  "look": {
+    "chassis": "#c4c6c8",
+    "text": "#2C2C2A"
+  },
+  "front": {
+    "start_mm": 159,
+    "blocks": [
+      {
+        "name": "{n}",
+        "from": 1,
+        "to": 24,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 2,
+          "order": "odd-top",
+          "group_cols": 6
+        },
+        "gap_before_mm": 2.0
+      },
+      {
+        "name": "{n}",
+        "from": 25,
+        "to": 26,
+        "type": "sfp",
+        "speed": "1G",
+        "layout": {
+          "rows": 2,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 72
+      }
+    ],
+    "leds_mm": [
+      10,
+      97
+    ],
+    "label": {
+      "text": "HPE OfficeConnect 1920S",
+      "x": 0.02,
+      "y": 0.18
+    }
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

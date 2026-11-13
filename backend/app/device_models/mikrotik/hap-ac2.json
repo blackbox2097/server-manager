@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "id": "mikrotik/hap-ac2",
+  "vendor": "MikroTik",
+  "model": "hAP ac² (RBD52G-5HacD2HnD)",
+  "type": "router",
+  "match": {
+    "sys_descr": [
+      "RBD52G-5HacD2HnD"
+    ]
+  },
+  "form": {
+    "height_u": 0,
+    "mount": "none",
+    "body_width_mm": 120
+  },
+  "look": {},
+  "front": {
+    "start_mm": 8,
+    "blocks": [
+      {
+        "name": "dc",
+        "type": "power",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 2.0
+      },
+      {
+        "name": "ether{n}",
+        "from": 1,
+        "to": 5,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 4,
+        "poe_in": [
+          "ether1"
+        ]
+      },
+      {
+        "name": "usb1",
+        "type": "usb",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 4
+      }
+    ]
+  },
+  "snmp": {
+    "map": "ethernet-order"
+  }
+}

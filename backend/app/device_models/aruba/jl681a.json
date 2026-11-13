@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "id": "aruba/jl681a",
+  "vendor": "Aruba",
+  "model": "Instant On 1930 8G Class4 PoE 2SFP 124W",
+  "sku": "JL681A",
+  "type": "switch",
+  "match": {
+    "sys_descr": [
+      "JL681A"
+    ]
+  },
+  "form": {
+    "height_u": 1,
+    "mount": "ears",
+    "body_width_mm": 254
+  },
+  "look": {
+    "chassis": "#ecebe7",
+    "text": "#444441"
+  },
+  "front": {
+    "start_mm": 58,
+    "blocks": [
+      {
+        "name": "{n}",
+        "from": 1,
+        "to": 8,
+        "type": "rj45",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 4
+        },
+        "gap_before_mm": 2.0,
+        "poe": "out"
+      },
+      {
+        "name": "{n}",
+        "from": 9,
+        "to": 10,
+        "type": "sfp",
+        "speed": "1G",
+        "layout": {
+          "rows": 1,
+          "order": "odd-top",
+          "group_cols": 0
+        },
+        "gap_before_mm": 7.7
+      }
+    ],
+    "label": {
+      "text": "aruba",
+      "x": 0.86,
+      "y": 0.25
+    }
+  },
+  "snmp": {
+    "map": "name"
+  }
+}
