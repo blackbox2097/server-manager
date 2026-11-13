@@ -75,7 +75,8 @@ export default function App() {
       <Route path="/automation"    element={<Page component={Automation} />} />
       <Route path="/network-devices" element={<Page component={NetworkDevices} />} />
       <Route path="/ups" element={<Page component={UpsDevices} />} />
-      <Route path="/admin/device-models" element={<Page component={DeviceModels} superadminOnly />} />
+      <Route path="/device-models" element={<Page component={DeviceModels} superadminOnly />} />
+      <Route path="/admin/device-models" element={<Navigate to="/device-models" replace />} />
       <Route path="/infra" element={<Page component={Sites} />} />
       <Route path="/infra/sites/:siteId" element={<Page component={Site} />} />
       <Route path="/infra/rooms/:roomId" element={<Page component={RoomView} />} />

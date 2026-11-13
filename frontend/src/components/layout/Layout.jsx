@@ -29,6 +29,7 @@ const navItems = [
 const navGroups = [
   { label: 'Infrastruktura', icon: Building2, items: [
     { to: '/infra', icon: Warehouse, label: 'Lokacije i rackovi' },
+    { to: '/device-models', icon: Boxes, label: 'Modeli uređaja', superadminOnly: true },
   ] },
 ];
 
@@ -38,7 +39,6 @@ const adminItems = [
   { to: '/admin/smtp',    icon: Mail,     label: 'SMTP'      },
   { to: '/admin/logs',    icon: FileText, label: 'Logovi (svi tenanti)' },
   { to: '/admin/backup',  icon: Database, label: 'Backup' },
-  { to: '/admin/device-models', icon: Boxes, label: 'Modeli uređaja' },
 ];
 
 // ── Change password modal ─────────────────────────────────────────────────────
@@ -223,7 +223,8 @@ export default function Layout({ children }) {
     try { localStorage.setItem('sm-nav-groups', JSON.stringify(n)); } catch {}
     return n;
   });
-  const NavGroup = ({ label, icon: Icon, items }) => {
+  const NavGroup = ({ label, icon: Icon, items: all }) => {
+    const items = all.filter(i => !i.superadminOnly || isSuperadmin);
     const active = items.some(i => location.pathname.startsWith(i.to));
     const open = active || (openGroups[label] ?? true);
     return (
