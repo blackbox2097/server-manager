@@ -581,6 +581,10 @@ CREATE INDEX IF NOT EXISTS idx_network_devices_location ON network_devices (tena
 -- isti duh kao vendor/location. Odluka od 11.8.2026.
 ALTER TABLE network_devices ADD COLUMN IF NOT EXISTS model TEXT;
 
+-- sysObjectID (SNMPv2-MIB) -- za automatsko prepoznavanje modela uredjaja
+-- (rack modul / biblioteka modela). SNMP_CLEANUP_R1, 13.11.2026.
+ALTER TABLE network_devices ADD COLUMN IF NOT EXISTS sys_object_id TEXT;
+
 -- Alarmi za mrezne uredjaje -- odvojeni toggle-i od server alarma (odluka od
 -- 11.8.2026, ista podela kao alert_on_offline/recovery/warning za servere).
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS alert_network_offline BOOLEAN NOT NULL DEFAULT true;
@@ -693,7 +697,7 @@ CREATE TABLE IF NOT EXISTS ups_devices (
     device_name          TEXT        NOT NULL DEFAULT 'ups',
     username          TEXT,
     password_enc      TEXT,
-    poll_interval_sec     INTEGER     NOT NULL DEFAULT 60,
+    poll_interval_sec     INTEGER     NOT NULL DEFAULT 15,
     raw_retention_hours   INTEGER     NOT NULL DEFAULT 72,
     rollup_bucket_minutes INTEGER     NOT NULL DEFAULT 5,
     rollup_retention_days INTEGER     NOT NULL DEFAULT 90,
@@ -739,6 +743,9 @@ BEGIN
 END $$;
 ALTER TABLE ups_devices DROP CONSTRAINT IF EXISTS ups_devices_source_check;
 ALTER TABLE ups_devices ADD CONSTRAINT ups_devices_source_check CHECK (source IN ('nut', 'viewpower'));
+-- 13.11.2026: dnevnik dogadjaja izvora (ViewPower) i poll 15s
+ALTER TABLE ups_devices ADD COLUMN IF NOT EXISTS last_event_id BIGINT;
+ALTER TABLE ups_devices ALTER COLUMN poll_interval_sec SET DEFAULT 15;
 
 -- Raw UPS metrike. battery_charge je NULL kad je vrednost nepouzdana
 -- (npr. Megatec drajver javlja napon po celiji -> charge 0 uz OL bez LB).

@@ -71,6 +71,7 @@ IF_TABLE_OID  = "1.3.6.1.2.1.2.2.1"    # ifTable   (32-bit brojaci, univerzalno)
 IF_XTABLE_OID = "1.3.6.1.2.1.31.1.1.1"  # ifXTable (64-bit HC brojaci, ifName/ifAlias)
 SYS_DESCR_OID   = "1.3.6.1.2.1.1.1.0"
 SYS_UPTIME_OID  = "1.3.6.1.2.1.1.3.0"
+SYS_OBJECTID_OID = "1.3.6.1.2.1.1.2.0"  # SNMP_CLEANUP_R1: za prepoznavanje modela (rack modul)
 
 IF_COLUMNS = {
     "ifDescr":       f"{IF_TABLE_OID}.2",
@@ -231,6 +232,7 @@ async def _poll(device: dict) -> dict:
             engine, auth, target, ContextData(),
             ObjectType(ObjectIdentity(SYS_DESCR_OID)),
             ObjectType(ObjectIdentity(SYS_UPTIME_OID)),
+            ObjectType(ObjectIdentity(SYS_OBJECTID_OID)),
             lookupMib=False,
         )
         if err_indication:
@@ -239,6 +241,8 @@ async def _poll(device: dict) -> dict:
             raise SNMPError(f"{err_status.prettyPrint()} pri sys GET")
         sys_descr  = str(var_binds[0][1])
         sys_uptime = int(var_binds[1][1])
+        _oid = str(var_binds[2][1]) if len(var_binds) > 2 else ""
+        sys_object_id = _oid if _oid.startswith("1.") else None  # noSuchObject i sl. -> None
 
         cols: dict[str, dict[int, object]] = {}
         cfg = get_settings()
@@ -327,7 +331,13 @@ async def _poll(device: dict) -> dict:
             "in_discards": d_in_disc, "out_discards": d_out_disc,
         })
 
-    return {"sys_descr": sys_descr, "sys_uptime_ticks": sys_uptime, "interfaces": interfaces}
+    return {
+        "sys_descr": sys_descr, "sys_uptime_ticks": sys_uptime, "interfaces": interfaces,
+        "sys_object_id": sys_object_id,
+        # walk je "kompletan" samo ako je osnovna kolona (ifDescr) uspesno vracena --
+        # samo tada smemo da brisemo interfejse koji se nisu javili
+        "iface_complete": bool(cols.get("ifDescr")),
+    }
 
 
 async def _poll_and_save(device: dict):
@@ -358,9 +368,10 @@ async def _poll_and_save(device: dict):
     await execute(
         """UPDATE network_devices
            SET status=$1, last_seen_at=NOW(), last_error=NULL,
-               sys_descr=$2, sys_uptime_ticks=$3
+               sys_descr=$2, sys_uptime_ticks=$3, sys_object_id=$5
            WHERE id=$4""",
         display_status, result["sys_descr"][:500], result["sys_uptime_ticks"], did,
+        result.get("sys_object_id"),
     )
     await ws_manager.broadcast("network_status", {
         "deviceId": str(did), "tenantId": str(device["tenant_id"]),
@@ -404,23 +415,51 @@ async def _poll_and_save(device: dict):
             [i["oper_status"] for i in ifaces],
         )
         id_by_idx = {r["if_index"]: r["id"] for r in iface_rows}
-        await execute(
-            """INSERT INTO network_device_interface_metrics
-                 (interface_id, in_kbps, out_kbps, in_errors, out_errors,
-                  in_discards, out_discards, oper_status)
-               SELECT * FROM UNNEST(
-                 $1::uuid[], $2::numeric[], $3::numeric[], $4::bigint[], $5::bigint[],
-                 $6::bigint[], $7::bigint[], $8::text[]
-               )""",
-            [id_by_idx[i["if_index"]] for i in ifaces],
-            [i["in_kbps"] for i in ifaces],
-            [i["out_kbps"] for i in ifaces],
-            [i["in_errors"] for i in ifaces],
-            [i["out_errors"] for i in ifaces],
-            [i["in_discards"] for i in ifaces],
-            [i["out_discards"] for i in ifaces],
-            [i["oper_status"] for i in ifaces],
-        )
+        # SNMP_CLEANUP_R1: notPresent (neiskorisceni TRK/tunnel, prazni stack slotovi...)
+        # nema saobracaj -- interfejs se cuva, ali bez reda u metrikama
+        m_ifaces = [i for i in ifaces if i["oper_status"] != "notPresent"]
+        if m_ifaces:
+            await execute(
+                """INSERT INTO network_device_interface_metrics
+                     (interface_id, in_kbps, out_kbps, in_errors, out_errors,
+                      in_discards, out_discards, oper_status)
+                   SELECT * FROM UNNEST(
+                     $1::uuid[], $2::numeric[], $3::numeric[], $4::bigint[], $5::bigint[],
+                     $6::bigint[], $7::bigint[], $8::text[]
+                   )""",
+                [id_by_idx[i["if_index"]] for i in m_ifaces],
+                [i["in_kbps"] for i in m_ifaces],
+                [i["out_kbps"] for i in m_ifaces],
+                [i["in_errors"] for i in m_ifaces],
+                [i["out_errors"] for i in m_ifaces],
+                [i["in_discards"] for i in m_ifaces],
+                [i["out_discards"] for i in m_ifaces],
+                [i["oper_status"] for i in m_ifaces],
+            )
+
+        # Nestali interfejsi (zamenjen uredjaj, novi if_index posle reboot-a...).
+        # Brise se SAMO ako je walk kompletan (ifDescr vracen) i interfejs nije
+        # vidjen 3 interface ciklusa -- jedan los walk ne brise nista.
+        # Metrike i rollup idu kroz ON DELETE CASCADE.
+        if result.get("iface_complete"):
+            grace = float(get_settings().snmp_iface_poll_interval_sec * 3)
+            gone = await fetch(
+                """DELETE FROM network_device_interfaces
+                   WHERE device_id = $1
+                     AND NOT (if_index = ANY($2::int[]))
+                     AND (last_polled_at IS NULL
+                          OR last_polled_at < NOW() - make_interval(secs => $3))
+                   RETURNING if_index, if_name""",
+                did, [i["if_index"] for i in ifaces], grace,
+            )
+            if gone:
+                for r in gone:
+                    _iface_prev.pop(f"{did}:{r['if_index']}", None)
+                names = ", ".join(str(r["if_name"]) for r in gone)
+                logger.info(
+                    f"SNMP {device.get('name', did)}: uklonjeno {len(gone)} nestalih "
+                    f"interfejsa ({names[:300]})"
+                )
 
 
 async def _poll_guarded(device: dict):
@@ -475,6 +514,16 @@ async def _run_limited(device: dict):
         _inflight.discard(did)
 
 
+def _prune_caches(active_ids: set[str]):
+    """SNMP_CLEANUP_R1: izbacuje iz in-memory keseva uredjaje kojih vise nema
+    (obrisani/neaktivni) i njihove interfejse -- inace kesevi rastu zauvek."""
+    for cache in (_last_polled, _iface_last_polled, _status_pending):
+        for k in [k for k in cache if k not in active_ids]:
+            cache.pop(k, None)
+    for k in [k for k in _iface_prev if k.split(":", 1)[0] not in active_ids]:
+        _iface_prev.pop(k, None)
+
+
 async def poll_snmp_all():
     """Scheduler tik -- isti duh kao monitor.poll_all(): zove se cesto
     (snmp_poll_tick_sec), ali stvarno poll-uje samo uredjaje kojima je
@@ -485,6 +534,7 @@ async def poll_snmp_all():
     except Exception as e:
         logger.error(f"SNMP: greska dohvatanja uredjaja: {e}")
         return
+    _prune_caches({str(r["id"]) for r in rows})
     if not rows:
         return
 
