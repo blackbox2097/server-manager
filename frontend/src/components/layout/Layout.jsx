@@ -3,30 +3,32 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import {
   Server, Activity, Terminal, BookOpen, Users,
-  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail, FileText, Database, Zap, Router, BatteryCharging, Boxes, Building2, Warehouse
+  ChevronDown, LogOut, Shield, Menu, X, KeyRound, RefreshCw, Key, Clock, Bell, Mail, FileText, Database, Zap, Router, BatteryCharging, Boxes, Building2, Warehouse, LayoutDashboard, List, Workflow
 } from 'lucide-react';
 import clsx from 'clsx';
 import useAuthStore from '../../store/authStore';
 import api from '../../services/api';
 import { Modal, Alert, Spinner } from '../ui';
 
-const navItems = [
-  { to: '/dashboard',  icon: Activity, label: 'Dashboard'   },
-  { to: '/servers',    icon: Server,   label: 'Serveri'     },
+// Sidebar: stavka ({ to }) ili grupa ({ label, items }) -- redosled je redosled u meniju.
+// Grupe se otvaraju/zatvaraju (stanje u localStorage); aktivna grupa je uvek otvorena.
+const nav = [
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { label: 'Serveri', icon: Server, items: [
+    { to: '/servers',    icon: List,     label: 'Spisak servera' },
+    { to: '/monitoring', icon: Activity, label: 'Monitoring' },
+    { to: '/ssh-keys',   icon: Key,      label: 'SSH ključevi' },
+  ] },
   { to: '/network-devices', icon: Router, label: 'Mrežni uređaji' },
-  { to: '/ups',        icon: BatteryCharging, label: 'UPS' },
-  { to: '/ssh-keys',   icon: Key,      label: 'SSH Kljucevi'},
-  { to: '/monitoring', icon: Activity, label: 'Monitoring'  },
-  { to: '/scripts',    icon: BookOpen, label: 'Skripte'     },
-  { to: '/schedules',  icon: Clock,    label: 'Zakazano'    },
-  { to: '/execute',    icon: Terminal, label: 'Izvrsavanje' },
-  { to: '/alerts',     icon: Bell,     label: 'Alarmi'      },
-  { to: '/automation', icon: Zap,      label: 'Automatizacija' },
-  { to: '/logs',       icon: FileText, label: 'Logovi'      },
-];
-
-// Grupe u sidebaru (podstavke se otvaraju/zatvaraju; stanje u localStorage)
-const navGroups = [
+  { to: '/ups', icon: BatteryCharging, label: 'UPS' },
+  { label: 'Operacije', icon: Workflow, items: [
+    { to: '/scripts',    icon: BookOpen, label: 'Skripte' },
+    { to: '/execute',    icon: Terminal, label: 'Izvršavanje' },
+    { to: '/schedules',  icon: Clock,    label: 'Zakazano' },
+    { to: '/automation', icon: Zap,      label: 'Automatizacija' },
+  ] },
+  { to: '/alerts', icon: Bell,     label: 'Alarmi' },
+  { to: '/logs',   icon: FileText, label: 'Logovi' },
   { label: 'Infrastruktura', icon: Building2, items: [
     { to: '/infra', icon: Warehouse, label: 'Lokacije i rackovi' },
     { to: '/device-models', icon: Boxes, label: 'Modeli uređaja', superadminOnly: true },
@@ -269,8 +271,7 @@ export default function Layout({ children }) {
 
         {/* Navigacija */}
         <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
-          {navItems.map(item => <NavItem key={item.to} {...item} />)}
-          {navGroups.map(g => <NavGroup key={g.label} {...g} />)}
+          {nav.map(e => e.items ? <NavGroup key={e.label} {...e} /> : <NavItem key={e.to} {...e} />)}
 
           {isSuperadmin && (
             <>
