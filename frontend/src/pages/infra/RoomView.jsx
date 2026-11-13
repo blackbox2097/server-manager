@@ -212,7 +212,7 @@ function WideModal({ open, onClose, title, children, footer }) {
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300">✕</button>
         </div>
         <div className="flex-1 overflow-y-auto p-4">{children}</div>
-        {footer && <div className="p-4 border-t border-gray-800 flex justify-end gap-2">{footer}</div>}
+        {footer && <div className="p-4 border-t border-gray-800 flex items-center justify-end gap-2">{footer}</div>}
       </div>
     </div>
   );
@@ -252,7 +252,9 @@ function DeviceForm({ open, device, preset, room, racks, devices, tenantId, mode
     const link = device?.network_device_id ? `network:${device.network_device_id}`
       : device?.server_id ? `server:${device.server_id}` : device?.ups_id ? `ups:${device.ups_id}` : '';
     setF({ name: device?.name || '', modelId: device?.model_id || '', heightU: device?.height_u || 1,
-           serialNumber: device?.serial_number || '', notes: device?.notes || '', link });
+           serialNumber: device?.serial_number || '', notes: device?.notes || '', link,
+           rackId: preset?.rackId ?? (device ? (device.rack_id || '') : (racks[0]?.id || '')),
+           pos: preset?.position ?? device?.rack_position ?? null });
     api.get(`/tenants/${tenantId}/infra/link-candidates`).then(r => setCands(r.data)).catch(() => setCands({ network: [], servers: [], ups: [] }));
   }, [open, device, tenantId]);
 
@@ -287,17 +289,46 @@ function DeviceForm({ open, device, preset, room, racks, devices, tenantId, mode
       serialNumber: f.serialNumber, notes: f.notes,
       networkDeviceId: lk === 'network' ? id : null, serverId: lk === 'server' ? id : null, upsId: lk === 'ups' ? id : null,
     };
+    const wantRack = rackable && f.rackId ? f.rackId : null;
+    const wantPos = wantRack ? f.pos : null;
+    if (wantRack && !wantPos) { setErr('Izaberi poziciju u racku (ili "van racka")'); return; }
     setSaving(true); setErr('');
     try {
-      if (isEdit) await api.put(`/tenants/${tenantId}/infra/devices/${device.id}`, body);
-      else await api.post(`/tenants/${tenantId}/infra/devices`, { ...body, rackId: preset?.rackId || null, rackPosition: preset?.position || null });
+      if (isEdit) {
+        const D = `/tenants/${tenantId}/infra/devices/${device.id}`;
+        const moved = (device.rack_id || null) !== wantRack || (device.rack_position || null) !== wantPos;
+        if (moved && device.rack_id) await api.patch(`${D}/place`, { rackId: null, position: null });
+        await api.put(D, body);
+        if (moved && wantRack) await api.patch(`${D}/place`, { rackId: wantRack, position: wantPos });
+      } else {
+        await api.post(`/tenants/${tenantId}/infra/devices`, { ...body, rackId: wantRack, rackPosition: wantPos });
+      }
       onSaved();
     } catch (e) { setErr(errMsg(e, 'Greška pri čuvanju')); }
     setSaving(false);
   };
 
-  const presetRack = preset && racks.find(r => r.id === preset.rackId);
   const sel = modelList?.find(m => m.id === f.modelId);
+  const height = f.modelId ? (sel?.heightU ?? 1) : (Number(f.heightU) || 1);
+  const rackable = height > 0;
+  // slobodne pocetne pozicije u izabranom racku za ovu visinu (od vrha racka nadole)
+  const freeIn = rackId => {
+    const r = racks.find(x => x.id === rackId);
+    if (!r || !rackable) return [];
+    const others = (devices || []).filter(d => d.rack_id === rackId && d.id !== device?.id);
+    const out = [];
+    for (let p = 1; p + height - 1 <= r.height_u; p++) {
+      const top = p + height - 1;
+      if (!others.some(d => d.rack_position <= top && d.rack_position + d.height_u - 1 >= p)) out.push(p);
+    }
+    return r.units_from_top ? out : out.reverse();
+  };
+  const freePos = freeIn(f.rackId);
+  useEffect(() => {
+    if (!open || !f.rackId) return;
+    if (!rackable) { setF(p => ({ ...p, rackId: '', pos: null })); return; }
+    if (!freePos.includes(f.pos)) setF(p => ({ ...p, pos: freePos[0] ?? null }));
+  }, [open, f.rackId, height, rackable, freePos.join(',')]);  // eslint-disable-line
   const byVendor = useMemo(() => {
     const g = {};
     (modelList || []).forEach(m => { (g[m.vendor] ||= []).push(m); });
@@ -335,12 +366,32 @@ function DeviceForm({ open, device, preset, room, racks, devices, tenantId, mode
     </select>
   );
 
+  const span = p => `U${p}${height > 1 ? `–U${p + height - 1}` : ''}`;
+  const placeBlock = (
+    <div className="flex items-center gap-2 flex-1 min-w-0 mr-4">
+      <span className="text-sm text-gray-400 flex-shrink-0">Mesto:</span>
+      {!rackable ? (
+        <span className="text-sm text-gray-400">ovaj model ne ide u rack — biće van racka</span>
+      ) : (<>
+        <select className="input w-64" value={f.rackId || ''} onChange={e => setF(p => ({ ...p, rackId: e.target.value, pos: null }))}>
+          <option value="">van racka</option>
+          {racks.map(r => <option key={r.id} value={r.id}>{r.name} ({freeIn(r.id).length ? `${freeIn(r.id).length} slobodnih mesta` : 'nema mesta'})</option>)}
+        </select>
+        {f.rackId && (freePos.length ? (
+          <select className="input w-32" value={f.pos || ''} onChange={e => setF(p => ({ ...p, pos: Number(e.target.value) }))}>
+            {freePos.map(p => <option key={p} value={p}>{span(p)}</option>)}
+          </select>
+        ) : <span className="text-sm text-yellow-400">nema mesta za {height}U</span>)}
+      </>)}
+    </div>
+  );
+
   const common = (
     <div className="grid grid-cols-2 gap-3">
       <div className="col-span-2"><label className="label">Naziv *</label>
         <input className="input" value={f.name || ''} onChange={e => setF(p => ({ ...p, name: e.target.value, autoName: false }))} /></div>
       {(isEdit || kind !== 'passive') && <div className="col-span-2"><label className="label">Model</label>{modelSelect}
-        {sel && sel.heightU === 0 && <p className="text-xs text-yellow-400 mt-1">Ovaj model ne ide u rack — biće u lokaciji, bez mesta u racku.</p>}</div>}
+</div>}
       {!f.modelId && <div><label className="label">Visina (U)</label>
         <input className="input" type="number" min={1} max={60} value={f.heightU || 1} onChange={e => setF(p => ({ ...p, heightU: e.target.value }))} /></div>}
       {isEdit && <div className="col-span-2"><label className="label">Povezan sa monitoringom</label>{linkSelect}</div>}
@@ -353,11 +404,10 @@ function DeviceForm({ open, device, preset, room, racks, devices, tenantId, mode
 
   return (
     <WideModal open={open} onClose={onClose} title={isEdit ? `Izmena: ${device.name}` : 'Dodaj u rack'}
-      footer={<><button className="btn-secondary" onClick={onClose}>Otkaži</button>
+      footer={<>{placeBlock}<button className="btn-secondary" onClick={onClose}>Otkaži</button>
         <button className="btn-primary" onClick={save} disabled={saving}>{saving ? <Spinner /> : null} Sačuvaj</button></>}>
       <div className="space-y-4">
         {err && <Alert type="error" message={err} />}
-        {presetRack && <p className="text-sm text-gray-400">Mesto: <span className="text-gray-200">{presetRack.name}</span>, od U{preset.position} naviše.</p>}
 
         {!isEdit && (
           <div className="flex gap-1 border-b border-gray-800">
@@ -423,7 +473,7 @@ function DeviceForm({ open, device, preset, room, racks, devices, tenantId, mode
 
 // ── panel izabranog uredjaja ────────────────────────────────────────────────
 function DevicePanel({ device, rack, model, mapping, selPort, onPortClick, canManage, onClose, onEdit, onUnplace, onDelete }) {
-  const where = rack ? `${rack.name} · U${device.rack_position}${device.height_u > 1 ? `–U${device.rack_position + device.height_u - 1}` : ''}` : 'bez mesta u racku';
+  const where = rack ? `${rack.name} · U${device.rack_position}${device.height_u > 1 ? `–U${device.rack_position + device.height_u - 1}` : ''}` : 'van racka';
   const iface = selPort && mapping?.byPort[selPort]?.iface;
   return (
     <div className="card space-y-3">
@@ -791,6 +841,40 @@ export default function RoomView() {
           onDelete={d => setConfirm({ kind: 'device', item: d })} />
       ) : (
       <div className="flex gap-4 items-start">
+        {/* sa strane: uredjaji bez mesta u racku -- i zona za skidanje iz racka */}
+        <div className="w-56 flex-shrink-0 sticky top-16"
+          onDragOver={e => { if (dragRef.current) e.preventDefault(); }}
+          onDrop={e => {
+            e.preventDefault();
+            const drag = dragRef.current; dragRef.current = null; setPreview(null);
+            const d = drag && devices.find(x => x.id === drag.id);
+            if (d?.rack_id) place(d.id, null, null);
+          }}>
+          <div className="card p-3 min-h-[160px]">
+            <p className="text-sm font-medium mb-1">Van racka <span className="text-gray-500 font-normal">({unplaced.length})</span></p>
+            <p className="text-[11px] text-gray-500 mb-2">{canManage ? 'Prevuci u rack, ili iz racka ovde.' : 'Uređaji koji nisu u racku.'}</p>
+            <div className="space-y-1.5 max-h-[70vh] overflow-y-auto">
+              {unplaced.length === 0 && <p className="text-xs text-gray-600 py-4 text-center border border-dashed border-gray-800 rounded-lg">prazno</p>}
+              {unplaced.map(d => {
+                const rackable = isRackable(d);
+                return (
+                  <div key={d.id} draggable={canManage && rackable}
+                    onDragStart={e => {
+                      dragRef.current = { id: d.id, h: d.height_u, grabRow: 0, rackable };
+                      e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', d.id);
+                    }}
+                    onDragEnd={() => { dragRef.current = null; setPreview(null); }}
+                    onClick={() => setSelectedId(d.id)}
+                    className={`px-2.5 py-2 rounded-lg border text-xs flex items-center gap-1.5 ${selectedId === d.id ? 'border-brand-500' : 'border-gray-700'} ${canManage && rackable ? 'cursor-grab' : 'cursor-pointer'} bg-gray-800/60`}>
+                    {d.linked_kind && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[d.linked_status] || 'bg-gray-600'}`} />}
+                    <span className="truncate flex-1">{d.name}</span>
+                    <span className="text-gray-500 flex-shrink-0">{rackable ? `${d.height_u}U` : 'ne ide u rack'}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
         <div className="flex-1 min-w-0 space-y-4">
           {racks.length === 0 ? (
             <div className="card text-sm text-gray-400">
@@ -814,40 +898,6 @@ export default function RoomView() {
             </div>
           )}
 
-          {/* bez mesta u racku -- i zona za skidanje iz racka */}
-          <div className={`card ${dragRef.current && preview === null ? '' : ''}`}
-            onDragOver={e => { if (dragRef.current) e.preventDefault(); }}
-            onDrop={e => {
-              e.preventDefault();
-              const drag = dragRef.current; dragRef.current = null; setPreview(null);
-              const d = drag && devices.find(x => x.id === drag.id);
-              if (d?.rack_id) place(d.id, null, null);
-            }}>
-            <p className="text-sm font-medium mb-2">Bez mesta u racku <span className="text-gray-500 font-normal">({unplaced.length})</span></p>
-            {unplaced.length === 0 ? (
-              <p className="text-xs text-gray-500">Svi uređaji su u rackovima. {canManage && 'Prevuci uređaj ovde da ga skineš iz racka.'}</p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {unplaced.map(d => {
-                  const rackable = isRackable(d);
-                  return (
-                    <div key={d.id} draggable={canManage && rackable}
-                      onDragStart={e => {
-                        dragRef.current = { id: d.id, h: d.height_u, grabRow: 0, rackable };
-                        e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', d.id);
-                      }}
-                      onDragEnd={() => { dragRef.current = null; setPreview(null); }}
-                      onClick={() => setSelectedId(d.id)}
-                      className={`px-2.5 py-1.5 rounded-lg border text-xs flex items-center gap-1.5 ${selectedId === d.id ? 'border-brand-500' : 'border-gray-700'} ${canManage && rackable ? 'cursor-grab' : 'cursor-pointer'} bg-gray-800/60`}>
-                      {d.linked_kind && <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[d.linked_status] || 'bg-gray-600'}`} />}
-                      {d.name}
-                      <span className="text-gray-500">{rackable ? `${d.height_u}U` : 'van racka'}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         </div>
 
         {selected && (
@@ -877,7 +927,7 @@ export default function RoomView() {
       <ConfirmDialog open={!!confirm} danger
         title={confirm?.kind === 'rack' ? 'Brisanje racka' : 'Brisanje uređaja'}
         message={confirm?.kind === 'rack'
-          ? `Obrisati rack "${confirm?.item.name}"? Uređaji iz njega ostaju u lokaciji, bez mesta u racku.`
+          ? `Obrisati rack "${confirm?.item.name}"? Uređaji iz njega prelaze u "Van racka".`
           : `Obrisati uređaj "${confirm?.item.name}" iz dokumentacije? Monitoring se ne menja.`}
         onConfirm={doConfirm} onCancel={() => setConfirm(null)} />
     </div>

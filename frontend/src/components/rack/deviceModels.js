@@ -45,7 +45,13 @@ function stateOf(iface) {
  */
 export function mapInterfaces(model, interfaces) {
   const ifaces = [...(interfaces || [])].sort((a, b) => a.if_index - b.if_index);
-  const byName = new Map(ifaces.map(i => [i.if_name, i]));
+  // ime -> interfejs; kad se ime ponavlja (npr. port "10" i VLAN "10" na Arubi),
+  // prednost ima ethernet interfejs
+  const byName = new Map();
+  for (const i of ifaces) {
+    const cur = byName.get(i.if_name);
+    if (!cur || (!ETHERNET_TYPES.has(String(cur.if_type)) && ETHERNET_TYPES.has(String(i.if_type)))) byName.set(i.if_name, i);
+  }
   const ports = (model.ports || []).filter(p => p.snmp_name && NETWORK_PORT(p.type));
   const byPort = {};
   const used = new Set();
