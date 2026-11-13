@@ -26,6 +26,16 @@ export const PORT_COLORS = {
   unknown:    '#26282b',   // nema podatka -- "rupa" porta
 };
 const SELECTED = '#378ADD';
+const HIGHLIGHT = '#EFC127';          // drugi kraj kabla / trace
+
+// Boje kablova (dokumentacija) -> boja oznake na portu
+export const CABLE_COLORS = [
+  ['plava', '#378ADD'], ['žuta', '#EFC127'], ['zelena', '#4CAF50'], ['crvena', '#E24B4A'],
+  ['narandžasta', '#EF8F27'], ['ljubičasta', '#8E5BD8'], ['roze', '#E77FB3'],
+  ['bela', '#F2F2EE'], ['siva', '#9A9A95'], ['crna', '#2b2b2b'],
+];
+export const cableHex = name => (CABLE_COLORS.find(([n]) => n === name) || [null, '#C9C9C4'])[1];
+export const portKey = (name, combo) => (combo ? `${name}@sfp` : name);
 
 function blockNames(b) {
   if (b.from == null) return [b.name];
@@ -81,7 +91,7 @@ export function layoutFace(face, geo) {
     names.forEach((name, i) => {
       const [c, r] = cellOf(i, rows, cols, b.layout?.order);
       out.push({
-        name, type: b.type, speed: b.speed, combo: !!b.combo,
+        name, pkey: portKey(name, !!b.combo), type: b.type, speed: b.speed, combo: !!b.combo,
         poe: (b.poe_in || []).includes(name) ? 'in' : b.poe,
         x: x + c * (pw + PORT_GAP) + (gc ? Math.floor(c / gc) * GROUP_GAP : 0),
         y: y0 + r * (ph + ROW_GAP), w: pw, h: ph, row: r, rows, block: bi,
@@ -113,8 +123,9 @@ function Ears({ geo, mount }) {
   );
 }
 
-function PortShape({ p, fill, selected, notPresent, textColor, showNumber, onClick, title }) {
-  const stroke = selected ? SELECTED : notPresent ? '#888780' : '#1a1b1d';
+function PortShape({ p, fill, selected, highlighted, notPresent, textColor, showNumber, onClick, title, module, cable }) {
+  const stroke = selected ? SELECTED : highlighted ? HIGHLIGHT : notPresent ? '#888780' : '#1a1b1d';
+  const ring = selected || highlighted;
   const common = { onClick, style: onClick ? { cursor: 'pointer' } : undefined };
   const num = (p.name.match(/\d+$/) || [''])[0];
   const numY = p.rows === 2 && p.row === 0 ? p.y - 0.9 : p.y + p.h + 2.6;
@@ -141,7 +152,8 @@ function PortShape({ p, fill, selected, notPresent, textColor, showNumber, onCli
     return (
       <g {...common}><title>{title}</title>
         <rect x={p.x} y={p.y} width={p.w} height={p.h} rx={0.8}
-          fill={selected ? SELECTED : fill} stroke={selected ? SELECTED : '#1a1b1d'} strokeWidth={selected ? 0.9 : 0.45} />
+          fill={selected ? SELECTED : fill} stroke={selected ? SELECTED : highlighted ? HIGHLIGHT : '#1a1b1d'} strokeWidth={ring ? 0.9 : 0.45} />
+        {cable && <rect x={p.x + 1.5} y={p.y + p.h - 1.4} width={p.w - 3} height={1.1} fill={cableHex(cable)} style={{ pointerEvents: 'none' }} />}
         {p.type === 'lc' ? (<>
           <rect x={p.x + 1.6} y={p.y + 1.6} width={p.w / 2 - 2.4} height={p.h - 3.2} fill="#1a1b1d" />
           <rect x={p.x + p.w / 2 + 0.8} y={p.y + 1.6} width={p.w / 2 - 2.4} height={p.h - 3.2} fill="#1a1b1d" />
@@ -167,14 +179,21 @@ function PortShape({ p, fill, selected, notPresent, textColor, showNumber, onCli
   return (
     <g {...common}><title>{title}</title>
       <rect x={p.x} y={p.y} width={p.w} height={p.h} rx={0.8}
-        fill={selected ? SELECTED : fill} stroke={stroke} strokeWidth={selected ? 0.9 : 0.45}
-        strokeDasharray={notPresent && !selected ? '1.4 1' : undefined} />
+        fill={selected ? SELECTED : fill} stroke={stroke} strokeWidth={ring ? 0.9 : 0.45}
+        strokeDasharray={notPresent && !ring ? '1.4 1' : undefined} />
+      {!isRj && module && module !== 'none' && !notPresent && (
+        <rect x={p.x + 1} y={p.y + 1} width={3.2} height={p.h - 2} rx={0.4} fill="#C9C9C4" opacity={0.9} />
+      )}
       {isRj && (
         <rect x={p.x + p.w / 2 - 2.4} y={p.rows === 2 && p.row === 0 ? p.y + p.h - 2.6 : p.y}
           width={4.8} height={2.6} fill="#1a1b1d" />
       )}
       {!isRj && (
         <rect x={p.x + 1.2} y={p.y + p.h / 2 - 0.5} width={p.w - 2.4} height={1} fill="#1a1b1d" opacity={0.6} />
+      )}
+      {cable && (
+        <rect x={p.x + 1.5} y={p.rows === 2 && p.row === 0 ? p.y + 0.6 : p.y + p.h - 2} width={p.w - 3} height={1.4}
+          rx={0.4} fill={cableHex(cable)} stroke="#1a1b1d" strokeWidth={0.2} style={{ pointerEvents: 'none' }} />
       )}
       {showNumber && num && (
         <text x={p.x + p.w / 2} y={numY} fontSize={2.3} textAnchor="middle" fill={textColor}
@@ -253,7 +272,7 @@ function Decor({ d, geo, statusColor }) {
  */
 export default function Faceplate({
   model, side = 'front', portState, portInfo, selected, onPortClick,
-  showNumbers = true, className, statusColor,
+  showNumbers = true, className, statusColor, modules, cables, highlight,
 }) {
   const geo = useMemo(() => faceGeometry(model), [model]);
   const face = side === 'rear' ? model.rear : model.front;
@@ -285,8 +304,9 @@ export default function Faceplate({
         </text>
       )}
       {ports.map(p => {
-        const st = portState?.[p.name] || 'unknown';
-        const info = portInfo?.[p.name];
+        // stanje/info po kljucu porta (combo SFP ima svoj), pa po imenu
+        const st = portState?.[p.pkey] || portState?.[p.name] || 'unknown';
+        const info = portInfo?.[p.pkey] ?? portInfo?.[p.name];
         const title = [
           p.name,
           [p.type.toUpperCase(), p.speed, p.poe ? `PoE-${p.poe}` : null, p.combo ? 'combo' : null].filter(Boolean).join(' '),
@@ -297,7 +317,10 @@ export default function Faceplate({
           <PortShape key={p.key} p={p} title={title}
             fill={PORT_COLORS[st] ?? PORT_COLORS.unknown}
             notPresent={st === 'notPresent'}
-            selected={selected === p.name}
+            selected={selected === p.pkey}
+            highlighted={!!highlight?.has(p.pkey)}
+            module={modules?.[p.pkey]}
+            cable={cables?.[p.pkey]}
             textColor={look.text || '#444441'}
             showNumber={showNumbers && !['usb', 'power', 'console', 'outlet'].includes(p.type)}
             onClick={onPortClick ? e => { e.stopPropagation(); onPortClick(p); } : undefined} />

@@ -368,10 +368,12 @@ async def update_device(tid: str, did: str, req: Request, body: DeviceIn, user=D
     async with pool.acquire() as conn:
         async with conn.transaction():
             cur = await conn.fetchrow(
-                "SELECT room_id, rack_id, rack_position FROM infra_devices WHERE id=$1 AND tenant_id=$2 FOR UPDATE",
+                "SELECT room_id, rack_id, rack_position, model_id FROM infra_devices WHERE id=$1 AND tenant_id=$2 FOR UPDATE",
                 did, tid)
             if not cur:
                 raise HTTPException(404, "Uredjaj nije pronadjen")
+            if (cur["model_id"] or None) != model_id:
+                await _check_cables_fit(conn, did, model_id)
             rack_id, pos = cur["rack_id"], cur["rack_position"]
             if str(cur["room_id"]) != body.roomId:
                 rack_id, pos = None, None
@@ -462,3 +464,280 @@ async def link_candidates(tid: str, user=Depends(get_current_user)):
                  "model": " ".join(x for x in (r["manufacturer"], r["model"]) if x) or None,
                  "linkedTo": used.get(str(r["id"]))} for r in ups],
     }
+
+
+# ── portovi i kablovi (pecovanje) ────────────────────────────────────────────
+# Spisak portova dolazi iz modela; u bazi su samo uneti podaci o portu (modul,
+# oznaka) i kablovi. Port = kljuc iz modela (vidi dm.port_key).
+
+MODULES = ["none", "1G-SX", "1G-LX", "1G-T", "10G-SR", "10G-LR", "10G-DAC", "10G-T",
+           "25G-SR", "25G-LR", "40G-SR4", "40G-LR4", "BiDi", "other"]
+SIDES = ("front", "rear")
+
+
+class PortInfoIn(BaseModel):
+    deviceId: str
+    port: str
+    module: str | None = None
+    label: str | None = None
+    notes: str | None = None
+
+
+class EndIn(BaseModel):
+    deviceId: str
+    port: str
+    side: str = "front"
+
+
+class CablePropsIn(BaseModel):
+    cableType: str | None = None
+    color: str | None = None
+    lengthM: float | None = None
+    label: str | None = None
+    notes: str | None = None
+
+    @field_validator("lengthM")
+    @classmethod
+    def _len(cls, v):
+        if v is not None and not 0 < v < 100000:
+            raise ValueError("Duzina mora biti pozitivna")
+        return v
+
+
+class CableIn(CablePropsIn):
+    a: EndIn
+    b: EndIn
+
+
+def _port_label(key: str) -> str:
+    return key[:-4] + " (SFP)" if key.endswith("@sfp") else key
+
+
+async def _device_with_model(conn, tid: str, did: str):
+    row = await conn.fetchrow(
+        "SELECT id, name, model_id, room_id FROM infra_devices WHERE id=$1 AND tenant_id=$2", did, tid)
+    if not row:
+        raise HTTPException(404, "Uredjaj nije pronadjen")
+    model = dm.get_model(row["model_id"]) if row["model_id"] else None
+    return row, model
+
+
+def _check_port(dev, model, key: str, side: str = "front") -> dict:
+    if not model:
+        raise HTTPException(400, f"{dev['name']}: uredjaj nema model -- portovi nisu poznati")
+    port = model.cable_ports().get(key)
+    if not port:
+        raise HTTPException(400, f"{dev['name']}: port '{_port_label(key)}' ne postoji u modelu")
+    if side not in SIDES:
+        raise HTTPException(400, "Strana mora biti 'front' ili 'rear'")
+    if side == "rear" and not model.passthrough:
+        raise HTTPException(400, f"{dev['name']}: zadnja strana postoji samo kod panela")
+    return port
+
+
+async def _check_cables_fit(conn, did: str, model_id: str | None):
+    """Promena modela ne sme da ostavi kabl na portu koji vise ne postoji."""
+    ends = await conn.fetch("SELECT port_key, side FROM infra_cable_ends WHERE device_id=$1", did)
+    if not ends:
+        return
+    model = dm.get_model(model_id) if model_id else None
+    ports = model.cable_ports() if model else {}
+    bad = sorted({_port_label(e["port_key"]) for e in ends
+                  if e["port_key"] not in ports or (e["side"] == "rear" and not model.passthrough)})
+    if bad:
+        raise HTTPException(409, "Novi model nema portove na kojima su kablovi: "
+                                 + ", ".join(bad) + " -- prvo otkaci te kablove")
+
+
+def _cable_dict(c) -> dict:
+    return {"id": str(c["id"]), "cableType": c["cable_type"], "color": c["color"],
+            "lengthM": float(c["length_m"]) if c["length_m"] is not None else None,
+            "label": c["label"], "notes": c["notes"]}
+
+
+@router.get("/{tid}/infra/rooms/{rid}/cabling")
+async def room_cabling(tid: str, rid: str, user=Depends(get_current_user)):
+    """Podaci o portovima i svi kablovi koji imaju bar jedan kraj u lokaciji
+    (drugi kraj moze biti u drugoj lokaciji)."""
+    await check_tenant_perm(tid, user)
+    await _check_room(tid, rid)
+    info = await fetch(
+        """SELECT p.device_id, p.port_key, p.module, p.label, p.notes FROM infra_port_info p
+           JOIN infra_devices d ON d.id = p.device_id WHERE d.room_id=$1 AND d.tenant_id=$2""", rid, tid)
+    rows = await fetch(
+        """SELECT c.id, c.cable_type, c.color, c.length_m, c.label, c.notes,
+                  e.end_no, e.device_id, e.port_key, e.side,
+                  d.name AS device_name, d.room_id, ro.name AS room_name, r.name AS rack_name
+           FROM infra_cables c
+           JOIN infra_cable_ends e ON e.cable_id = c.id
+           JOIN infra_devices d    ON d.id = e.device_id
+           JOIN infra_rooms ro     ON ro.id = d.room_id
+           LEFT JOIN infra_racks r ON r.id = d.rack_id
+           WHERE c.tenant_id = $2 AND c.id IN (
+               SELECT e2.cable_id FROM infra_cable_ends e2
+               JOIN infra_devices d2 ON d2.id = e2.device_id WHERE d2.room_id = $1)
+           ORDER BY c.id, e.end_no""", rid, tid)
+    ports: dict[str, dict] = {}
+    for r in info:
+        ports.setdefault(str(r["device_id"]), {})[r["port_key"]] = {
+            "module": r["module"], "label": r["label"], "notes": r["notes"]}
+    cables: dict[str, dict] = {}
+    for r in rows:
+        c = cables.setdefault(str(r["id"]), {**_cable_dict(r), "ends": []})
+        c["ends"].append({"deviceId": str(r["device_id"]), "deviceName": r["device_name"],
+                          "port": r["port_key"], "side": r["side"],
+                          "roomId": str(r["room_id"]), "roomName": r["room_name"], "rackName": r["rack_name"]})
+    return {"ports": ports, "cables": [c for c in cables.values() if len(c["ends"]) == 2],
+            "modules": MODULES}
+
+
+@router.put("/{tid}/infra/port-info")
+async def set_port_info(tid: str, req: Request, body: PortInfoIn, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user, PERM)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        dev, model = await _device_with_model(conn, tid, body.deviceId)
+        port = _check_port(dev, model, body.port)
+        module = _n(body.module)
+        if module is not None:
+            if port["type"] not in dm.MODULE_TYPES:
+                raise HTTPException(400, "Modul se unosi samo za SFP/QSFP slotove")
+            if module not in MODULES:
+                raise HTTPException(400, f"Nepoznat tip modula '{module}'")
+        label, notes = _n(body.label), _n(body.notes)
+        if module is None and label is None and notes is None:
+            await conn.execute("DELETE FROM infra_port_info WHERE device_id=$1 AND port_key=$2",
+                               body.deviceId, body.port)
+        else:
+            await conn.execute(
+                """INSERT INTO infra_port_info (device_id, port_key, module, label, notes)
+                   VALUES ($1,$2,$3,$4,$5)
+                   ON CONFLICT (device_id, port_key) DO UPDATE
+                   SET module=$3, label=$4, notes=$5, updated_at=NOW()""",
+                body.deviceId, body.port, module, label, notes)
+    await _log("infra.port.update", req, user, tid, body.deviceId,
+               {"device": dev["name"], "port": body.port, "module": module, "label": label})
+    return {"ok": True}
+
+
+@router.post("/{tid}/infra/cables", status_code=201)
+async def create_cable(tid: str, req: Request, body: CableIn, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user, PERM)
+    if body.a.deviceId == body.b.deviceId and body.a.port == body.b.port:
+        raise HTTPException(400, "Kabl ne moze da spaja port sam sa sobom")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            ends = []
+            for e in (body.a, body.b):
+                dev, model = await _device_with_model(conn, tid, e.deviceId)
+                _check_port(dev, model, e.port, e.side)
+                busy = await conn.fetchrow(
+                    """SELECT od.name, o.port_key FROM infra_cable_ends x
+                       JOIN infra_cable_ends o ON o.cable_id = x.cable_id AND o.end_no <> x.end_no
+                       JOIN infra_devices od ON od.id = o.device_id
+                       WHERE x.device_id=$1 AND x.port_key=$2 AND x.side=$3""",
+                    e.deviceId, e.port, e.side)
+                if busy:
+                    raise HTTPException(409, f"{dev['name']} / {_port_label(e.port)} je vec povezan "
+                                             f"(sa {busy['name']} / {_port_label(busy['port_key'])})")
+                ends.append((dev, e))
+            row = await conn.fetchrow(
+                """INSERT INTO infra_cables (tenant_id, cable_type, color, length_m, label, notes)
+                   VALUES ($1,$2,$3,$4,$5,$6) RETURNING id""",
+                tid, _n(body.cableType), _n(body.color), body.lengthM, _n(body.label), _n(body.notes))
+            try:
+                for no, (dev, e) in enumerate(ends, 1):
+                    await conn.execute(
+                        """INSERT INTO infra_cable_ends (cable_id, end_no, device_id, port_key, side)
+                           VALUES ($1,$2,$3,$4,$5)""", row["id"], no, e.deviceId, e.port, e.side)
+            except asyncpg.UniqueViolationError:
+                raise HTTPException(409, "Port je u medjuvremenu povezan -- osvezi prikaz")
+    a, b = ends
+    await _log("infra.cable.create", req, user, tid, row["id"], {
+        "a": f"{a[0]['name']} / {_port_label(a[1].port)} ({a[1].side})",
+        "b": f"{b[0]['name']} / {_port_label(b[1].port)} ({b[1].side})"})
+    return {"id": str(row["id"])}
+
+
+@router.put("/{tid}/infra/cables/{cid}")
+async def update_cable(tid: str, cid: str, req: Request, body: CablePropsIn, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user, PERM)
+    row = await fetchrow(
+        """UPDATE infra_cables SET cable_type=$1, color=$2, length_m=$3, label=$4, notes=$5, updated_at=NOW()
+           WHERE id=$6 AND tenant_id=$7 RETURNING id""",
+        _n(body.cableType), _n(body.color), body.lengthM, _n(body.label), _n(body.notes), cid, tid)
+    if not row:
+        raise HTTPException(404, "Kabl nije pronadjen")
+    await _log("infra.cable.update", req, user, tid, cid, {"label": _n(body.label)})
+    return {"ok": True}
+
+
+@router.delete("/{tid}/infra/cables/{cid}")
+async def delete_cable(tid: str, cid: str, req: Request, user=Depends(get_current_user)):
+    await check_tenant_perm(tid, user, PERM)
+    ends = await fetch(
+        """SELECT d.name, e.port_key FROM infra_cable_ends e JOIN infra_devices d ON d.id=e.device_id
+           JOIN infra_cables c ON c.id=e.cable_id WHERE e.cable_id=$1 AND c.tenant_id=$2 ORDER BY e.end_no""",
+        cid, tid)
+    row = await fetchrow("DELETE FROM infra_cables WHERE id=$1 AND tenant_id=$2 RETURNING id", cid, tid)
+    if not row:
+        raise HTTPException(404, "Kabl nije pronadjen")
+    await _log("infra.cable.delete", req, user, tid, cid,
+               {"ends": [f"{e['name']} / {_port_label(e['port_key'])}" for e in ends]})
+    return {"ok": True}
+
+
+@router.get("/{tid}/infra/trace")
+async def trace(tid: str, deviceId: str, port: str, user=Depends(get_current_user)):
+    """Putanja od porta do krajnjih uredjaja, kroz panele (prednja -> zadnja
+    strana). Za port na panelu ide u oba smera. Vraca naizmenicno
+    [port, kabl, port, kabl, ... port]."""
+    await check_tenant_perm(tid, user)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        dev, model = await _device_with_model(conn, tid, deviceId)
+        _check_port(dev, model, port)
+        devs: dict[str, dict] = {}
+
+        async def point(did, key):
+            if did not in devs:
+                r = await conn.fetchrow(
+                    """SELECT d.name, d.model_id, d.rack_position, ro.id AS room_id, ro.name AS room_name,
+                              r.name AS rack_name
+                       FROM infra_devices d JOIN infra_rooms ro ON ro.id=d.room_id
+                       LEFT JOIN infra_racks r ON r.id=d.rack_id WHERE d.id=$1""", did)
+                m = dm.get_model(r["model_id"]) if r["model_id"] else None
+                devs[did] = {"deviceName": r["name"], "roomId": str(r["room_id"]), "roomName": r["room_name"],
+                             "rackName": r["rack_name"], "rackPosition": r["rack_position"],
+                             "passthrough": bool(m and m.passthrough)}
+            return {"kind": "port", "deviceId": did, "port": key, "portName": _port_label(key), **devs[did]}
+
+        async def walk(did, key, side):
+            out, seen = [], {(did, key)}
+            while len(out) < 64:
+                c = await conn.fetchrow(
+                    """SELECT c.id, c.cable_type, c.color, c.length_m, c.label, c.notes,
+                              o.device_id, o.port_key, o.side
+                       FROM infra_cable_ends e JOIN infra_cables c ON c.id = e.cable_id
+                       JOIN infra_cable_ends o ON o.cable_id = e.cable_id AND o.end_no <> e.end_no
+                       WHERE e.device_id=$1 AND e.port_key=$2 AND e.side=$3""", did, key, side)
+                if not c:
+                    break
+                d2, k2 = str(c["device_id"]), c["port_key"]
+                p = await point(d2, k2)
+                out += [{"kind": "cable", **_cable_dict(c), "sides": [side, c["side"]]}, p]
+                if not p["passthrough"] or (d2, k2) in seen:
+                    break
+                seen.add((d2, k2))
+                did, key, side = d2, k2, "front" if c["side"] == "rear" else "rear"
+            return out
+
+        start = await point(deviceId, port)
+        if start["passthrough"]:
+            back = await walk(deviceId, port, "rear")
+            back = [{**x, "sides": x["sides"][::-1]} if x["kind"] == "cable" else x for x in back[::-1]]
+            path = back + [start] + await walk(deviceId, port, "front")
+        else:
+            path = [start] + await walk(deviceId, port, "front")
+    return {"path": path}

@@ -62,4 +62,4 @@ async def get_model(model_id: str, user=Depends(get_current_user)):
     m = dm.get_model(model_id)
     if not m:
         raise HTTPException(404, "Model nije pronadjen")
-    return {**m.model_dump(by_alias=True), "ports": m.ports()}
+    return {**m.model_dump(by_alias=True), "ports": m.ports(), "passthrough": m.passthrough}

@@ -33,6 +33,17 @@ DeviceType = Literal["switch", "router", "firewall", "ap", "patch_panel", "fiber
                      "ups", "server", "nas", "pdu", "shelf", "blank", "cable_manager", "other"]
 # Tipovi "porta" koji nisu mrezni -- crtaju se, ali se ne mapiraju na SNMP i ne pecuju
 NON_NETWORK = {"usb", "power", "outlet"}
+# Slotovi u koje ide modul (polje "modul" u dokumentaciji porta)
+MODULE_TYPES = {"sfp", "sfp+", "sfp28", "qsfp+"}
+# Uredjaji koji samo prosledjuju vezu: port ima prednju i zadnju stranu,
+# a trace prolazi kroz njih (patch kabl spreda -> instalacija pozadi)
+PASSTHROUGH_TYPES = {"patch_panel", "fiber_panel"}
+
+
+def port_key(name: str, combo: bool = False) -> str:
+    """Kljuc porta u dokumentaciji (portovi, kablovi). Combo SFP deli ime sa
+    RJ45 parom, pa dobija sufiks."""
+    return f"{name}@sfp" if combo else name
 
 
 class _Strict(BaseModel):
@@ -201,6 +212,7 @@ class DeviceModel(_Strict):
             for bi, b in enumerate(face.blocks):
                 for name, snmp in b.names():
                     out.append({
+                        "key": port_key(name, b.combo),
                         "name": name,
                         "snmp_name": None if b.type in NON_NETWORK else snmp,
                         "type": b.type,
@@ -211,6 +223,14 @@ class DeviceModel(_Strict):
                         "block": bi,
                     })
         return out
+
+    @property
+    def passthrough(self) -> bool:
+        return self.type in PASSTHROUGH_TYPES
+
+    def cable_ports(self) -> dict[str, dict]:
+        """{kljuc: port} za portove na koje ide kabl (bez napajanja/USB-a)."""
+        return {p["key"]: p for p in self.ports() if p["type"] not in NON_NETWORK}
 
 
 class _Library:

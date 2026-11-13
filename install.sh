@@ -872,6 +872,67 @@ CREATE TRIGGER trg_infra_devices_clear_position
     FOR EACH ROW EXECUTE FUNCTION infra_devices_clear_position();
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON infra_rooms, infra_racks, infra_devices TO servermanager;
+
+-- ── Infrastruktura: podaci o portovima i kablovi (pecovanje) (13.11.2026) ──
+-- Portovi se NE prepisuju u bazu -- spisak portova uvek dolazi iz modela.
+-- Ovde se cuva samo ono sto korisnik unese (modul u SFP slotu, oznaka) i
+-- kablovi. Port se identifikuje kljucem iz modela (port_key): ime porta, a
+-- za combo SFP "ime@sfp" (combo deli ime sa RJ45 parom).
+
+CREATE TABLE IF NOT EXISTS infra_port_info (
+    device_id   UUID        NOT NULL REFERENCES infra_devices(id) ON DELETE CASCADE,
+    port_key    TEXT        NOT NULL,
+    module      TEXT,                   -- SFP: 'none' = prazan slot, inace tip modula
+    label       TEXT,
+    notes       TEXT,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (device_id, port_key)
+);
+
+-- Kabl ima tacno dva kraja. Strana (front/rear) je bitna samo kod panela
+-- (patch / opticki): prednja strana = patch kabl, zadnja = instalacija.
+-- Ostali uredjaji imaju samo 'front' (sam port).
+CREATE TABLE IF NOT EXISTS infra_cables (
+    id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID        NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    cable_type  TEXT,
+    color       TEXT,
+    length_m    NUMERIC(7,2),
+    label       TEXT,
+    notes       TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT infra_cables_length_check CHECK (length_m IS NULL OR length_m > 0)
+);
+CREATE INDEX IF NOT EXISTS idx_infra_cables_tenant ON infra_cables (tenant_id);
+
+CREATE TABLE IF NOT EXISTS infra_cable_ends (
+    cable_id    UUID        NOT NULL REFERENCES infra_cables(id) ON DELETE CASCADE,
+    end_no      SMALLINT    NOT NULL,
+    device_id   UUID        NOT NULL REFERENCES infra_devices(id) ON DELETE CASCADE,
+    port_key    TEXT        NOT NULL,
+    side        TEXT        NOT NULL DEFAULT 'front',
+    PRIMARY KEY (cable_id, end_no),
+    CONSTRAINT infra_cable_ends_end_check  CHECK (end_no IN (1, 2)),
+    CONSTRAINT infra_cable_ends_side_check CHECK (side IN ('front', 'rear')),
+    -- jedan kabl po strani porta
+    CONSTRAINT infra_cable_ends_port_unique UNIQUE (device_id, port_key, side)
+);
+
+-- Kad nestane uredjaj, nestaje i kraj kabla (CASCADE) -- kabl sa jednim
+-- krajem nema smisla, brise se ceo.
+CREATE OR REPLACE FUNCTION infra_cable_ends_cleanup() RETURNS trigger AS $$
+BEGIN
+    DELETE FROM infra_cables c WHERE c.id = OLD.cable_id
+       AND (SELECT COUNT(*) FROM infra_cable_ends e WHERE e.cable_id = OLD.cable_id) < 2;
+    RETURN NULL;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_infra_cable_ends_cleanup ON infra_cable_ends;
+CREATE TRIGGER trg_infra_cable_ends_cleanup
+    AFTER DELETE ON infra_cable_ends
+    FOR EACH ROW EXECUTE FUNCTION infra_cable_ends_cleanup();
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON infra_port_info, infra_cables, infra_cable_ends TO servermanager;
 SCHEMA
 
     # Superadmin lozinka — generisemo hash dinamicki

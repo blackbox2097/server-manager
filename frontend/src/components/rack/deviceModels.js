@@ -87,3 +87,25 @@ export function mapInterfaces(model, interfaces) {
   }
   return { state, info, byPort, unmatched: ports.filter(p => !byPort[p.name]).map(p => p.name) };
 }
+
+// Modul u SFP slotu (dokumentacija) dopunjuje SNMP: Aruba/HPE/Allied ne
+// javljaju da li je modul ubacen, pa prazan slot izgleda kao "link dole".
+// 'none' = korisnik je zapisao da je slot prazan.
+export const MODULE_TYPES = new Set(['sfp', 'sfp+', 'sfp28', 'qsfp+']);
+export function effectiveState(st, module) {
+  if (module === 'none' && (!st || st === 'down' || st === 'unknown')) return 'notPresent';
+  return st || 'unknown';
+}
+
+/** Stanje po kljucu porta (combo SFP odvojeno od RJ45 para), uz modul. */
+export function portStates(model, mapping, modules) {
+  if (!model) return undefined;
+  if (!mapping && !modules) return undefined;
+  const out = {};
+  for (const p of model.ports || []) {
+    // combo: SNMP stanje deli sa RJ45 parom -- prazan SFP je prazan bez obzira na RJ45
+    out[p.key] = p.combo && modules?.[p.key] === 'none' ? 'notPresent'
+      : effectiveState(mapping?.state?.[p.name], modules?.[p.key]);
+  }
+  return out;
+}

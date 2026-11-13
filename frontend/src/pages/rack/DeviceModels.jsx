@@ -84,7 +84,7 @@ function ModelDetail({ model, device, onClose }) {
   }, [model.id, device?.id]);
 
   const mapping = useMemo(() => (ifaces ? mapInterfaces(model, ifaces) : null), [model, ifaces]);
-  const selPort = sel && (model.ports || []).find(p => p.name === sel);
+  const selPort = sel && (model.ports || []).find(p => p.key === sel);
 
   return (
     <div className="card space-y-4">
@@ -108,7 +108,7 @@ function ModelDetail({ model, device, onClose }) {
         <div style={{ maxWidth: model.form.mount === 'none' ? 420 : 1100 }}>
           <Faceplate model={model} selected={sel}
             portState={mapping?.state} portInfo={mapping?.info}
-            onPortClick={p => setSel(p.name)} />
+            onPortClick={p => setSel(p.pkey)} />
         </div>
       </div>
 

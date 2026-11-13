@@ -3,19 +3,20 @@
 // biblioteke modela, drag & drop po U pozicijama (i izmedju rackova), traka
 // "bez mesta u racku", panel izabranog uredjaja sa zivim stanjem portova.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams, Link } from 'react-router-dom';
+import { useNavigate, useParams, Link, useLocation } from 'react-router-dom';
 import { ArrowLeft, Plus, Pencil, Trash2, X, Unlink, Maximize2, Minimize2 } from 'lucide-react';
 import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import { Modal, ConfirmDialog, Alert, Spinner } from '../../components/ui';
 import Faceplate, { STATUS_LED } from '../../components/rack/Faceplate';
-import { loadModelList, loadModel, mapInterfaces } from '../../components/rack/deviceModels';
+import { loadModelList, loadModel, mapInterfaces, portStates as computePortStates } from '../../components/rack/deviceModels';
+import PortStrip, { STATE_LABEL, STRIP_CLS, STRIP_HIDDEN } from '../../components/rack/PortStrip';
 import { RoomForm } from './Rooms';
+import { PortDetail, CableDialog, indexCables, cableMarks } from './Cabling';
 
 const ROW_H = 46;                                    // px po 1U u normalnom prikazu
 const NAMES_W = 190;                                 // kolona sa nazivima desno od racka
 const LBL_W = 26;
-const STATE_LABEL = { up: 'gore', down: 'dole', disabled: 'isključen (admin)', notPresent: 'prazan / nije prisutan', unknown: 'nema podatka' };
 
 const errMsg = (e, d) => e?.response?.data?.detail
   ? (typeof e.response.data.detail === 'string' ? e.response.data.detail : e.response.data.detail.map(x => x.msg).join('; '))
@@ -41,8 +42,8 @@ function fits(rack, devices, selfId, topRow, h) {
 
 // ── rack ────────────────────────────────────────────────────────────────────
 function RackColumn({ rack, devices, models, canManage, selectedId, onSelect, onEmptyClick,
-                      onEdit, onDelete, dragRef, preview, setPreview, onDrop, rowH, mappings, selPort, onPortClick,
-                      onToggleFocus }) {
+                      onEdit, onDelete, dragRef, preview, setPreview, onDrop, rowH, states, modules, marks, highlights,
+                      selPort, onPortClick, onToggleFocus }) {
   const areaRef = useRef(null);
   const ROW_H = rowH;
   const RACK_W = Math.round(482.6 / 44.45 * rowH);   // 19" sirina u istoj razmeri
@@ -132,9 +133,10 @@ function RackColumn({ rack, devices, models, canManage, selectedId, onSelect, on
                 title={`${d.name} · U${d.rack_position}${d.height_u > 1 ? `–U${d.rack_position + d.height_u - 1}` : ''}`}
                 className={`absolute left-0 right-0 overflow-hidden ${canManage ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'} ${sel ? 'ring-2 ring-brand-500 z-[5]' : ''}`}
                 style={{ top: t * ROW_H, height: d.height_u * ROW_H, opacity: dragRef.current?.id === d.id && preview ? 0.4 : 1 }}>
-                {m ? <Faceplate model={m} showNumbers={rowH >= 60} portState={mappings[d.id]?.state} portInfo={mappings[d.id]?.info}
+                {m ? <Faceplate model={m} showNumbers={rowH >= 60} portState={states[d.id]}
+                       modules={modules[d.id]} cables={marks[d.id]} highlight={highlights.get(d.id)}
                        statusColor={STATUS_LED[d.linked_status]}
-                       selected={sel ? selPort : null} onPortClick={p => onPortClick(d.id, p.name)} />
+                       selected={sel ? selPort : null} onPortClick={p => onPortClick(d.id, p.pkey)} />
                    : <div className="w-full h-full bg-gray-700 border border-gray-600 flex items-center px-3 text-xs text-gray-200">{d.name}</div>}
               </div>
             );
@@ -472,9 +474,9 @@ function DeviceForm({ open, device, preset, room, racks, devices, tenantId, mode
 }
 
 // ── panel izabranog uredjaja ────────────────────────────────────────────────
-function DevicePanel({ device, rack, model, mapping, selPort, onPortClick, canManage, onClose, onEdit, onUnplace, onDelete }) {
+function DevicePanel({ device, rack, model, mapping, states, modules, marks, highlight, selPort, onPortClick,
+                       canManage, onClose, onEdit, onUnplace, onDelete, children }) {
   const where = rack ? `${rack.name} · U${device.rack_position}${device.height_u > 1 ? `–U${device.rack_position + device.height_u - 1}` : ''}` : 'van racka';
-  const iface = selPort && mapping?.byPort[selPort]?.iface;
   return (
     <div className="card space-y-3">
       <div className="flex justify-between items-start gap-2">
@@ -486,22 +488,14 @@ function DevicePanel({ device, rack, model, mapping, selPort, onPortClick, canMa
       </div>
       {model && (
         <div className="bg-gray-950 rounded-lg p-2">
-          <Faceplate model={model} portState={mapping?.state} portInfo={mapping?.info}
+          <Faceplate model={model} portState={states} portInfo={mapping?.info}
+            modules={modules} cables={marks} highlight={highlight}
             statusColor={STATUS_LED[device.linked_status]}
-            selected={selPort} onPortClick={p => onPortClick(p.name)} />
+            selected={selPort} onPortClick={p => onPortClick(p.pkey)} />
         </div>
       )}
-      {selPort && (
-        <div className="text-xs bg-gray-800/60 rounded-lg px-3 py-2 space-y-0.5">
-          <p className="font-mono text-gray-200">{selPort}</p>
-          {iface ? <>
-            <p className="text-gray-400">SNMP: <span className="font-mono text-gray-200">{iface.if_name}</span>{mapping.byPort[selPort].how === 'redosled' && ' (po redosledu)'}</p>
-            {iface.if_alias && <p className="text-gray-400">Opis: <span className="text-gray-200">{iface.if_alias}</span></p>}
-            <p className="text-gray-400">Stanje: <span className="text-gray-200">{STATE_LABEL[mapping.state[selPort]]}</span>
-              {iface.if_speed_bps > 0 && iface.oper_status === 'up' && <> · {iface.if_speed_bps >= 1e9 ? `${iface.if_speed_bps / 1e9}G` : `${Math.round(iface.if_speed_bps / 1e6)}M`}</>}</p>
-          </> : <p className="text-gray-500">{device.network_device_id ? 'Nije povezan sa SNMP interfejsom.' : 'Uređaj nije povezan sa monitoringom.'}</p>}
-        </div>
-      )}
+      {model && !selPort && <p className="text-xs text-gray-500">Klikni na port za detalje i kablove.</p>}
+      {children && <div className="bg-gray-800/30 rounded-lg p-3">{children}</div>}
       <div className="text-sm space-y-1">
         {device.linked_kind ? (
           <p className="flex items-center gap-2">
@@ -526,56 +520,6 @@ function DevicePanel({ device, rack, model, mapping, selPort, onPortClick, canMa
 }
 
 // ── uvecan prikaz racka: kartice uredjaja sa trakama portova ────────────────
-const STRIP_HIDDEN = new Set(['power', 'usb', 'outlet']);
-const STRIP_CLS = {
-  up:         'bg-green-600 border-green-500 text-white',
-  down:       'bg-gray-700 border-gray-600 text-gray-200',
-  disabled:   'bg-red-700 border-red-600 text-white',
-  notPresent: 'bg-transparent border-dashed border-gray-500 text-gray-400',
-  unknown:    'bg-gray-900 border-gray-600 text-gray-300',
-};
-const CELL_W = 30, CELL_H = 28, CELL_GAP = 4, GROUP_GAP = 10;
-
-function cellOfStrip(i, rows, cols, order) {
-  if (rows === 2 && order === 'odd-top')  return [Math.floor(i / 2), i % 2];
-  if (rows === 2 && order === 'even-top') return [Math.floor(i / 2), 1 - (i % 2)];
-  return [i % cols, Math.floor(i / cols)];
-}
-const portNum = (name, type) => type === 'console' ? 'C' : ((name.match(/\d+$/) || [])[0] || name.slice(0, 2).toUpperCase());
-
-function PortStrip({ model, mapping, selected, onPick }) {
-  const blocks = (model.front?.blocks || []).filter(b => !STRIP_HIDDEN.has(b.type));
-  if (!blocks.length) return null;
-  return (
-    <div className="flex flex-wrap items-center gap-4">
-      {blocks.map((b, bi) => {
-        const names = b.from == null ? [b.name] : Array.from({ length: b.to - b.from + 1 }, (_, k) => b.name.replace('{n}', b.from + k));
-        const rows = b.layout?.rows || 1, cols = Math.ceil(names.length / rows), gc = b.layout?.group_cols || 0;
-        const w = (b.type.startsWith('sfp') || b.type === 'qsfp+') ? CELL_W + 6 : CELL_W;
-        const width = cols * (w + CELL_GAP) - CELL_GAP + (gc ? Math.floor((cols - 1) / gc) * GROUP_GAP : 0);
-        const height = rows * (CELL_H + CELL_GAP) - CELL_GAP;
-        return (
-          <div key={bi} className="relative flex-shrink-0" style={{ width, height }}>
-            {names.map((n, i) => {
-              const [c, r] = cellOfStrip(i, rows, cols, b.layout?.order);
-              const st = mapping?.state?.[n] || 'unknown';
-              const sel = selected === n;
-              return (
-                <button key={n + i} type="button" onClick={() => onPick(n)}
-                  title={`${n} · ${b.type.toUpperCase()}${b.speed ? ' ' + b.speed : ''}${mapping ? ' · ' + (STATE_LABEL[st] || st) : ''}${mapping?.info?.[n] ? ' · ' + mapping.info[n] : ''}`}
-                  className={`absolute border text-[11px] font-mono flex items-center justify-center ${b.type.startsWith('sfp') ? 'rounded-sm' : 'rounded'} ${STRIP_CLS[st] || STRIP_CLS.unknown} ${sel ? 'ring-2 ring-white z-[1]' : 'hover:brightness-125'}`}
-                  style={{ left: c * (w + CELL_GAP) + (gc ? Math.floor(c / gc) * GROUP_GAP : 0), top: r * (CELL_H + CELL_GAP), width: w, height: CELL_H }}>
-                  {portNum(n, b.type)}
-                </button>
-              );
-            })}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function portSummary(model) {
   const g = new Map();
   (model?.ports || []).filter(p => !p.combo && !STRIP_HIDDEN.has(p.type)).forEach(p => {
@@ -591,14 +535,9 @@ const TYPE_BADGE = {
 };
 const LINK_BADGE = { online: 'badge-green', offline: 'badge-red', warning: 'badge-yellow', on_battery: 'badge-orange', low_battery: 'badge-red' };
 
-function RackPortsView({ rack, devices, models, mappings, canManage, onBack, onEdit, onUnplace, onDelete }) {
-  const [sel, setSel] = useState(null);   // { id, port }
+function RackPortsView({ rack, devices, models, mappings, states, marks, highlights, labels, selectedId, selPort,
+                         onPick, canManage, onBack, onEdit, onUnplace, onDelete, children }) {
   const ordered = [...devices].sort((a, b) => topRowOf(rack, a.rack_position, a.height_u) - topRowOf(rack, b.rack_position, b.height_u));
-  const selDev = sel && devices.find(d => d.id === sel.id);
-  const selModel = selDev?.model_id && models[selDev.model_id];
-  const selPort = selModel?.ports?.find(p => p.name === sel.port);
-  const selMap = selDev && mappings[selDev.id];
-  const iface = selMap?.byPort?.[sel?.port]?.iface;
   const span = d => `U${d.rack_position}${d.height_u > 1 ? `–U${d.rack_position + d.height_u - 1}` : ''}`;
 
   return (
@@ -615,6 +554,8 @@ function RackPortsView({ rack, devices, models, mappings, canManage, onBack, onE
           {[['up', 'link gore'], ['down', 'link dole'], ['disabled', 'isključen'], ['notPresent', 'prazan / nije prisutan'], ['unknown', 'bez SNMP podatka']].map(([k, l]) => (
             <span key={k} className="inline-flex items-center gap-1.5"><span className={`inline-block w-4 h-3.5 rounded-sm border ${STRIP_CLS[k]}`} />{l}</span>
           ))}
+          <span className="inline-flex items-center gap-1.5"><span className="relative inline-block w-4 h-3.5 rounded-sm border border-gray-600 bg-gray-900"><span className="absolute left-0.5 right-0.5 bottom-0.5 h-0.5 bg-blue-400" /></span>kabl</span>
+          <span className="inline-flex items-center gap-1.5"><span className="inline-block w-4 h-3.5 rounded-sm border border-gray-600 bg-gray-900 ring-2 ring-yellow-400" />drugi kraj</span>
         </div>
       </div>
 
@@ -654,8 +595,9 @@ function RackPortsView({ rack, devices, models, mappings, canManage, onBack, onE
                 </div>
                 {actions && <div className="flex justify-end">{actions}</div>}
                 <div className="bg-gray-950 rounded-lg p-3 overflow-x-auto">
-                  <PortStrip model={m} mapping={mappings[d.id]} selected={sel?.id === d.id ? sel.port : null}
-                    onPick={port => setSel({ id: d.id, port })} />
+                  <PortStrip model={m} states={states[d.id]} info={mappings[d.id]?.info}
+                    cables={marks[d.id]} highlight={highlights.get(d.id)} labels={labels[d.id]}
+                    selected={selectedId === d.id ? selPort : null} onPick={port => onPick(d.id, port)} />
                 </div>
               </div>
             );
@@ -663,38 +605,8 @@ function RackPortsView({ rack, devices, models, mappings, canManage, onBack, onE
         </div>
 
         <div className="w-[340px] flex-shrink-0 sticky top-16">
-          <div className="card space-y-3">
-            {!selPort ? (
-              <p className="text-sm text-gray-500">Klikni na port da vidiš detalje.</p>
-            ) : (<>
-              <div>
-                <p className="text-xs text-gray-500">Izabrani port</p>
-                <p className="font-mono font-semibold">{selDev.name} · {selPort.name}</p>
-              </div>
-              {selMap ? (
-                <p className="flex items-center gap-2 text-sm">
-                  <span className={`inline-block w-3 h-3 rounded-sm border ${STRIP_CLS[selMap.state[selPort.name]] || STRIP_CLS.unknown}`} />
-                  {STATE_LABEL[selMap.state[selPort.name]]}
-                </p>
-              ) : <p className="text-sm text-gray-500">{selDev.network_device_id ? 'Nema SNMP podataka.' : 'Uređaj nije povezan sa monitoringom.'}</p>}
-              <div className="grid grid-cols-2 gap-y-1.5 text-sm">
-                <span className="text-gray-500">Tip porta</span><span className="font-mono">{selPort.type.toUpperCase()}</span>
-                <span className="text-gray-500">Brzina</span><span className="font-mono">{selPort.speed || '—'}</span>
-                <span className="text-gray-500">PoE</span><span className="font-mono">{selPort.poe ? `PoE-${selPort.poe}` : 'Ne'}</span>
-                {selPort.combo && <><span className="text-gray-500">Combo</span><span className="font-mono">deli port sa RJ45</span></>}
-                {iface && <>
-                  <span className="text-gray-500">SNMP ime</span><span className="font-mono">{iface.if_name}{selMap.byPort[selPort.name].how === 'redosled' ? ' *' : ''}</span>
-                  {iface.if_alias && <><span className="text-gray-500">Opis</span><span>{iface.if_alias}</span></>}
-                  {iface.oper_status === 'up' && iface.if_speed_bps > 0 && <><span className="text-gray-500">Trenutna brzina</span>
-                    <span className="font-mono">{iface.if_speed_bps >= 1e9 ? `${iface.if_speed_bps / 1e9}G` : `${Math.round(iface.if_speed_bps / 1e6)}M`}</span></>}
-                </>}
-              </div>
-              {iface && selMap.byPort[selPort.name].how === 'redosled' && <p className="text-xs text-gray-500">* povezano po redosledu (port je preimenovan na uređaju)</p>}
-              <div className="border-t border-gray-800 pt-3">
-                <p className="text-xs font-medium text-gray-400 uppercase tracking-wider mb-1">Trace</p>
-                <p className="text-xs text-gray-500">Kablovi i trace dolaze sa pečovanjem (sledeća faza).</p>
-              </div>
-            </>)}
+          <div className="card">
+            {children || <p className="text-sm text-gray-500">Klikni na port da vidiš detalje i kablove.</p>}
           </div>
         </div>
       </div>
@@ -706,6 +618,7 @@ function RackPortsView({ rack, devices, models, mappings, canManage, onBack, onE
 export default function RoomView() {
   const { roomId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { activeTenant, hasPerm } = useAuthStore();
   const tenantId = activeTenant?.id;
   const canManage = hasPerm('perm_network_manage');
@@ -724,6 +637,9 @@ export default function RoomView() {
   const firstTenant = useRef(tenantId);
   const [selPort, setSelPort] = useState(null);
   const [portStates, setPortStates] = useState({});
+  const [cabling, setCabling] = useState({ ports: {}, cables: [] });
+  const [trace, setTrace] = useState(null);
+  const [cableDlg, setCableDlg] = useState({ open: false });
   // Uvecan prikaz racka (kartice uredjaja sa trakama portova)
   const [portsRackId, setPortsRackId] = useState(null);
   useEffect(() => {
@@ -742,11 +658,17 @@ export default function RoomView() {
     return () => clearInterval(t);
   }, [loadPorts]);
 
+  const loadCabling = useCallback(async () => {
+    if (!tenantId) return;
+    try { setCabling((await api.get(`/tenants/${tenantId}/infra/rooms/${roomId}/cabling`)).data); } catch {}
+  }, [tenantId, roomId]);
+
   const load = useCallback(async () => {
     if (!tenantId) return;
     try {
       const d = (await api.get(`/tenants/${tenantId}/infra/rooms/${roomId}`)).data;
       setData(d);
+      loadCabling();
       const ids = [...new Set(d.devices.map(x => x.model_id).filter(Boolean))];
       const loaded = await Promise.all(ids.map(id => loadModel(id).catch(() => null)));
       setModels(prev => ({ ...prev, ...Object.fromEntries(loaded.filter(Boolean).map(m => [m.id, m])) }));
@@ -754,9 +676,15 @@ export default function RoomView() {
     } catch (e) {
       if (e?.response?.status === 404) navigate('/infra'); else setErr(errMsg(e, 'Greška pri učitavanju'));
     }
-  }, [tenantId, roomId, navigate, loadPorts]);
+  }, [tenantId, roomId, navigate, loadPorts, loadCabling]);
 
   useEffect(() => { load(); }, [load]);
+  // dolazak sa drugog kraja kabla iz druge lokacije: izaberi uredjaj i port
+  useEffect(() => {
+    const st = location.state;
+    setPortsRackId(null);
+    setSelectedId(st?.dev || null); setSelPort(st?.port || null);
+  }, [roomId, location.key]);  // eslint-disable-line
   useEffect(() => { loadModelList().then(setModelList).catch(() => {}); }, []);
   // promena tenanta -- lokacija pripada drugom tenantu
   useEffect(() => { if (firstTenant.current && tenantId !== firstTenant.current) navigate('/infra'); }, [tenantId, navigate]);
@@ -770,6 +698,46 @@ export default function RoomView() {
     return out;
   }, [data, models, portStates]);
 
+  // dokumentacija portova: moduli, oznake, kablovi -> po uredjaju
+  const cableIdx = useMemo(() => indexCables(cabling.cables), [cabling]);
+  const { modules, labels, marks, states } = useMemo(() => {
+    const modules = {}, labels = {}, marks = {}, states = {};
+    (data?.devices || []).forEach(d => {
+      const info = cabling.ports?.[d.id] || {};
+      modules[d.id] = Object.fromEntries(Object.entries(info).filter(([, v]) => v.module).map(([k, v]) => [k, v.module]));
+      labels[d.id] = Object.fromEntries(Object.entries(info).filter(([, v]) => v.label).map(([k, v]) => [k, v.label]));
+      marks[d.id] = cableMarks(cableIdx, d.id);
+      const m = d.model_id && models[d.model_id];
+      states[d.id] = computePortStates(m, mappings[d.id], modules[d.id]);
+    });
+    // Faceplate crta samo prednju stranu -- oznaka = kabl spreda
+    const frontMarks = Object.fromEntries(Object.entries(marks).map(([id, mk]) =>
+      [id, Object.fromEntries(Object.entries(mk).filter(([, v]) => v.front).map(([k, v]) => [k, v.front]))]));
+    return { modules, labels, marks: { strip: marks, face: frontMarks }, states };
+  }, [data, cabling, cableIdx, models, mappings]);
+
+  // trace izabranog porta (i isticanje svih portova na putanji)
+  const selDevice = (data?.devices || []).find(d => d.id === selectedId);
+  const selModel = selDevice?.model_id && models[selDevice.model_id];
+  const selPortObj = selModel && selPort ? (selModel.ports || []).find(p => p.key === selPort) : null;
+  useEffect(() => {
+    setTrace(null);
+    if (!tenantId || !selectedId || !selPortObj || ['power', 'usb', 'outlet'].includes(selPortObj.type)) return;
+    let live = true;
+    api.get(`/tenants/${tenantId}/infra/trace`, { params: { deviceId: selectedId, port: selPortObj.key } })
+      .then(r => { if (live) setTrace(r.data.path); }).catch(() => {});
+    return () => { live = false; };
+  }, [tenantId, selectedId, selPortObj?.key, cabling]);  // eslint-disable-line
+  const highlights = useMemo(() => {
+    const h = new Map();
+    (trace || []).forEach(x => {
+      if (x.kind !== 'port' || (x.deviceId === selectedId && x.port === selPort)) return;
+      if (!h.has(x.deviceId)) h.set(x.deviceId, new Set());
+      h.get(x.deviceId).add(x.port);
+    });
+    return h;
+  }, [trace, selectedId, selPort]);
+
   const racks = data?.racks || [];
   if (portsRackId && !racks.some(r => r.id === portsRackId) && data) setTimeout(() => setPortsRackId(null));
   const portsRack = racks.find(r => r.id === portsRackId);
@@ -778,6 +746,23 @@ export default function RoomView() {
   const selected = devices.find(d => d.id === selectedId);
   const modelSummary = id => modelList.find(m => m.id === id);
   const isRackable = d => !d.model_id || (modelSummary(d.model_id)?.heightU ?? 1) > 0;
+
+  // skok na port (drugi kraj kabla, tacka u trace-u)
+  const jumpTo = (devId, port, rid) => {
+    if (rid && rid !== roomId) { navigate(`/infra/rooms/${rid}`, { state: { dev: devId, port } }); return; }
+    const d = devices.find(x => x.id === devId);
+    if (!d) return;
+    if (portsRackId) setPortsRackId(d.rack_id || null);
+    setSelectedId(devId); setSelPort(port);
+  };
+  const portDetail = (selDevice && selPortObj) ? (
+    <PortDetail tenantId={tenantId} device={selDevice} model={selModel} port={selPortObj} room={data.room}
+      mapping={mappings[selDevice.id]} info={cabling.ports?.[selDevice.id]?.[selPortObj.key]} cableIdx={cableIdx}
+      trace={trace} canManage={canManage} onChanged={loadCabling} onJump={jumpTo}
+      onConnect={side => setCableDlg({ open: true, from: {
+        deviceId: selDevice.id, deviceName: selDevice.name, port: selPortObj.key, side, portType: selPortObj.type } })}
+      onEditCable={(cable, self, other) => setCableDlg({ open: true, edit: { cable, self, other } })} />
+  ) : null;
 
   const place = async (deviceId, rackId, position) => {
     try {
@@ -835,10 +820,14 @@ export default function RoomView() {
 
       {portsRack ? (
         <RackPortsView rack={portsRack} devices={devices.filter(d => d.rack_id === portsRack.id)} models={models}
-          mappings={mappings} canManage={canManage} onBack={() => setPortsRackId(null)}
+          mappings={mappings} states={states} marks={marks.strip} highlights={highlights} labels={labels}
+          selectedId={selectedId} selPort={selPort} onPick={(id, port) => { setSelectedId(id); setSelPort(port); }}
+          canManage={canManage} onBack={() => setPortsRackId(null)}
           onEdit={d => setDevForm({ open: true, device: d, preset: null })}
           onUnplace={d => place(d.id, null, null)}
-          onDelete={d => setConfirm({ kind: 'device', item: d })} />
+          onDelete={d => setConfirm({ kind: 'device', item: d })}>
+          {portDetail}
+        </RackPortsView>
       ) : (
       <div className="flex gap-4 items-start">
         {/* sa strane: uredjaji bez mesta u racku -- i zona za skidanje iz racka */}
@@ -885,8 +874,12 @@ export default function RoomView() {
               <div className="flex gap-6">
                 {racks.map(r => (
                   <RackColumn key={r.id} rack={r} devices={devices.filter(d => d.rack_id === r.id)} models={models}
-                    rowH={ROW_H} mappings={mappings} selPort={selPort}
-                    onToggleFocus={id => { setPortsRackId(id); setSelectedId(null); setSelPort(null); window.scrollTo({ top: 0 }); }}
+                    rowH={ROW_H} states={states} modules={modules} marks={marks.face} highlights={highlights} selPort={selPort}
+                    onToggleFocus={id => {
+                      setPortsRackId(id);
+                      if (selDevice?.rack_id !== id) { setSelectedId(null); setSelPort(null); }
+                      window.scrollTo({ top: 0 });
+                    }}
                     onPortClick={(id, port) => { setSelectedId(id); setSelPort(port); }}
                     canManage={canManage} selectedId={selectedId} onSelect={id => { setSelectedId(id); setSelPort(null); }}
                     onEmptyClick={(rack, u) => setDevForm({ open: true, device: null, preset: { rackId: rack.id, position: u } })}
@@ -904,11 +897,15 @@ export default function RoomView() {
           <div className="w-[420px] flex-shrink-0 sticky top-16">
             <DevicePanel device={selected} rack={racks.find(r => r.id === selected.rack_id)}
               model={selected.model_id ? models[selected.model_id] : null} canManage={canManage}
-              mapping={mappings[selected.id]} selPort={selPort} onPortClick={setSelPort}
+              mapping={mappings[selected.id]} states={states[selected.id]} modules={modules[selected.id]}
+              marks={marks.face[selected.id]} highlight={highlights.get(selected.id)}
+              selPort={selPort} onPortClick={setSelPort}
               onClose={() => setSelectedId(null)}
               onEdit={() => setDevForm({ open: true, device: selected, preset: null })}
               onUnplace={() => place(selected.id, null, null)}
-              onDelete={() => setConfirm({ kind: 'device', item: selected })} />
+              onDelete={() => setConfirm({ kind: 'device', item: selected })}>
+              {portDetail}
+            </DevicePanel>
           </div>
         )}
       </div>
@@ -919,6 +916,9 @@ export default function RoomView() {
         tenantId={tenantId} modelList={modelList}
         onClose={() => setDevForm({ open: false })}
         onSaved={() => { setDevForm({ open: false }); load(); }} />
+      <CableDialog open={cableDlg.open} tenantId={tenantId} room={room} from={cableDlg.from} edit={cableDlg.edit}
+        onClose={() => setCableDlg({ open: false })}
+        onSaved={() => { setCableDlg({ open: false }); loadCabling(); }} />
       <RackForm open={rackForm.open} rack={rackForm.rack} roomId={room.id} tenantId={tenantId}
         onClose={() => setRackForm({ open: false })}
         onSaved={() => { setRackForm({ open: false }); load(); }} />
