@@ -30,6 +30,11 @@ MAX_PARALLEL      = 10
 _last_polled: dict[str, float] = {}
 # ups_id -> {"candidate": status, "count": int} -- debounce kes, SAMO za offline
 _status_pending: dict[str, dict] = {}
+# UPS-ovi ciji poll je u toku -- isti UPS se ne poll-uje dvaput paralelno
+_in_flight: set[str] = set()
+
+BLIP_FAIL = ("ac failure", "utility failure", "power failure")
+BLIP_REC  = ("ac recovery", "utility recovery", "power restored", "ac restore")
 
 
 def _adapters() -> dict:
@@ -91,6 +96,58 @@ async def _broadcast(ups: dict, status: str, error: str | None):
     }, tenant_id=str(ups["tenant_id"]))
 
 
+def _fmt_at(e: dict) -> str:
+    return e["at"].strftime("%d.%m.%Y %H:%M:%S") if e.get("at") else (e.get("at_raw") or "?")
+
+
+async def _process_events(ups: dict, events: list[dict]):
+    """Novi dogadjaji iz dnevnika izvora (za sada ViewPower) posle last_event_id.
+    Svaki ide u audit (ups.event, informativno). Par failure -> recovery u ISTOJ
+    seriji = kratak ispad koji je prosao izmedju dva poll-a -> ups.power_blip +
+    jedan trenutni mejl (odluka 13.11.2026, opcija b). Duzi ispad poller vidi
+    uzivo kao on_battery, pa tada failure i recovery stizu u razlicitim serijama."""
+    from app.services.audit import log_event
+    from app.services.notify import notify_ups_power_blip
+    if not events:
+        return
+    uid, last = ups["id"], ups.get("last_event_id")
+    max_id = max(e["id"] for e in events)
+    if last is None or max_id < last:
+        # prvi put, ili je dnevnik na izvoru obrisan -- samo zapamti poziciju
+        await execute("UPDATE ups_devices SET last_event_id=$1 WHERE id=$2", max_id, uid)
+        return
+    new = sorted((e for e in events if e["id"] > last), key=lambda e: e["id"])
+    if not new:
+        return
+    tid = str(ups["tenant_id"])
+    pending_fail = None
+    for e in new:
+        ev = (e["event"] or "").lower()
+        # Nestanak/povratak struje se NE upisuje kao zaseban ups.event: pokriven je
+        # ili unosom ups.power_blip (kratak ispad) ili prelazima on_battery/recovery.
+        is_power_evt = any(k in ev for k in BLIP_FAIL + BLIP_REC)
+        if not is_power_evt:
+            create_bg_task(log_event(
+                "ups.event", tenant_id=tid, resource_type="ups", resource_id=str(uid),
+                details={"name": ups["name"], "event": e["event"], "type": e.get("type"),
+                         "at": _fmt_at(e), "event_id": e["id"]},
+            ))
+        if any(k in ev for k in BLIP_FAIL):
+            pending_fail = e
+        elif pending_fail and any(k in ev for k in BLIP_REC):
+            st, en = pending_fail.get("at"), e.get("at")
+            dur = int((en - st).total_seconds()) if st and en else None
+            create_bg_task(log_event(
+                "ups.power_blip", tenant_id=tid, resource_type="ups", resource_id=str(uid),
+                details={"name": ups["name"], "start": _fmt_at(pending_fail), "end": _fmt_at(e), "duration": dur},
+                success=False,
+                error_message=f"Kratak prekid napajanja ({dur} s)" if dur is not None else "Kratak prekid napajanja",
+            ))
+            create_bg_task(notify_ups_power_blip(ups, _fmt_at(pending_fail), _fmt_at(e), dur))
+            pending_fail = None
+    await execute("UPDATE ups_devices SET last_event_id=$1 WHERE id=$2", new[-1]["id"], uid)
+
+
 async def _poll_and_save(ups: dict):
     uid = ups["id"]
     old_status = ups.get("status")
@@ -142,13 +199,23 @@ async def _poll_and_save(ups: dict):
         if not (old_status == "unknown" and confirmed == "online"):
             await _log_status_transition(ups, old_status, confirmed, reason=reason)
 
+    if r.get("events") is not None:
+        try:
+            await _process_events(ups, r["events"])
+        except Exception:
+            logger.exception(f"UPS: greska obrade dnevnika za {ups.get('name', uid)}")
+
 
 async def _poll_guarded(ups: dict):
-    _last_polled[str(ups["id"])] = time.time()
+    uid = str(ups["id"])
+    _last_polled[uid] = time.time()
+    _in_flight.add(uid)
     try:
         await asyncio.wait_for(_poll_and_save(ups), timeout=POLL_WATCHDOG_SEC)
     except Exception:
         logger.exception(f"UPS: neocekivana greska za {ups.get('name', ups.get('id'))}")
+    finally:
+        _in_flight.discard(uid)
 
 
 async def poll_ups_all():
@@ -163,6 +230,8 @@ async def poll_ups_all():
     due = []
     for r in rows:
         last = _last_polled.get(str(r["id"]))
+        if str(r["id"]) in _in_flight:
+            continue
         if last is None or (now - last) >= r["poll_interval_sec"]:
             due.append(dict(r))
     for i in range(0, len(due), MAX_PARALLEL):
