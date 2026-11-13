@@ -26,7 +26,7 @@ class UpsIn(BaseModel):
     deviceName: str = "ups"
     username: str | None = None
     password: str | None = None
-    pollIntervalSec: int = 60
+    pollIntervalSec: int = 15
     rawRetentionHours: int = 72
     rollupBucketMinutes: int = 5
     rollupRetentionDays: int = 90

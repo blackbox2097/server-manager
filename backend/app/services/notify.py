@@ -129,7 +129,7 @@ async def _send_digest_unlocked(only_tenant: str | None = None):
                 </div>"""
             if last["new_status"] == "offline":
                 offline_lines.append(line)
-            elif last["new_status"] in ("warning", "on_battery", "low_battery"):
+            elif last["new_status"] in ("warning", "on_battery", "low_battery", "power_blip"):
                 warning_lines.append(line)
             elif last["new_status"] == "online":
                 recovery_lines.append(line)
@@ -194,7 +194,8 @@ def start():
 
 def _status_label(s: str) -> str:
     return {"online": "ONLINE", "offline": "OFFLINE", "warning": "UPOZORENJE", "unknown": "NEPOZNATO",
-            "on_battery": "NA BATERIJI", "low_battery": "PRAZNA BATERIJA"}.get(s, s)
+            "on_battery": "NA BATERIJI", "low_battery": "PRAZNA BATERIJA",
+            "power_blip": "KRATAK PREKID NAPAJANJA"}.get(s, s)
 
 
 async def notify_server_status(server: dict, old_status: str, new_status: str, metrics: dict | None = None):
@@ -353,6 +354,29 @@ async def notify_ups_status(ups: dict, old_status: str, new_status: str):
             await send_digest_emails(tenant_id=str(ups["tenant_id"]))
         except Exception:
             logger.exception("UPS: trenutno slanje alarma neuspesno -- ostaje za periodicni digest")
+
+
+async def notify_ups_power_blip(ups: dict, start: str, end: str, duration: int | None):
+    """Kratak ispad koji je prosao izmedju dva poll-a (otkriven iz dnevnika
+    izvora). Jedan objedinjen TRENUTNI mejl (odluka 13.11.2026, opcija b),
+    pod istim prekidacem kao prelazak na bateriju (alert_ups_on_battery)."""
+    tenant = await fetchrow(
+        "SELECT alerts_enabled, alert_ups_on_battery FROM tenants WHERE id=$1", ups["tenant_id"])
+    if not tenant or not tenant["alerts_enabled"] or not tenant["alert_ups_on_battery"]:
+        return
+    dur_txt = f"{duration} s" if duration is not None else "trajanje nepoznato"
+    await execute(
+        """INSERT INTO pending_notifications
+             (tenant_id, resource_type, resource_id, resource_name, old_status, new_status,
+              error_message, cpu_percent, ram_percent, disk_percent)
+           VALUES ($1,'ups',$2,$3,'online','power_blip',$4,NULL,NULL,NULL)""",
+        ups["tenant_id"], ups["id"], ups["name"],
+        f"Kratak prekid napajanja: {start} – {end} ({dur_txt})",
+    )
+    try:
+        await send_digest_emails(tenant_id=str(ups["tenant_id"]))
+    except Exception:
+        logger.exception("UPS: trenutno slanje (kratak prekid) neuspesno -- ostaje za periodicni digest")
 
 
 async def notify_execution(execution_id: str):

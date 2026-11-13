@@ -6,8 +6,10 @@
 # Endpoint je nedokumentovan i moze se promeniti sa verzijom -- zato je
 # parsiranje defanzivno, a nepoznato stanje NIKAD ne postaje tiho "online".
 
+import html
 import logging
 import re
+from datetime import date, datetime, timedelta
 
 import httpx
 
@@ -139,6 +141,13 @@ async def fetch(ups: dict) -> dict:
     if not isinstance(wi, dict) or not wi:
         raise ViewPowerError("Odgovor nema workInfo (pogresan portName?)")
     status, replace_battery, reason = derive_status(wi)
+    # Dnevnik dogadjaja -- greska ovde NE sme da obori status UPS-a
+    events = None
+    try:
+        events = await vp_events(ups["host"], ups["port"], ups["device_name"],
+                                 d.get("protocolType") or wi.get("ptid"))
+    except Exception as e:
+        logger.warning(f"ViewPower {ups.get('name', ups['host'])}: dnevnik dogadjaja nedostupan: {e}")
     runtime_min = _num(wi.get("batteryRemainTime"))
     return {
         "status": status,
@@ -162,6 +171,7 @@ async def fetch(ups: dict) -> dict:
             "ups_type":     _text(wi.get("morphological")) or None,
         },
         "raw_vars": _flatten(d, wi),
+        "events": events,
     }
 
 
@@ -238,3 +248,68 @@ async def vp_discover(host: str, port: int) -> dict:
             meta = d
     return {"version": meta.get("version"), "hostName": meta.get("hostName"),
             "method": method, "devices": devices}
+
+
+# ---------------------------------------------------------------------------
+# Dnevnik dogadjaja (13.11.2026) -- SAMO CITANJE preko qryEventRecords.
+# NIKAD ne zvati delRecord / delEventRecordAll: brisu ViewPower dnevnik.
+# ---------------------------------------------------------------------------
+_ROW_RE  = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S | re.I)
+_CELL_RE = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.S | re.I)
+_TAG_RE  = re.compile(r"<[^>]+>")
+
+
+def _parse_vp_datetime(s: str, lo: datetime, hi: datetime) -> datetime | None:
+    """Format datuma zavisi od podesavanja ViewPower-a (DD/MM ili MM/DD).
+    Od mogucih tumacenja uzima ono koje upada u traženi opseg."""
+    s = s.strip()
+    cands = []
+    for f in ("%d/%m/%Y %H:%M:%S", "%m/%d/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S"):
+        try:
+            cands.append(datetime.strptime(s, f))
+        except ValueError:
+            pass
+    inside = [c for c in cands if lo <= c < hi]
+    return (inside or cands or [None])[0]
+
+
+async def vp_events(host: str, port: int, port_name: str, prodid: str | None,
+                    timeout: int = VP_TIMEOUT_SEC) -> list[dict]:
+    """Dogadjaji za juce + danas: [{id, at, at_raw, event, type}]. ID raste."""
+    today = date.today()
+    start = today - timedelta(days=1)
+    d2s = lambda d: f"{d.year}-{d.month}-{d.day}"
+    url = f"http://{host}:{port}/ViewPower/history/qryEventRecords"
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, data={
+                "startDate": d2s(start), "endDate": d2s(today),
+                "comPort": port_name, "prodid": prodid or "", "sn": "",
+            }, headers={"X-Requested-With": "XMLHttpRequest"})
+    except httpx.HTTPError as e:
+        raise ViewPowerError(f"Dnevnik: {e}")
+    if resp.status_code != 200:
+        raise ViewPowerError(f"Dnevnik: HTTP {resp.status_code}")
+
+    lo = datetime.combine(start, datetime.min.time())
+    hi = datetime.combine(today + timedelta(days=1), datetime.min.time())
+    idx, out = None, []
+    for row in _ROW_RE.findall(resp.text):
+        cells = [html.unescape(_TAG_RE.sub("", c)).strip() for c in _CELL_RE.findall(row)]
+        if not cells:
+            continue
+        if idx is None and "Date" in cells and "Event" in cells:
+            idx = {"date": cells.index("Date"), "event": cells.index("Event"),
+                   "type": cells.index("Type") if "Type" in cells else None}
+            continue
+        if idx is None or not cells[0].isdigit() or len(cells) <= max(idx["date"], idx["event"]):
+            continue
+        t = idx["type"]
+        out.append({
+            "id": int(cells[0]),
+            "at": _parse_vp_datetime(cells[idx["date"]], lo, hi),
+            "at_raw": cells[idx["date"]],
+            "event": cells[idx["event"]],
+            "type": cells[t] if t is not None and t < len(cells) else "",
+        })
+    return out

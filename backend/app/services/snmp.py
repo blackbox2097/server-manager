@@ -449,6 +449,32 @@ async def _poll_guarded(device: dict):
             logger.exception("Greska pri obradi SNMP watchdog timeout-a")
 
 
+# Neblokirajuci ciklus: tik samo pokrece dospele uredjaje kao zasebne taskove
+# i odmah se vraca (nema vise preskakanja tikova). Paralelizam ogranicava
+# semafor, a ne grupe -- spor/nedostupan uredjaj kasni samo sebi.
+_inflight: set[str] = set()
+_tasks: set[asyncio.Task] = set()
+_sem: asyncio.Semaphore | None = None
+
+
+def _get_sem() -> asyncio.Semaphore:
+    global _sem
+    if _sem is None:
+        _sem = asyncio.Semaphore(get_settings().snmp_max_parallel)
+    return _sem
+
+
+async def _run_limited(device: dict):
+    did = str(device["id"])
+    try:
+        async with _get_sem():
+            await _poll_guarded(device)
+    except Exception:
+        logger.exception(f"SNMP: neocekivana greska za {device.get('name', did)}")
+    finally:
+        _inflight.discard(did)
+
+
 async def poll_snmp_all():
     """Scheduler tik -- isti duh kao monitor.poll_all(): zove se cesto
     (snmp_poll_tick_sec), ali stvarno poll-uje samo uredjaje kojima je
@@ -466,6 +492,8 @@ async def poll_snmp_all():
     due = []
     for r in rows:
         did = str(r["id"])
+        if did in _inflight:
+            continue
         interval = r["poll_interval_sec"]
         last = _last_polled.get(did)
         if last is None or (now - last) >= interval:
@@ -473,9 +501,11 @@ async def poll_snmp_all():
     if not due:
         return
 
-    mp = cfg.snmp_max_parallel
-    for i in range(0, len(due), mp):
-        await asyncio.gather(*[_poll_guarded(d) for d in due[i:i+mp]], return_exceptions=True)
+    for d in due:
+        _inflight.add(str(d["id"]))
+        t = asyncio.create_task(_run_limited(d))
+        _tasks.add(t)
+        t.add_done_callback(_tasks.discard)
 
 
 async def poll_snmp_single(device_id: str):
