@@ -51,10 +51,10 @@ export default function ProcessListModal({ server, tenantId, onClose }) {
                 <th className="text-left py-1.5 pr-2">PID</th>
                 <th className="text-left py-1.5 pr-2">Naziv</th>
                 <th className="text-right py-1.5 pr-2">
-                  {osType === 'windows' ? 'CPU vreme (s)' : 'CPU %'}
+                  CPU %
                 </th>
-                <th className="text-right py-1.5">
-                  {osType === 'windows' ? 'RAM (MB)' : 'RAM %'}
+                <th className="text-right py-1.5 pr-4">
+                  RAM %
                 </th>
               </tr>
             </thead>
@@ -64,7 +64,7 @@ export default function ProcessListModal({ server, tenantId, onClose }) {
                   <td className="py-1.5 pr-2 text-gray-500">{p.pid}</td>
                   <td className="py-1.5 pr-2 truncate max-w-[180px]">{p.name}</td>
                   <td className="py-1.5 pr-2 text-right">{p.cpu?.toFixed(1)}</td>
-                  <td className="py-1.5 text-right">{p.mem?.toFixed(1)}</td>
+                  <td className="py-1.5 pr-4 text-right">{p.mem?.toFixed(1)}</td>
                 </tr>
               ))}
               {procList.length === 0 && (

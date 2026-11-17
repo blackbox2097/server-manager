@@ -320,30 +320,67 @@ async def _execute_script_linux(server: dict, script_content: str, rid=None, on_
 
 
 async def _list_processes_linux(server: dict, limit: int = 50) -> list[dict]:
+    # sm_linproc_pct: trenutni CPU % iz dva uzorka /proc (% ukupnog CPU-a, kao Windows grana)
     def _run():
         client = _connect(server)
         try:
-            cmd = f"ps -eo pid,comm,pcpu,pmem,rss --no-headers --sort=-pcpu | head -{limit}"
+            cmd = ("export LC_ALL=C; "
+                   "head -1 /proc/stat; cat /proc/[0-9]*/stat 2>/dev/null; echo ===SM===; "
+                   "sleep 1; "
+                   "head -1 /proc/stat; cat /proc/[0-9]*/stat 2>/dev/null; echo ===SM===; "
+                   "grep '^MemTotal:' /proc/meminfo; getconf PAGESIZE 2>/dev/null")
             stdout, stderr, code = _exec(client, cmd, timeout=15)
-            if code != 0 and stderr and not stdout:
-                raise RuntimeError(stderr[:200])
+            if not stdout or "===SM===" not in stdout:
+                raise RuntimeError((stderr or "prazan izlaz")[:200])
 
-            procs = []
-            for line in stdout.strip().split("\n"):
-                parts = line.split()
-                if len(parts) < 5:
-                    continue
-                try:
-                    procs.append({
-                        "pid":    int(parts[0]),
-                        "name":   parts[1],
-                        "cpu":    float(parts[2]),
-                        "mem":    float(parts[3]),
-                        "rssKb":  int(parts[4]),
-                    })
-                except ValueError:
-                    continue
-            return procs
+            parts = stdout.split("===SM===")
+            if len(parts) < 3:
+                raise RuntimeError("neocekivan izlaz /proc citanja")
+
+            def _parse(block: str):
+                total = 0
+                procs = {}
+                for line in block.strip().split("\n"):
+                    if line.startswith("cpu "):
+                        vals = line.split()[1:9]
+                        total = sum(int(v) for v in vals)
+                        continue
+                    lp = line.find(" (")
+                    rp = line.rfind(")")
+                    if lp < 0 or rp < lp:
+                        continue
+                    try:
+                        pid  = int(line[:lp])
+                        rest = line[rp + 2:].split()
+                        procs[pid] = (line[lp + 2:rp],
+                                      int(rest[11]) + int(rest[12]),
+                                      int(rest[21]))
+                    except (ValueError, IndexError):
+                        continue
+                return total, procs
+
+            tot1, p1 = _parse(parts[0])
+            tot2, p2 = _parse(parts[1])
+            mem_kb, page = 0, 4096
+            for line in parts[2].strip().split("\n"):
+                if line.startswith("MemTotal:"):
+                    try: mem_kb = int(line.split()[1])
+                    except (ValueError, IndexError): pass
+                elif line.strip().isdigit():
+                    page = int(line.strip())
+            dtot = tot2 - tot1
+
+            out = []
+            for pid, (name, t2, rss_pages) in p2.items():
+                prev = p1.get(pid)
+                d = (t2 - prev[1]) if prev and prev[0] == name else 0
+                cpu = round(max(d, 0) * 100.0 / dtot, 1) if dtot > 0 else 0.0
+                rss_kb = rss_pages * page // 1024
+                mem = round(rss_kb * 100.0 / mem_kb, 1) if mem_kb > 0 else 0.0
+                out.append({"pid": pid, "name": name, "cpu": cpu,
+                            "mem": mem, "rssKb": rss_kb})
+            out.sort(key=lambda p: (p["cpu"], p["rssKb"]), reverse=True)
+            return out[:limit]
         finally:
             client.close()
 
@@ -526,11 +563,27 @@ async def _list_processes_windows(server: dict, limit: int = 50) -> list[dict]:
         "$ErrorActionPreference='SilentlyContinue'",
         "$os=Get-CimInstance Win32_OperatingSystem",
         "$totalKB=$os.TotalVisibleMemorySize",
-        f"Get-Process | Sort-Object CPU -Descending | Select-Object -First {int(limit)} | ForEach-Object {{",
-        "  $rssKb=[math]::Round($_.WorkingSet64/1KB)",
+        "# sm_winproc_pct: trenutni CPU % iz dva uzorka (kao Task Manager, % ukupnog CPU-a)",
+        "$cores=[Environment]::ProcessorCount",
+        "$t1=@{}",
+        "foreach($p in Get-Process){ $t1[$p.Id]=$p.TotalProcessorTime.Ticks }",
+        "$sw=[Diagnostics.Stopwatch]::StartNew()",
+        "Start-Sleep -Milliseconds 1000",
+        "$procs=Get-Process",
+        "$el=$sw.Elapsed.Ticks",
+        "$rows=foreach($p in $procs){",
+        "  if($p.Id -eq 0){ continue }",
+        "  $a=$t1[$p.Id]; $b=$p.TotalProcessorTime.Ticks; $d=0",
+        "  if($null -ne $a -and $null -ne $b){ $d=$b-$a }",
+        "  if($d -lt 0){ $d=0 }",
+        "  $c=if($el -gt 0 -and $cores -gt 0){[math]::Round(($d/($el*$cores))*100,1)}else{0}",
+        "  [pscustomobject]@{P=$p;C=$c}",
+        "}",
+        f"$rows | Sort-Object @{{e={{$_.C}};Descending=$true}},@{{e={{$_.P.WorkingSet64}};Descending=$true}} | Select-Object -First {int(limit)} | ForEach-Object {{",
+        "  $p=$_.P",
+        "  $rssKb=[math]::Round($p.WorkingSet64/1KB)",
         "  $memPct=if($totalKB -gt 0){[math]::Round(($rssKb/$totalKB)*100,1)}else{0}",
-        "  $cpuVal=if($_.CPU){[math]::Round($_.CPU,1)}else{0}",
-        "  Write-Output \"$($_.Id)|$($_.ProcessName)|$cpuVal|$memPct|$rssKb\"",
+        "  Write-Output \"$($p.Id)|$($p.ProcessName)|$($_.C)|$memPct|$rssKb\"",
         "}",
     ]
     ps_script = "\r\n".join(ps_lines) + "\r\n"
