@@ -201,6 +201,18 @@ function InterfaceRow({ iface }) {
             <span className="flex items-center gap-1"><ArrowUp size={12} />{formatNetSpeed(iface.out_kbps)}</span>
           </div>
         )}
+        {/* sm_iface_errs: delta brojaca u poslednjem pollu (in/out) */}
+        {iface.last_metric_at && (() => {
+          const ie = iface.in_errors || 0, oe = iface.out_errors || 0;
+          const id = iface.in_discards || 0, od = iface.out_discards || 0;
+          return (
+            <div className="text-[11px] flex gap-3 justify-end"
+                 title="Greške i odbačeni paketi (in/out) u poslednjem pollu">
+              <span className={ie + oe > 0 ? 'text-red-400' : 'text-gray-600'}>err {ie}/{oe}</span>
+              <span className={id + od > 0 ? 'text-yellow-500' : 'text-gray-600'}>disc {id}/{od}</span>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
