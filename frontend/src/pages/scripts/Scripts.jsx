@@ -1,6 +1,6 @@
 // src/pages/scripts/Scripts.jsx
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, BookOpen, Play } from 'lucide-react';
+import { Plus, Edit, Trash2, BookOpen, Play, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
@@ -77,6 +77,9 @@ export default function Scripts() {
   const [loading,    setLoading]    = useState(true);
   const [modal,      setModal]      = useState(null);
   const [delConfirm, setDelConfirm] = useState(null);
+  // sm_scripts_search
+  const [searchQuery, setSearchQuery] = useState('');
+  const [osFilter,    setOsFilter]    = useState('');
 
   const fetch = async () => {
     if (!tenantId) return;
@@ -91,6 +94,12 @@ export default function Scripts() {
     setDelConfirm(null);
   };
 
+  const q = searchQuery.trim().toLowerCase();
+  const matchesSearch = (s) => !q || [s.name, s.description, s.created_by_name, s.content]
+    .filter(Boolean).some(v => String(v).toLowerCase().includes(q));
+  const matchesOs = (s) => !osFilter || s.os_type === osFilter || s.os_type === 'both';
+  const filteredScripts = scripts.filter(s => matchesSearch(s) && matchesOs(s));
+
   if (!tenantId) return <div className="text-gray-500 text-sm p-4">Odaberi tenant.</div>;
   if (loading)   return <div className="flex justify-center py-12"><Spinner size={28} className="text-brand-500" /></div>;
 
@@ -99,19 +108,34 @@ export default function Scripts() {
       <div className="flex items-center justify-between sticky top-0 z-10 bg-gray-950 py-2 border-b border-gray-800/50">
         <div>
           <h1 className="text-lg font-semibold text-gray-100">Biblioteka skripti</h1>
-          <p className="text-sm text-gray-500">{scripts.length} skripti</p>
+          <p className="text-sm text-gray-500">{(q || osFilter) ? `${filteredScripts.length} od ${scripts.length}` : scripts.length} skripti</p>
         </div>
-        {canManage && (
-          <button className="btn-primary" onClick={() => setModal('add')}>
-            <Plus size={15} /> Nova skripta
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <select className="input py-1.5 text-sm w-32 flex-shrink-0" value={osFilter} onChange={e => setOsFilter(e.target.value)}>
+            <option value="">Svi OS</option>
+            <option value="linux">Linux</option>
+            <option value="windows">Windows</option>
+          </select>
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input className="input pl-8 py-1.5 text-sm w-48" placeholder="Pretraga..."
+              title="Naziv, opis, autor ili sadržaj skripte"
+              value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          </div>
+          {canManage && (
+            <button className="btn-primary flex-shrink-0" onClick={() => setModal('add')}>
+              <Plus size={15} /> Nova skripta
+            </button>
+          )}
+        </div>
       </div>
 
       {scripts.length === 0 ? (
         <Empty icon={BookOpen} title="Nema sačuvanih skripti"
           subtitle="Kreiraj predložak koji možeš ponovo koristiti"
           action={canManage && <button className="btn-primary" onClick={() => setModal('add')}><Plus size={14} /> Nova skripta</button>} />
+      ) : filteredScripts.length === 0 ? (
+        <div className="text-center text-sm text-gray-500 py-8">Nijedna skripta ne odgovara pretrazi.</div>
       ) : (
         <div className="card p-0 overflow-hidden">
           <Table columns={[
@@ -139,7 +163,7 @@ export default function Scripts() {
                 </>}
               </div>
             )},
-          ]} rows={scripts} />
+          ]} rows={filteredScripts} />
         </div>
       )}
 
