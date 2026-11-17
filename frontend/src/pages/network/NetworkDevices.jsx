@@ -175,11 +175,21 @@ const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, locations, on
   );
 }, () => true);
 
+// sm_link_speed: ifSpeed/ifHighSpeed (bps) -> "1G", "100M", "2.5G"
+function formatLinkSpeed(bps) {
+  if (!bps || bps <= 0) return null;
+  const fmt = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
+  if (bps >= 1e9) return `${fmt(bps / 1e9)}G`;
+  if (bps >= 1e6) return `${fmt(bps / 1e6)}M`;
+  return `${fmt(bps / 1e3)}k`;
+}
+
 function InterfaceRow({ iface }) {
+  const linkSpeed = iface.oper_status === 'up' ? formatLinkSpeed(iface.if_speed_bps) : null;
   return (
     <div className="flex items-center justify-between py-2 px-3 border-b border-gray-800/30 last:border-b-0">
       <div>
-        <div className="text-sm font-medium">{iface.if_name} <span className="text-gray-500 text-xs">#{iface.if_index}</span></div>
+        <div className="text-sm font-medium">{iface.if_name} <span className="text-gray-500 text-xs">#{iface.if_index}</span>{linkSpeed && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 align-middle" title="Brzina linka">{linkSpeed}</span>}</div>
         {iface.if_alias && <div className="text-xs text-gray-500">{iface.if_alias}</div>}
         {iface.mac_address && <div className="text-xs text-gray-600">{iface.mac_address}</div>}
       </div>
@@ -419,6 +429,11 @@ export default function NetworkDevices() {
                       <tr className="border-b border-gray-800/50 bg-gray-900/40">
                         <td></td>
                         <td colSpan={columns.length - 1} className="py-2 px-3">
+                          {d.sys_descr && (
+                            <div className="text-xs text-gray-500 mb-2 break-words whitespace-pre-line">
+                              <span className="text-gray-600">sysDescr: </span>{d.sys_descr}
+                            </div>
+                          )}
                           {ifaceLoading === d.id ? (
                             <div className="py-3"><Spinner size={14} /></div>
                           ) : !ifaceCache[d.id]?.length ? (
