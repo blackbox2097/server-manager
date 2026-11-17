@@ -1,6 +1,6 @@
 // src/pages/scripts/Schedules.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Edit, Play, Clock, PauseCircle, PlayCircle } from 'lucide-react';
+import { Plus, Trash2, Edit, Play, Clock, PauseCircle, PlayCircle, Search } from 'lucide-react';
 import clsx from 'clsx';
 import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
@@ -176,6 +176,9 @@ export default function Schedules() {
   const [modal,      setModal]      = useState(null); // null | 'add' | schedule
   const [delConfirm, setDelConfirm] = useState(null);
   const [running,    setRunning]    = useState(null);
+  // sm_list_search
+  const [searchQuery,  setSearchQuery]  = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
 
   const fetchAll = useCallback(async () => {
     if (!tenantId) return;
@@ -226,6 +229,14 @@ export default function Schedules() {
     }
   };
 
+  const q = searchQuery.trim().toLowerCase();
+  const serverName = Object.fromEntries(servers.map(s => [s.id, s.name]));
+  const matchesSearch = (s) => !q || [s.name, s.script_name, s.cron_expression,
+      ...(s.server_ids || []).map(id => serverName[id])]
+    .filter(Boolean).some(v => String(v).toLowerCase().includes(q));
+  const matchesStatus = (s) => !statusFilter || (statusFilter === 'active' ? s.active : !s.active);
+  const filteredSchedules = schedules.filter(s => matchesSearch(s) && matchesStatus(s));
+
   if (!tenantId) return <div className="text-gray-500 text-sm p-4">Odaberi tenant.</div>;
   if (loading)   return <div className="flex justify-center py-12"><Spinner size={28} className="text-brand-500" /></div>;
 
@@ -234,13 +245,25 @@ export default function Schedules() {
       <div className="flex items-center justify-between sticky top-0 z-10 bg-gray-950 py-2 border-b border-gray-800/50">
         <div>
           <h1 className="text-lg font-semibold text-gray-100">Zakazani poslovi</h1>
-          <p className="text-sm text-gray-500">{schedules.length} zakazanih skripti u {activeTenant?.name}</p>
+          <p className="text-sm text-gray-500">{(q || statusFilter) ? `${filteredSchedules.length} od ${schedules.length}` : schedules.length} zakazanih skripti u {activeTenant?.name}</p>
         </div>
-        {canManage && (
-          <button className="btn-primary" onClick={() => setModal('add')} disabled={scripts.length === 0}>
-            <Plus size={16} /> Novo zakazivanje
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <select className="input py-1.5 text-sm w-32 flex-shrink-0" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="">Svi statusi</option>
+            <option value="active">Aktivni</option>
+            <option value="paused">Pauzirani</option>
+          </select>
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input className="input pl-8 py-1.5 text-sm w-48" placeholder="Pretraga..."
+              value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          </div>
+          {canManage && (
+            <button className="btn-primary flex-shrink-0" onClick={() => setModal('add')} disabled={scripts.length === 0}>
+              <Plus size={16} /> Novo zakazivanje
+            </button>
+          )}
+        </div>
       </div>
 
       {scripts.length === 0 && (
@@ -255,6 +278,8 @@ export default function Schedules() {
               <Plus size={14} /> Novo zakazivanje
             </button>
           )} />
+      ) : filteredSchedules.length === 0 ? (
+        <div className="text-center text-sm text-gray-500 py-8">Nijedan zakazani posao ne odgovara pretrazi.</div>
       ) : (
         <div className="card p-0 overflow-hidden">
           <Table
@@ -317,7 +342,7 @@ export default function Schedules() {
                 </div>
               )},
             ]}
-            rows={schedules}
+            rows={filteredSchedules}
           />
         </div>
       )}

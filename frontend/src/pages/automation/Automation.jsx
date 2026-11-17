@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Edit, Trash2, Zap, History } from 'lucide-react';
+import { Plus, Edit, Trash2, Zap, History, Search } from 'lucide-react';
 import { Table, Modal, Alert, Spinner, Empty, ConfirmDialog } from '../../components/ui';
 import useAuthStore from '../../store/authStore';
 import api from '../../services/api';
@@ -132,6 +132,9 @@ export default function Automation() {
   const [loading,     setLoading]    = useState(true);
   const [modal,       setModal]      = useState(null); // null | 'add' | rule
   const [delConfirm,  setDelConfirm] = useState(null);
+  // sm_list_search
+  const [searchQuery,   setSearchQuery]   = useState('');
+  const [triggerFilter, setTriggerFilter] = useState('');
 
   const fetchAll = useCallback(async () => {
     if (!tenantId) return;
@@ -183,6 +186,14 @@ export default function Automation() {
     }
   };
 
+  const q = searchQuery.trim().toLowerCase();
+  const hasText = (vals) => !q || vals.filter(Boolean).some(v => String(v).toLowerCase().includes(q));
+  const matchesTrigger = (x) => !triggerFilter || x.trigger_type === triggerFilter;
+  const filteredRules = rules.filter(r => matchesTrigger(r) &&
+    hasText([r.name, r.script_name, r.server_name, TRIGGER_LABELS[r.trigger_type]]));
+  const filteredHistory = history.filter(h => matchesTrigger(h) &&
+    hasText([h.rule_name, h.script_name, h.server_name, h.status, TRIGGER_LABELS[h.trigger_type]]));
+
   if (!tenantId) return <div className="text-gray-500 text-sm p-4">Odaberi tenant.</div>;
   if (loading)   return <div className="flex justify-center py-12"><Spinner size={28} className="text-brand-500" /></div>;
 
@@ -191,13 +202,24 @@ export default function Automation() {
       <div className="flex items-center justify-between sticky top-0 z-10 bg-gray-950 py-2 border-b border-gray-800/50">
         <div>
           <h1 className="text-lg font-semibold text-gray-100">Automatizacija</h1>
-          <p className="text-sm text-gray-500">{rules.length} pravila u {activeTenant?.name}</p>
+          <p className="text-sm text-gray-500">{(q || triggerFilter) ? `${filteredRules.length} od ${rules.length}` : rules.length} pravila u {activeTenant?.name}</p>
         </div>
-        {tab === 'rules' && canManage && (
-          <button className="btn-primary" onClick={() => setModal('add')} disabled={scripts.length === 0}>
-            <Plus size={16} /> Novo pravilo
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <select className="input py-1.5 text-sm w-48 flex-shrink-0" value={triggerFilter} onChange={e => setTriggerFilter(e.target.value)}>
+            <option value="">Svi triggeri</option>
+            {Object.entries(TRIGGER_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input className="input pl-8 py-1.5 text-sm w-48" placeholder="Pretraga..."
+              value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          </div>
+          {tab === 'rules' && canManage && (
+            <button className="btn-primary flex-shrink-0" onClick={() => setModal('add')} disabled={scripts.length === 0}>
+              <Plus size={16} /> Novo pravilo
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex gap-1 border-b border-gray-800">
@@ -222,6 +244,8 @@ export default function Automation() {
                   <Plus size={14} /> Novo pravilo
                 </button>
               )} />
+          ) : filteredRules.length === 0 ? (
+            <div className="text-center text-sm text-gray-500 py-8">Nijedno pravilo ne odgovara pretrazi.</div>
           ) : (
             <div className="card p-0 overflow-hidden">
               <Table
@@ -269,7 +293,7 @@ export default function Automation() {
                     </div>
                   )},
                 ]}
-                rows={rules}
+                rows={filteredRules}
               />
             </div>
           )}
@@ -280,6 +304,8 @@ export default function Automation() {
         history.length === 0 ? (
           <Empty icon={History} title="Nema automatizovanih izvršavanja"
             subtitle="Ovde će se pojaviti izvršavanja pokrenuta pravilima automatizacije" />
+        ) : filteredHistory.length === 0 ? (
+          <div className="text-center text-sm text-gray-500 py-8">Nijedno izvršavanje ne odgovara pretrazi.</div>
         ) : (
           <div className="card p-0 overflow-hidden">
             <Table
@@ -303,7 +329,7 @@ export default function Automation() {
                   <span className="text-xs text-gray-500">{relTime(h.started_at) || '—'}</span>
                 )},
               ]}
-              rows={history}
+              rows={filteredHistory}
             />
           </div>
         )
