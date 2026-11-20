@@ -80,7 +80,11 @@ def derive_status(wi: dict) -> tuple[str, bool, str | None]:
     charge = _num(wi.get("batteryCapacity"))
 
     if "battery" in mode and "test" in mode:
-        status, reason = "warning", f"Test baterije ({mode_raw})"
+        # TEST_BATERIJE_ONLINE (20.11.2026): zakazani test baterije NIJE promena
+        # statusa -- ostaje online (rezim se vidi u ups_status_raw), bez mejla.
+        # Los rezultat testa stize kroz warnings -> warning ispod; nestanak
+        # struje tokom testa menja rezim u Battery Mode -> on_battery.
+        status, reason = "online", None
     elif "battery" in mode:
         if charge is not None and charge <= LOW_BATTERY_PCT:
             status, reason = "low_battery", "PRAZNA BATERIJA"
