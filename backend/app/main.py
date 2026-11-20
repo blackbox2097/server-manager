@@ -66,8 +66,11 @@ async def lifespan(app: FastAPI):
     from app.services.monitor import scheduler
     if scheduler.running:
         scheduler.shutdown(wait=False)
-    from app.services.snmp import shutdown_engine
-    shutdown_engine()
+    # GRACEFUL_SHUTDOWN_V1: prvo otkazi pollove u toku, pa zatvori SNMP i bazu
+    # (kratki timeout-i -- PM2 podrazumevano ceka 1.6 s pre SIGKILL-a)
+    from app.services import monitor as _monitor, snmp as _snmp
+    await _monitor.stop_tasks(timeout=0.5)
+    await _snmp.shutdown(timeout=0.5)
     await close_db()
     logger.info("Server ugasen")
 

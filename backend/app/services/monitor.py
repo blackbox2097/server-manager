@@ -318,6 +318,15 @@ async def _poll_guarded(server: dict):
 # semafor, a ne grupe -- spor server kasni samo sebi.
 _inflight: set[str] = set()
 _tasks: set[asyncio.Task] = set()
+
+async def stop_tasks(timeout: float = 1.0):
+    """GRACEFUL_SHUTDOWN_V1: otkazuje pollove u toku i ceka njihov kraj (gasenje)."""
+    pending = [t for t in _tasks if not t.done()]
+    for t in pending:
+        t.cancel()
+    if pending:
+        await asyncio.wait(pending, timeout=timeout)
+
 _sem: asyncio.Semaphore | None = None
 
 

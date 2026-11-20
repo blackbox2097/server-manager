@@ -594,6 +594,36 @@ async def _poll_guarded(device: dict):
 # semafor, a ne grupe -- spor/nedostupan uredjaj kasni samo sebi.
 _inflight: set[str] = set()
 _tasks: set[asyncio.Task] = set()
+
+async def stop_tasks(timeout: float = 1.0):
+    """GRACEFUL_SHUTDOWN_V1: otkazuje pollove u toku i ceka njihov kraj (gasenje)."""
+    pending = [t for t in _tasks if not t.done()]
+    for t in pending:
+        t.cancel()
+    if pending:
+        await asyncio.wait(pending, timeout=timeout)
+
+
+async def shutdown(timeout: float = 1.0):
+    """GRACEFUL_SHUTDOWN_V1: pollovi u toku -> otkazani, pa zatvaranje
+    dispatcher-a. UDP odgovor koji stigne posle zatvaranja pysnmp prijavi kao
+    CarrierError("Unregistered transport") -- pri gasenju je to ocekivano, pa
+    se samo ta greska utisava (sve ostale idu dalje normalno)."""
+    await stop_tasks(timeout)
+    loop = asyncio.get_running_loop()
+    prev = loop.get_exception_handler()
+
+    def _handler(lp, ctx):
+        if type(ctx.get("exception")).__name__ == "CarrierError":
+            return
+        if prev:
+            prev(lp, ctx)
+        else:
+            lp.default_exception_handler(ctx)
+
+    loop.set_exception_handler(_handler)
+    shutdown_engine()
+
 _sem: asyncio.Semaphore | None = None
 
 
