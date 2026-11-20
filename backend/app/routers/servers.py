@@ -27,6 +27,16 @@ class ServerIn(BaseModel):
     hvSecret: str | None = None; hvVerifyTls: bool = True
     pollIntervalSec: int | None = None
     isDockerHost: bool = False
+    # NSRV_WARN_V1: pragovi (NULL = globalni, 0 = ne prati) + mejl upozorenja
+    warnCpuPct: int | None = None; warnRamPct: int | None = None; warnDiskPct: int | None = None
+    emailAlerts: bool = True
+
+    @field_validator("warnCpuPct", "warnRamPct", "warnDiskPct")
+    @classmethod
+    def check_warn_pct(cls, v):
+        if v is not None and not (0 <= v <= 100):
+            raise ValueError("Prag mora biti 0-100 (0 = ne prati)")
+        return v
 
     @field_validator("pollIntervalSec")
     @classmethod
@@ -68,6 +78,15 @@ class ServerUp(BaseModel):
     hvSecret: str | None = None; hvVerifyTls: bool | None = None
     pollIntervalSec: int | None = None
     isDockerHost: bool | None = None
+    warnCpuPct: int | None = None; warnRamPct: int | None = None; warnDiskPct: int | None = None
+    emailAlerts: bool | None = None
+
+    @field_validator("warnCpuPct", "warnRamPct", "warnDiskPct")
+    @classmethod
+    def check_warn_pct(cls, v):
+        if v is not None and not (0 <= v <= 100):
+            raise ValueError("Prag mora biti 0-100 (0 = ne prati)")
+        return v
 
     @field_validator("pollIntervalSec")
     @classmethod
@@ -104,6 +123,7 @@ async def list_servers(tid: str, user=Depends(get_current_user)):
                   s.hv_api_host, s.hv_api_port, s.hv_auth_id, s.hv_verify_tls,
                   s.total_cpu_cores, s.total_ram_mb, s.total_disk_gb, s.virt_type,
                   s.poll_interval_sec, s.is_docker_host,
+                  s.warn_cpu_pct, s.warn_ram_pct, s.warn_disk_pct, s.email_alerts,
                   s.status, s.last_seen_at, s.last_error, s.active, s.created_at,
                   sk.name AS ssh_key_name,
                   (s.sudo_password IS NOT NULL) AS has_sudo_password,
@@ -134,9 +154,10 @@ async def create_server(tid: str, body: ServerIn, req: Request, user=Depends(get
                   ssh_password, sudo_password, winrm_port, winrm_https, winrm_auth_type,
                   winrm_user, winrm_password, connection_method,
                   hv_api_host, hv_api_port, hv_auth_id, hv_secret_enc, hv_verify_tls,
-                  poll_interval_sec, is_docker_host, created_by)
+                  poll_interval_sec, is_docker_host, created_by,
+                  warn_cpu_pct, warn_ram_pct, warn_disk_pct, email_alerts)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-                       $22,$23,$24,$25,$26,$27,$28,$29)
+                       $22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)
                RETURNING id, name, ip_address, os_type, status""",
             tid, body.name, _n(body.description), _n(body.hostname), body.ipAddress,
             body.osType, _n(body.osName), body.tags, body.environment,
@@ -152,7 +173,8 @@ async def create_server(tid: str, body: ServerIn, req: Request, user=Depends(get
             body.hvVerifyTls,
             body.pollIntervalSec,
             (body.isDockerHost and body.osType == "linux"),
-            user["id"])
+            user["id"],
+            body.warnCpuPct, body.warnRamPct, body.warnDiskPct, body.emailAlerts)
         await log_event("server.create", user_id=user["id"], username=user.get("username"),
                         tenant_id=tid, ip_address=_ip(req),
                         resource_type="server", resource_id=str(row["id"]),
@@ -185,7 +207,9 @@ async def update_server(tid: str, sid: str, body: ServerUp, req: Request, user=D
              hv_secret_enc = CASE WHEN $23::text IS NOT NULL THEN $23 ELSE hv_secret_enc END,
              hv_verify_tls=COALESCE($24,hv_verify_tls),
              poll_interval_sec=$25,
-             is_docker_host = CASE WHEN os_type='linux' THEN COALESCE($26, is_docker_host) ELSE false END
+             is_docker_host = CASE WHEN os_type='linux' THEN COALESCE($26, is_docker_host) ELSE false END,
+             warn_cpu_pct=$29, warn_ram_pct=$30, warn_disk_pct=$31,
+             email_alerts=COALESCE($32, email_alerts)
            WHERE id=$27 AND tenant_id=$28 AND active=true
            RETURNING id, name, ip_address, os_type""",
         _n(body.name), _n(body.description), _n(body.hostname), _n(body.ipAddress),
@@ -201,7 +225,8 @@ async def update_server(tid: str, sid: str, body: ServerUp, req: Request, user=D
         body.hvVerifyTls,
         body.pollIntervalSec,
         body.isDockerHost,
-        sid, tid)
+        sid, tid,
+        body.warnCpuPct, body.warnRamPct, body.warnDiskPct, body.emailAlerts)
     if not row: raise HTTPException(404, "Server nije pronadjen")
     if body.isDockerHost is False and row["os_type"] == "linux":
         # flag skinut -> kontejneri vise ne pripadaju hostu

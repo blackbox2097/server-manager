@@ -505,6 +505,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS servers_name_tenant_active_unique ON servers (
 -- ── Dozvola za upravljanje mreznim uredjajima (SNMP modul) ────────────────
 ALTER TABLE operator_tenants ADD COLUMN IF NOT EXISTS perm_network_manage BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- NSRV_WARN_V1 (20.11.2026): pragovi upozorenja po serveru (NULL = globalni
+-- iz config.py, 0 = ne prati) i prekidac mejla za upozorenja
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS warn_cpu_pct  SMALLINT;
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS warn_ram_pct  SMALLINT;
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS warn_disk_pct SMALLINT;
+ALTER TABLE servers ADD COLUMN IF NOT EXISTS email_alerts  BOOLEAN NOT NULL DEFAULT true;
+
 -- ── Raw+rollup retention konfiguracija po serveru (isti duh kao poll_interval_sec) ──
 ALTER TABLE servers ADD COLUMN IF NOT EXISTS raw_retention_hours   INTEGER NOT NULL DEFAULT 72;
 ALTER TABLE servers ADD COLUMN IF NOT EXISTS rollup_bucket_minutes INTEGER NOT NULL DEFAULT 1;

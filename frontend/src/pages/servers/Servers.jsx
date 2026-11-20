@@ -53,6 +53,7 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
     hvApiHost: '', hvApiPort: 8006, hvAuthId: '', hvSecret: '', hvVerifyTls: true,
     pollIntervalSec: '',
     isDockerHost: false,
+    warnCpuPct: '', warnRamPct: '', warnDiskPct: '', emailAlerts: true, // NSRV_WARN_V1
     ...(server ? {
       name:          server.name          || '',
       description:   server.description   || '',
@@ -78,6 +79,8 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
       hvVerifyTls: server.hv_verify_tls ?? true,
       pollIntervalSec: server.poll_interval_sec ?? '',
       isDockerHost: !!server.is_docker_host,
+      warnCpuPct: server.warn_cpu_pct ?? '', warnRamPct: server.warn_ram_pct ?? '',
+      warnDiskPct: server.warn_disk_pct ?? '', emailAlerts: server.email_alerts !== false,
     } : {}),
   }));
 
@@ -130,6 +133,9 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
         winrmPassword: form.winrmPassword || undefined,
         hvSecret:      form.hvSecret      || undefined,
         pollIntervalSec: form.pollIntervalSec ? parseInt(form.pollIntervalSec, 10) : null,
+        warnCpuPct:  ((v) => (v === '' || v === null || v === undefined) ? null : parseInt(v, 10))(form.warnCpuPct),
+        warnRamPct:  ((v) => (v === '' || v === null || v === undefined) ? null : parseInt(v, 10))(form.warnRamPct),
+        warnDiskPct: ((v) => (v === '' || v === null || v === undefined) ? null : parseInt(v, 10))(form.warnDiskPct),
       };
       if (isEdit) await api.put(`/tenants/${tenantId}/servers/${server.id}`, payload);
       else        await api.post(`/tenants/${tenantId}/servers`, payload);
@@ -211,6 +217,35 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
           <input className="input" value={form.description}
             onChange={e => set('description', e.target.value)} />
         </F>
+      </div>
+
+      {/* NSRV_WARN_V1: pragovi upozorenja po serveru + mejl upozorenja */}
+      <div className="border border-gray-800 rounded-lg p-3 space-y-3">
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Pragovi upozorenja (%)</p>
+        <div className="grid grid-cols-3 gap-3">
+          <F label="CPU">
+            <input type="number" min="0" max="100" className="input" value={form.warnCpuPct}
+              onChange={e => set('warnCpuPct', e.target.value)} placeholder="globalni" />
+          </F>
+          <F label="RAM">
+            <input type="number" min="0" max="100" className="input" value={form.warnRamPct}
+              onChange={e => set('warnRamPct', e.target.value)} placeholder="globalni" />
+          </F>
+          <F label="Disk">
+            <input type="number" min="0" max="100" className="input" value={form.warnDiskPct}
+              onChange={e => set('warnDiskPct', e.target.value)} placeholder="globalni" />
+          </F>
+        </div>
+        <p className="text-xs text-gray-500">
+          Prazno = globalni prag, 0 = ne prati. CPU upozorenje tek posle 3 uzastopna merenja iznad praga.
+        </p>
+        <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+          <input type="checkbox" checked={!!form.emailAlerts} onChange={e => set('emailAlerts', e.target.checked)} />
+          Mejl za upozorenja
+        </label>
+        <p className="text-xs text-gray-500 -mt-2 ml-6">
+          Upozorenja se u aplikaciji prikazuju uvek. Mejl za offline i oporavak ide po podešavanjima tenanta.
+        </p>
       </div>
 
       {(form.osType === 'proxmox' || form.osType === 'esxi') && (

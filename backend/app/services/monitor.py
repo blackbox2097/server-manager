@@ -27,6 +27,46 @@ _last_polled: dict[str, float] = {}
 # server_id -> {"candidate": status_str, "count": int}
 _status_pending: dict[str, dict] = {}
 
+# NSRV_WARN_V1: broj uzastopnih poll-ova sa CPU iznad praga (server_id -> n)
+_cpu_streak: dict[str, int] = {}
+
+
+def _eval_thresholds(srv: dict, m: dict) -> tuple[bool, str | None]:
+    """NSRV_WARN_V1 (20.11.2026): pragovi po serveru (warn_*_pct; NULL = globalni
+    iz config.py, 0 = ne prati). RAM i disk -> odmah (pa postojeci debounce).
+    CPU -> tek kad je iznad praga server_cpu_sustain_polls poll-ova zaredom;
+    debounce statusa se uracunava, pa potvrda pada tacno na N-ti poll
+    (Ivanova odluka: 2 uzastopna spajka se tolerisu, treci okida)."""
+    cfg = get_settings()
+    sid = str(srv["id"])
+
+    def thr(col, default):
+        v = srv.get(col)
+        return default if v is None else int(v)
+
+    reasons = []
+    cpu_t = thr("warn_cpu_pct", cfg.server_warn_cpu_pct)
+    cpu = m.get("cpuPercent") or 0
+    if cpu_t > 0 and cpu >= cpu_t:
+        _cpu_streak[sid] = _cpu_streak.get(sid, 0) + 1
+    else:
+        _cpu_streak.pop(sid, None)
+    need = max(1, cfg.server_cpu_sustain_polls - cfg.status_debounce_polls + 1)
+    if _cpu_streak.get(sid, 0) >= need:
+        reasons.append(f"CPU {round(cpu)}% (prag {cpu_t}%)")
+
+    ram_t = thr("warn_ram_pct", cfg.server_warn_ram_pct)
+    ram = m.get("ramPercent") or 0
+    if ram_t > 0 and ram >= ram_t:
+        reasons.append(f"RAM {round(ram)}% (prag {ram_t}%)")
+
+    disk_t = thr("warn_disk_pct", cfg.server_warn_disk_pct)
+    disk = m.get("diskPercent") or 0
+    if disk_t > 0 and disk >= disk_t:
+        reasons.append(f"Disk {round(disk)}% (prag {disk_t}%)")
+
+    return bool(reasons), (", ".join(reasons) or None)
+
 
 def _net_rate(server_id: str, rx_bytes: int, tx_bytes: int) -> tuple[float, float]:
     """Vrati (rx_kbps, tx_kbps) na osnovu razlike od prethodnog poll-a."""
@@ -138,7 +178,8 @@ async def _poll(server: dict):
         # SSH primarno, auto-fallback na WinRM za Windows ako SSH konekcija ne uspe
         from app.services.conn_dispatch import get_metrics
         m = await get_metrics(srv)
-        high = m["cpuPercent"] >= 90 or m["ramPercent"] >= 90 or m["diskPercent"] >= 90
+        # NSRV_WARN_V1: pragovi po serveru umesto fiksnih 90%
+        high, warn_reason = _eval_thresholds(srv, m)
         raw_status = "warning" if high else "online"
         from app.services.automation import check_metric_triggers
         create_bg_task(check_metric_triggers(srv, m))
@@ -161,18 +202,24 @@ async def _poll(server: dict):
 
         confirmed = _confirm_status(srv["id"], old_status, raw_status)
         display_status = confirmed or old_status or raw_status
+        if display_status == "warning":
+            # tokom debounce-a ka online zadrzava se poslednji razlog
+            warn_text = warn_reason or srv.get("last_error")
+        else:
+            warn_text = None
 
         await execute(
-            """UPDATE servers SET status=$1, last_seen_at=NOW(), last_error=NULL, os_name=COALESCE($2,os_name),
+            """UPDATE servers SET status=$1, last_seen_at=NOW(), last_error=$8, os_name=COALESCE($2,os_name),
                  total_cpu_cores=COALESCE($4,total_cpu_cores), total_ram_mb=COALESCE($5,total_ram_mb),
                  total_disk_gb=COALESCE($6,total_disk_gb), virt_type=COALESCE($7,virt_type)
                WHERE id=$3""",
             display_status, m.get("osName"), srv["id"],
-            m.get("totalCpuCores"), m.get("totalRamMb"), m.get("totalDiskGb"), m.get("virtType")
+            m.get("totalCpuCores"), m.get("totalRamMb"), m.get("totalDiskGb"), m.get("virtType"),
+            warn_text,
         )
         await ws_manager.broadcast("metrics", {
             "serverId": str(srv["id"]), "tenantId": str(srv["tenant_id"]),
-            "status": display_status,
+            "status": display_status, "error": warn_text,
             "metrics": {"cpu": m["cpuPercent"], "ram": m["ramPercent"],
                         "disk": m["diskPercent"], "disks": m.get("disks") or [],
                         "uptime": m["uptimeSeconds"],
@@ -181,7 +228,7 @@ async def _poll(server: dict):
         }, tenant_id=str(srv["tenant_id"]))
 
         if confirmed and old_status and old_status != confirmed:
-            await _log_status_transition(srv, old_status, confirmed, metrics=m)
+            await _log_status_transition(srv, old_status, confirmed, metrics=m, error=warn_text)
     except Exception as e:
         err = str(e)[:500]
         confirmed = _confirm_status(srv["id"], old_status, "offline")

@@ -210,9 +210,13 @@ async def notify_server_status(server: dict, old_status: str, new_status: str, m
     if not tenant or not tenant["alerts_enabled"]:
         return
 
-    is_recovery = new_status == "online" and old_status in ("offline", "warning")
+    # NSRV_WARN_V1: prekidac po serveru (email_alerts) gasi SAMO mejl upozorenja
+    # i oporavak iz upozorenja; offline/oporavak iz offline-a ostaju na tenantu
+    warn_mail   = server.get("email_alerts") is not False
+    is_recovery = new_status == "online" and (
+        old_status == "offline" or (old_status == "warning" and warn_mail))
     is_offline  = new_status == "offline"
-    is_warning  = new_status == "warning" and old_status != "offline"
+    is_warning  = new_status == "warning" and old_status != "offline" and warn_mail
 
     should_send = (
         (is_offline  and tenant["alert_on_offline"]) or
@@ -231,7 +235,7 @@ async def notify_server_status(server: dict, old_status: str, new_status: str, m
               error_message, cpu_percent, ram_percent, disk_percent)
            VALUES ($1,'server',$2,$3,$4,$5,$6,$7,$8,$9)""",
         server["tenant_id"], server["id"], server["name"], old_status, new_status,
-        (server.get("last_error")[:300] if is_offline and server.get("last_error") else None),
+        (server.get("last_error")[:300] if (is_offline or is_warning) and server.get("last_error") else None),
         cpu, ram, disk,
     )
     return

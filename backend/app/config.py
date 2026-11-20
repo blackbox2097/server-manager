@@ -46,6 +46,12 @@ class Settings(BaseSettings):
                                         # umesto pojedinacnog mejla po dogadjaju
     log_retention_days:     int = 30
     status_debounce_polls:  int = 2
+    # NSRV_WARN_V1 (20.11.2026): globalni pragovi upozorenja za servere (%);
+    # server ih moze prepisati (warn_*_pct), 0 = metrika se ne prati
+    server_warn_cpu_pct:  int = 90
+    server_warn_ram_pct:  int = 90
+    server_warn_disk_pct: int = 90
+    server_cpu_sustain_polls: int = 3   # CPU upozorenje tek na N-tom uzastopnom pollu iznad praga
 
     backup_dir: str = "/var/backups/servermanager"
     pm2_user:   str = "servermanager"

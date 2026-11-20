@@ -6,7 +6,7 @@
 // StatusOverview ne prosledjuje NIJEDAN handler (cross-tenant pregled bez
 // akcija) -- klik na ceo red umesto toga prebacuje tenant i navigira.
 import React from 'react';
-import { Server, ArrowDown, ArrowUp, Cpu, Plug, TerminalSquare, Edit, Trash2, RotateCw, ExternalLink } from 'lucide-react';
+import { Server, ArrowDown, ArrowUp, Cpu, Plug, TerminalSquare, Edit, Trash2, RotateCw, ExternalLink, MailX } from 'lucide-react';
 import { StatusBadge, Badge, MetricCell, DiskCell, Spinner, formatUptime, formatNetSpeed } from '../components/ui';
 
 export const VIRT_LABELS = {
@@ -77,7 +77,20 @@ export function getServerColumns({
         ) : null
       )
     }] : []),
-    { key: 'status', label: 'Status',   sortKey: 'status', render: s => <StatusBadge status={s.status} /> },
+    // NSRV_WARN_V1: razlog upozorenja ispod statusa + oznaka utisanog mejla
+    { key: 'status', label: 'Status',   sortKey: 'status', render: s => (
+      <div>
+        <div className="flex items-center gap-1.5">
+          <StatusBadge status={s.status} />
+          {s.email_alerts === false && (
+            <span title="Mejl za upozorenja je isključen za ovaj server"><MailX size={13} className="text-gray-500" /></span>
+          )}
+        </div>
+        {s.status === 'warning' && s.last_error && (
+          <div className="text-[11px] text-yellow-500/80 mt-0.5 max-w-[14rem] truncate" title={s.last_error}>{s.last_error}</div>
+        )}
+      </div>
+    )},
     { key: 'cpu',    label: 'CPU',       sortValue: s => s.cpu_percent, render: s => <MetricCell value={s.cpu_percent}  label="CPU"  /> },
     { key: 'ram',    label: 'RAM',       sortValue: s => s.ram_percent, render: s => <MetricCell value={s.ram_percent}  label="RAM"  /> },
     { key: 'disk',   label: 'Disk',      sortValue: s => s.disk_percent, render: s => <DiskCell value={s.disk_percent} disks={s.disks} /> },
