@@ -45,6 +45,14 @@ export function getServerColumns({
           {!['proxmox', 'hyperv', 'esxi'].includes(s.os_type) && s.virt_type && s.virt_type !== 'none' && (
             <Badge color={VIRT_COLORS[s.virt_type] || 'gray'}>{VIRT_LABELS[s.virt_type] || s.virt_type}</Badge>
           )}
+          {/* VMLINK_V1: hipervizor na kom server radi (rucno povezivanje u formi servera) */}
+          {s.vm_host_name && (
+            <span title={`VM "${s.vm_link_name}" na hipervizoru ${s.vm_host_name}`}
+              className={navigate ? 'cursor-pointer' : ''}
+              onClick={navigate ? (e => { e.stopPropagation(); navigate(`/servers/${s.vm_host_id}/vms?type=vm`); }) : undefined}>
+              <Badge color={{ proxmox: 'purple', hyperv: 'blue', esxi: 'orange' }[s.vm_host_type] || 'gray'}>⤷ {s.vm_host_name}</Badge>
+            </span>
+          )}
         </div>
         <div className="text-xs text-gray-500">
           {s.ip_address} · {s.os_type === 'windows' ? '🪟 Windows' : s.os_type === 'proxmox' ? '🖥️ Hipervizor' : s.os_type === 'hyperv' ? '🖥️ Hipervizor (Hyper-V)' : s.os_type === 'esxi' ? '🖥️ Hipervizor (ESXi)' : '🐧 Linux'}

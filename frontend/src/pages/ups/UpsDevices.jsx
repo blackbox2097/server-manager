@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useCallback, memo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Plus, BatteryCharging, Search, RefreshCw, Pencil, Trash2,
+  Plus, BatteryCharging, Search, RefreshCw, Edit, Trash2, // UPS_EDIT_ICON: ista ikona kao serveri/mrezni
   ChevronDown, ChevronRight, PlugZap,
 } from 'lucide-react';
 import api from '../../services/api';
@@ -170,6 +170,9 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
   return (
     <div className="space-y-4">
       {error && <Alert type="error" message={error} />}
+      {/* WIDE_FORMS_UPS: levo osnovno + interval/retention, desno izvor i konekcija */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+      <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <F label="Naziv *">
           <input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="UPS serverska sala" />
@@ -181,6 +184,28 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
       <F label="Opis">
         <input className="input" value={form.description} onChange={e => set('description', e.target.value)} />
       </F>
+      <F label="Interval osvežavanja (sekunde)">
+        <input className="input" type="number" min={10} value={form.pollIntervalSec}
+          onChange={e => set('pollIntervalSec', parseInt(e.target.value) || 15)} />
+      </F>
+
+      <button type="button" className="text-xs text-blue-400 hover:underline"
+        onClick={() => setShowAdvanced(v => !v)}>
+        {showAdvanced ? 'Sakrij' : 'Prikaži'} napredna retention podešavanja
+      </button>
+      {showAdvanced && (
+        <div className="grid grid-cols-3 gap-3 border border-gray-800 rounded-lg p-3">
+          <F label="Raw retention (h)"><input className="input" type="number" value={form.rawRetentionHours}
+            onChange={e => set('rawRetentionHours', parseInt(e.target.value) || 72)} /></F>
+          <F label="Rollup bucket (min)"><input className="input" type="number" value={form.rollupBucketMinutes}
+            onChange={e => set('rollupBucketMinutes', parseInt(e.target.value) || 5)} /></F>
+          <F label="Rollup retention (dana)"><input className="input" type="number" value={form.rollupRetentionDays}
+            onChange={e => set('rollupRetentionDays', parseInt(e.target.value) || 90)} /></F>
+        </div>
+      )}
+
+      </div>
+      <div className="space-y-4">
       <F label="Izvor podataka">
         <select className="input" value={form.source} onChange={e => changeSource(e.target.value)}>
           <option value="nut">NUT server (Synology / QNAP / Linux)</option>
@@ -252,25 +277,8 @@ const UpsForm = memo(function UpsForm({ upsRef, tenantId, onSave, onClose }) {
         ))}
       </div>
 
-      <F label="Interval osvežavanja (sekunde)">
-        <input className="input" type="number" min={10} value={form.pollIntervalSec}
-          onChange={e => set('pollIntervalSec', parseInt(e.target.value) || 15)} />
-      </F>
-
-      <button type="button" className="text-xs text-blue-400 hover:underline"
-        onClick={() => setShowAdvanced(v => !v)}>
-        {showAdvanced ? 'Sakrij' : 'Prikaži'} napredna retention podešavanja
-      </button>
-      {showAdvanced && (
-        <div className="grid grid-cols-3 gap-3 border border-gray-800 rounded-lg p-3">
-          <F label="Raw retention (h)"><input className="input" type="number" value={form.rawRetentionHours}
-            onChange={e => set('rawRetentionHours', parseInt(e.target.value) || 72)} /></F>
-          <F label="Rollup bucket (min)"><input className="input" type="number" value={form.rollupBucketMinutes}
-            onChange={e => set('rollupBucketMinutes', parseInt(e.target.value) || 5)} /></F>
-          <F label="Rollup retention (dana)"><input className="input" type="number" value={form.rollupRetentionDays}
-            onChange={e => set('rollupRetentionDays', parseInt(e.target.value) || 90)} /></F>
-        </div>
-      )}
+      </div>
+      </div>
 
       <div className="flex justify-end gap-2 pt-2">
         <button className="btn btn-secondary" onClick={onClose}>Otkaži</button>
@@ -509,7 +517,7 @@ export default function UpsDevices() {
                           {canManage && (
                             <>
                               <button className="btn-ghost p-1.5" title="Izmeni" onClick={() => openEdit(u)} disabled={openingEdit === u.id}>
-                                {openingEdit === u.id ? <Spinner size={14} /> : <Pencil size={14} />}
+                                {openingEdit === u.id ? <Spinner size={14} /> : <Edit size={14} />}
                               </button>
                               <button className="btn-ghost p-1.5 text-red-400" title="Obriši" onClick={() => setDelConfirm(u)}>
                                 <Trash2 size={14} />
@@ -535,7 +543,7 @@ export default function UpsDevices() {
         </div>
       )}
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={modalTitle}>
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={modalTitle} size="xl">
         <UpsForm upsRef={upsRef} tenantId={tenantId} onSave={handleSaved} onClose={() => setModalOpen(false)} />
       </Modal>
 

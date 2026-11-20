@@ -144,12 +144,13 @@ export function Alert({ type = 'info', message, onClose }) {
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
-export function Modal({ open, onClose, title, children, footer }) {
+// WIDE_FORMS_V1: size='xl' -> siroki modal (forme sa dve kolone)
+export function Modal({ open, onClose, title, children, footer, size = 'lg' }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
-      <div className="relative z-10 bg-gray-900 border border-gray-700 rounded-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+      <div className={`relative z-10 bg-gray-900 border border-gray-700 rounded-xl w-full ${size === 'xl' ? 'max-w-5xl' : 'max-w-lg'} max-h-[90vh] flex flex-col`}>
         <div className="flex items-center justify-between p-4 border-b border-gray-800">
           <h3 className="font-semibold text-gray-100">{title}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300">✕</button>

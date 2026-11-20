@@ -54,8 +54,10 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
     pollIntervalSec: '',
     isDockerHost: false,
     warnCpuPct: '', warnRamPct: '', warnDiskPct: '', emailAlerts: true, // NSRV_WARN_V1
+    vmLinkId: '', // VMLINK_V1
     ...(server ? {
       name:          server.name          || '',
+      vmLinkId:      server.vm_link_id    || '',
       description:   server.description   || '',
       hostname:      server.hostname      || '',
       ipAddress:     server.ip_address    || '',
@@ -98,6 +100,12 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
 
   useEffect(() => { loadSshKeys(); }, [tenantId]);
 
+  // VMLINK_V1: VM-ovi tenanta za "Hipervizor VM link"
+  const [vmOptions, setVmOptions] = useState([]);
+  useEffect(() => {
+    api.get(`/tenants/${tenantId}/vm-link-options`).then(r => setVmOptions(r.data)).catch(() => {});
+  }, [tenantId]);
+
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const handleGenerateKey = async () => {
@@ -136,12 +144,13 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
         warnCpuPct:  ((v) => (v === '' || v === null || v === undefined) ? null : parseInt(v, 10))(form.warnCpuPct),
         warnRamPct:  ((v) => (v === '' || v === null || v === undefined) ? null : parseInt(v, 10))(form.warnRamPct),
         warnDiskPct: ((v) => (v === '' || v === null || v === undefined) ? null : parseInt(v, 10))(form.warnDiskPct),
+        vmLinkId: ['proxmox', 'hyperv', 'esxi'].includes(form.osType) ? undefined : (form.vmLinkId || null),
       };
       if (isEdit) await api.put(`/tenants/${tenantId}/servers/${server.id}`, payload);
       else        await api.post(`/tenants/${tenantId}/servers`, payload);
       onSave();
     } catch (err) {
-      setError(err.response?.data?.error || 'Greška pri čuvanju');
+      setError(err.response?.data?.detail || err.response?.data?.error || 'Greška pri čuvanju');
     } finally {
       setSaving(false);
     }
@@ -151,6 +160,9 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
     <div className="space-y-4">
       {error && <Alert type="error" message={error} />}
 
+      {/* WIDE_FORMS_V1: levo osnovno, desno konekcija -- na uskom ekranu jedna kolona */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+      <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <F label="Naziv *">
           <input className="input" value={form.name}
@@ -219,6 +231,25 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
         </F>
       </div>
 
+      {/* VMLINK_V1: rucno povezivanje sa VM na hipervizoru */}
+      {!['proxmox', 'hyperv', 'esxi'].includes(form.osType) && (
+        <F label="Hipervizor VM link:">
+          <select className="input" value={form.vmLinkId} onChange={e => set('vmLinkId', e.target.value)}>
+            <option value="">Nije povezan</option>
+            {Object.entries(vmOptions
+              .filter(v => !v.linked_server_id || v.linked_server_id === server?.id || v.id === form.vmLinkId)
+              .reduce((acc, v) => { (acc[v.host_name] ||= []).push(v); return acc; }, {})
+            ).map(([host, list]) => (
+              <optgroup key={host} label={host}>
+                {list.map(v => (
+                  <option key={v.id} value={v.id}>{v.name}{v.ip_address ? ` (${v.ip_address})` : ''}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </F>
+      )}
+
       {/* NSRV_WARN_V1: pragovi upozorenja po serveru + mejl upozorenja */}
       <div className="border border-gray-800 rounded-lg p-3 space-y-3">
         <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Pragovi upozorenja (%)</p>
@@ -248,6 +279,8 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
         </p>
       </div>
 
+      </div>
+      <div className="space-y-4">
       {(form.osType === 'proxmox' || form.osType === 'esxi') && (
         <div className="border border-gray-800 rounded-lg p-3 space-y-3">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -419,6 +452,9 @@ const ServerForm = memo(function ServerForm({ serverRef, tenantId, onSave, onClo
         </div>
       )}
 
+      </div>
+      </div>
+
       <div className="flex justify-end gap-2 pt-2">
         <button className="btn-secondary" onClick={onClose}>Otkaži</button>
         <button className="btn-primary" onClick={handleSave} disabled={saving}>
@@ -484,6 +520,7 @@ export default function Servers() {
     const addOs = searchParams.get('addOs') || '';
     openAddPrefilled({
       name: addName,
+      vm_link_id: searchParams.get('addVmId') || '',
       ip_address: searchParams.get('addIp') || '',
       os_type: /win/i.test(addOs) ? 'windows' : 'linux',
     });
@@ -665,7 +702,7 @@ export default function Servers() {
         </div>
       )}
 
-      <Modal open={modalOpen} onClose={closeModal} title={modalTitle}>
+      <Modal open={modalOpen} onClose={closeModal} title={modalTitle} size="xl">
         <ServerForm
           serverRef={editServerRef}
           tenantId={tenantId}

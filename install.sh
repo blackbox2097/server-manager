@@ -466,6 +466,9 @@ CREATE TABLE IF NOT EXISTS virtual_machines (
 );
 CREATE INDEX IF NOT EXISTS idx_vm_hypervisor ON virtual_machines (hypervisor_id);
 CREATE INDEX IF NOT EXISTS idx_vm_tenant     ON virtual_machines (tenant_id);
+-- VMLINK_V1 (20.11.2026): rucno povezivanje -- server moze biti povezan sa najvise jednom VM
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vm_linked_server ON virtual_machines (linked_server_id)
+    WHERE linked_server_id IS NOT NULL;
 
 -- Docker hostovi i grupisanje kontejnera po stack-u
 ALTER TABLE servers ADD COLUMN IF NOT EXISTS is_docker_host BOOLEAN NOT NULL DEFAULT false;

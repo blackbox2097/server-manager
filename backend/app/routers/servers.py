@@ -30,6 +30,7 @@ class ServerIn(BaseModel):
     # NSRV_WARN_V1: pragovi (NULL = globalni, 0 = ne prati) + mejl upozorenja
     warnCpuPct: int | None = None; warnRamPct: int | None = None; warnDiskPct: int | None = None
     emailAlerts: bool = True
+    vmLinkId: str | None = None   # VMLINK_V1: id VM na hipervizoru (None/"" = nije povezan)
 
     @field_validator("warnCpuPct", "warnRamPct", "warnDiskPct")
     @classmethod
@@ -80,6 +81,7 @@ class ServerUp(BaseModel):
     isDockerHost: bool | None = None
     warnCpuPct: int | None = None; warnRamPct: int | None = None; warnDiskPct: int | None = None
     emailAlerts: bool | None = None
+    vmLinkId: str | None = None   # VMLINK_V1: menja se SAMO ako je polje poslato
 
     @field_validator("warnCpuPct", "warnRamPct", "warnDiskPct")
     @classmethod
@@ -111,6 +113,46 @@ class ServerUp(BaseModel):
 
 # ── Serveri ───────────────────────────────────────────────────────────────────
 
+
+# VMLINK_V1 (20.11.2026): rucno povezivanje servera sa VM na hipervizoru.
+# Bez automatike (Ivanova odluka) -- veza se menja SAMO kroz formu servera.
+_HV_TYPES = ("proxmox", "hyperv", "esxi")
+
+
+async def _validate_vm_link(tid: str, sid: str | None, vm_id: str):
+    vm = await fetchrow(
+        """SELECT id, hypervisor_id, linked_server_id FROM virtual_machines
+           WHERE id::text=$1 AND tenant_id=$2 AND vm_type='vm'""", vm_id, tid)
+    if not vm:
+        raise HTTPException(400, "VM nije pronadjena u ovom tenantu")
+    if sid and str(vm["hypervisor_id"]) == str(sid):
+        raise HTTPException(400, "Server ne moze biti povezan sa VM na samom sebi")
+    if vm["linked_server_id"] and str(vm["linked_server_id"]) != str(sid):
+        raise HTTPException(409, "Ta VM je vec povezana sa drugim serverom")
+
+
+async def _set_vm_link(tid: str, sid: str, vm_id: str | None):
+    if vm_id:
+        await _validate_vm_link(tid, sid, vm_id)
+    await execute(
+        "UPDATE virtual_machines SET linked_server_id=NULL WHERE linked_server_id=$1 AND id IS DISTINCT FROM $2",
+        sid, vm_id)
+    if vm_id:
+        await execute("UPDATE virtual_machines SET linked_server_id=$1 WHERE id=$2", sid, vm_id)
+
+
+@router.get("/{tid}/vm-link-options")
+async def vm_link_options(tid: str, user=Depends(get_current_user)):
+    """VM-ovi tenanta za izbor u formi servera (grupisanje po hipervizoru radi frontend)."""
+    await check_tenant_perm(tid, user)
+    rows = await fetch(
+        """SELECT v.id, v.name, v.ip_address, v.linked_server_id,
+                  h.id AS host_id, h.name AS host_name, h.os_type AS host_type
+           FROM virtual_machines v JOIN servers h ON h.id = v.hypervisor_id
+           WHERE v.tenant_id=$1 AND v.vm_type='vm' AND h.active=true
+           ORDER BY h.name, v.name""", tid)
+    return [dict(r) for r in rows]
+
 @router.get("/{tid}/servers")
 async def list_servers(tid: str, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user)
@@ -124,6 +166,7 @@ async def list_servers(tid: str, user=Depends(get_current_user)):
                   s.total_cpu_cores, s.total_ram_mb, s.total_disk_gb, s.virt_type,
                   s.poll_interval_sec, s.is_docker_host,
                   s.warn_cpu_pct, s.warn_ram_pct, s.warn_disk_pct, s.email_alerts,
+                  lk.vm_link_id, lk.vm_link_name, lk.vm_host_id, lk.vm_host_name, lk.vm_host_type,
                   s.status, s.last_seen_at, s.last_error, s.active, s.created_at,
                   sk.name AS ssh_key_name,
                   (s.sudo_password IS NOT NULL) AS has_sudo_password,
@@ -139,6 +182,12 @@ async def list_servers(tid: str, user=Depends(get_current_user)):
                       net_rx_kbps, net_tx_kbps, process_count
                FROM metrics WHERE server_id=s.id ORDER BY collected_at DESC LIMIT 1
            ) m ON true
+           LEFT JOIN LATERAL (
+               SELECT v.id AS vm_link_id, v.name AS vm_link_name,
+                      h.id AS vm_host_id, h.name AS vm_host_name, h.os_type AS vm_host_type
+               FROM virtual_machines v JOIN servers h ON h.id = v.hypervisor_id
+               WHERE v.linked_server_id = s.id LIMIT 1
+           ) lk ON true
            WHERE s.tenant_id=$1 AND s.active=true ORDER BY s.os_type, s.name""", tid)
     return [dict(r) for r in rows]
 
@@ -146,6 +195,8 @@ async def list_servers(tid: str, user=Depends(get_current_user)):
 @router.post("/{tid}/servers", status_code=201)
 async def create_server(tid: str, body: ServerIn, req: Request, user=Depends(get_current_user)):
     await check_tenant_perm(tid, user, "perm_servers_manage")
+    if body.vmLinkId and body.osType not in _HV_TYPES:
+        await _validate_vm_link(tid, None, body.vmLinkId)
     try:
         row = await fetchrow(
             """INSERT INTO servers
@@ -175,11 +226,15 @@ async def create_server(tid: str, body: ServerIn, req: Request, user=Depends(get
             (body.isDockerHost and body.osType == "linux"),
             user["id"],
             body.warnCpuPct, body.warnRamPct, body.warnDiskPct, body.emailAlerts)
+        if body.vmLinkId and body.osType not in _HV_TYPES:
+            await _set_vm_link(tid, str(row["id"]), body.vmLinkId)
         await log_event("server.create", user_id=user["id"], username=user.get("username"),
                         tenant_id=tid, ip_address=_ip(req),
                         resource_type="server", resource_id=str(row["id"]),
                         details={"name": body.name, "ipAddress": body.ipAddress, "osType": body.osType})
         return dict(row)
+    except HTTPException:
+        raise
     except Exception as e:
         if "unique" in str(e).lower(): raise HTTPException(409, "Server vec postoji u ovom tenantu")
         raise HTTPException(500, str(e))
@@ -228,6 +283,8 @@ async def update_server(tid: str, sid: str, body: ServerUp, req: Request, user=D
         sid, tid,
         body.warnCpuPct, body.warnRamPct, body.warnDiskPct, body.emailAlerts)
     if not row: raise HTTPException(404, "Server nije pronadjen")
+    if "vmLinkId" in body.model_fields_set and row["os_type"] not in _HV_TYPES:
+        await _set_vm_link(tid, sid, body.vmLinkId or None)
     if body.isDockerHost is False and row["os_type"] == "linux":
         # flag skinut -> kontejneri vise ne pripadaju hostu
         from app.database import execute as _db_execute
@@ -404,12 +461,14 @@ async def server_vms(tid: str, sid: str, vm_type: str | None = None, user=Depend
     if vm_type in ("vm", "container"):
         rows = await fetch(
             """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
-                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at, stack_name, ports
+                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at, stack_name, ports,
+                      (SELECT name FROM servers WHERE id = linked_server_id) AS linked_server_name
                FROM virtual_machines WHERE hypervisor_id=$1 AND vm_type=$2 ORDER BY name""", sid, vm_type)
     else:
         rows = await fetch(
             """SELECT id, vm_id_on_host, name, power_state, cpu_cores, ram_mb, disk_gb,
-                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at, stack_name, ports
+                      disk_sizes_gb, guest_os, ip_address, vm_type, linked_server_id, last_seen_at, stack_name, ports,
+                      (SELECT name FROM servers WHERE id = linked_server_id) AS linked_server_name
                FROM virtual_machines WHERE hypervisor_id=$1 ORDER BY name""", sid)
     mon_rows = await fetch(
         "SELECT id, monitor_override FROM virtual_machines WHERE hypervisor_id=$1", sid)

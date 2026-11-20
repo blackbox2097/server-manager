@@ -54,6 +54,7 @@ export default function VmList() {
     params.set('addName', vm.name);
     if (vm.ip_address) params.set('addIp', vm.ip_address);
     if (vm.guest_os) params.set('addOs', vm.guest_os);
+    params.set('addVmId', vm.id); // VMLINK_V1: novi server se odmah povezuje sa ovom VM
     navigate(`/servers?${params.toString()}`);
   };
 
@@ -256,7 +257,7 @@ export default function VmList() {
               ...(canManage && !isDockerHost ? [{
                 key: 'actions', label: '', sortable: false, render: v => (
                   v.linked_server_id ? (
-                    <span className="text-xs text-gray-600" title="Već povezan sa serverom">Povezan</span>
+                    <span className="text-xs text-gray-400" title="Povezano u formi servera (Hipervizor VM link)">⤷ {v.linked_server_name || 'Povezan'}</span>
                   ) : (
                     <button className="btn-ghost text-xs py-1 px-2 flex items-center gap-1 flex-shrink-0"
                       onClick={() => handleAddAsServer(v)} title="Dodaj kao server">

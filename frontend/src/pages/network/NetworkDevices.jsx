@@ -63,6 +63,9 @@ const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, locations, on
   return (
     <div className="space-y-4">
       {error && <Alert type="error" message={error} onClose={() => setError('')} />}
+      {/* WIDE_FORMS_V1: levo osnovno, desno konekcija -- na uskom ekranu jedna kolona */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+      <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <F label="Naziv"><input className="input" value={form.name} onChange={e => set('name', e.target.value)} /></F>
         <F label="IP adresa"><input className="input" value={form.ipAddress} onChange={e => set('ipAddress', e.target.value)} /></F>
@@ -87,6 +90,8 @@ const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, locations, on
         </F>
       </div>
 
+      </div>
+      <div className="space-y-4">
       <div className="border border-gray-800 rounded-lg p-3 space-y-3">
         <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">SNMP konfiguracija</p>
         <div className="grid grid-cols-2 gap-3">
@@ -176,6 +181,9 @@ const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, locations, on
             onChange={e => set('rollupRetentionDays', parseInt(e.target.value) || 90)} /></F>
         </div>
       )}
+
+      </div>
+      </div>
 
       <div className="flex justify-end gap-2 pt-2">
         <button className="btn btn-secondary" onClick={onClose}>Otkaži</button>
@@ -493,7 +501,7 @@ export default function NetworkDevices() {
         </div>
       )}
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={modalTitle}>
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={modalTitle} size="xl">
         <DeviceForm deviceRef={editDeviceRef} tenantId={tenantId} locations={knownLocations} onSave={handleSaved} onClose={() => setModalOpen(false)} />
       </Modal>
 
