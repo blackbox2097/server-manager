@@ -25,11 +25,13 @@ const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, locations, on
     v3Username: '', v3SecurityLevel: 'authPriv', v3AuthProtocol: 'SHA', v3AuthPassword: '',
     v3PrivProtocol: 'AES', v3PrivPassword: '',
     pollIntervalSec: 60, rawRetentionHours: 72, rollupBucketMinutes: 60, rollupRetentionDays: 90,
+    emailAlerts: true, // NW_WARN_V1
     ...(isEdit ? {
       name: device.name, description: device.description || '', ipAddress: device.ip_address,
       deviceType: device.device_type, vendor: device.vendor || '', model: device.model || '', location: device.location || '',
       snmpPort: device.snmp_port, snmpVersion: device.snmp_version,
       pollIntervalSec: device.poll_interval_sec,
+      emailAlerts: device.email_alerts !== false,
     } : {}),
   }));
   const [saving, setSaving] = useState(false);
@@ -150,6 +152,16 @@ const DeviceForm = memo(function DeviceForm({ deviceRef, tenantId, locations, on
         </F>
       </div>
 
+      <div>
+        <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+          <input type="checkbox" checked={form.emailAlerts} onChange={e => set('emailAlerts', e.target.checked)} />
+          Mejl za upozorenja (greške na portovima)
+        </label>
+        <p className="text-xs text-gray-500 mt-1 ml-6">
+          Upozorenja se u aplikaciji prikazuju uvek. Mejl za offline i oporavak ide po podešavanjima tenanta.
+        </p>
+      </div>
+
       <button type="button" className="text-xs text-blue-400 hover:underline"
         onClick={() => setShowAdvanced(v => !v)}>
         {showAdvanced ? 'Sakrij' : 'Prikaži'} napredna retention podešavanja
@@ -187,9 +199,14 @@ function formatLinkSpeed(bps) {
 function InterfaceRow({ iface }) {
   const linkSpeed = iface.oper_status === 'up' ? formatLinkSpeed(iface.if_speed_bps) : null;
   return (
-    <div className="flex items-center justify-between py-2 px-3 border-b border-gray-800/30 last:border-b-0">
+    <div className={`flex items-center justify-between py-2 px-3 border-b border-gray-800/30 last:border-b-0 ${
+      iface.warning === 'errors' ? 'bg-red-950/30' : iface.warning === 'discards' ? 'bg-yellow-950/30' : ''}`}>
       <div>
-        <div className="text-sm font-medium">{iface.if_name} <span className="text-gray-500 text-xs">#{iface.if_index}</span>{linkSpeed && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 align-middle" title="Brzina linka">{linkSpeed}</span>}</div>
+        <div className="text-sm font-medium">{iface.if_name} <span className="text-gray-500 text-xs">#{iface.if_index}</span>{linkSpeed && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 align-middle" title="Brzina linka">{linkSpeed}</span>}
+          {/* NW_WARN_V1: upozorenje porta (greske u 2 od 3 walka / discardi >= 100/min u 15 min) */}
+          {iface.warning === 'errors' && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-red-900/60 text-red-300 align-middle" title="Greške u bar 2 od poslednja 3 merenja (15 min)">greške</span>}
+          {iface.warning === 'discards' && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-yellow-900/60 text-yellow-300 align-middle" title="Prosečno ≥ 100 odbačenih paketa/min u poslednjih 15 min">discards</span>}
+        </div>
         {iface.if_alias && <div className="text-xs text-gray-500">{iface.if_alias}</div>}
         {iface.mac_address && <div className="text-xs text-gray-600">{iface.mac_address}</div>}
       </div>
@@ -205,11 +222,19 @@ function InterfaceRow({ iface }) {
         {iface.last_metric_at && (() => {
           const ie = iface.in_errors || 0, oe = iface.out_errors || 0;
           const id = iface.in_discards || 0, od = iface.out_discards || 0;
+          // NW_WARN_WIN: uz poslednji poll i prozor od 15 min (osnova za upozorenje)
+          const we = Number(iface.win_errors) || 0, wp = Number(iface.win_err_polls) || 0;
+          const wn = Number(iface.win_n) || 0, wd = Number(iface.win_disc_per_min) || 0;
           return (
-            <div className="text-[11px] flex gap-3 justify-end"
-                 title="Greške i odbačeni paketi (in/out) u poslednjem pollu">
-              <span className={ie + oe > 0 ? 'text-red-400' : 'text-gray-600'}>err {ie}/{oe}</span>
-              <span className={id + od > 0 ? 'text-yellow-500' : 'text-gray-600'}>disc {id}/{od}</span>
+            <div className="text-[11px] flex gap-3 justify-end">
+              <span title="Greške (in/out) u poslednjem pollu; 15 min: ukupno grešaka u poslednja 3 merenja (u koliko merenja ih je bilo)">
+                <span className={ie + oe > 0 ? 'text-red-400' : 'text-gray-600'}>err {ie}/{oe}</span>
+                {we > 0 && <span className="text-red-400/80"> · 15 min: {we} ({wp}/{wn})</span>}
+              </span>
+              <span title="Odbačeni paketi (in/out) u poslednjem pollu; 15 min: prosek po minutu">
+                <span className={id + od > 0 ? 'text-yellow-500' : 'text-gray-600'}>disc {id}/{od}</span>
+                {wd > 0 && <span className="text-yellow-500/80"> · 15 min: {wd}/min</span>}
+              </span>
             </div>
           );
         })()}

@@ -145,7 +145,8 @@ def _confirm_status(device_id: str, old_status: str | None, raw_status: str) -> 
     return None
 
 
-async def _log_status_transition(device: dict, old_status: str, new_status: str, error: str | None = None):
+async def _log_status_transition(device: dict, old_status: str, new_status: str, error: str | None = None,
+                                 kind: str | None = None, prev_kind: str | None = None):
     from app.services.audit import log_event
     from app.services.notify import notify_network_device_status
 
@@ -162,7 +163,8 @@ async def _log_status_transition(device: dict, old_status: str, new_status: str,
     notify_dev = dict(device)
     if error:
         notify_dev["last_error"] = error
-    create_bg_task(notify_network_device_status(notify_dev, old_status, new_status))
+    create_bg_task(notify_network_device_status(notify_dev, old_status, new_status,
+                                                kind=kind, prev_kind=prev_kind))
 
 
 class SNMPError(Exception):
@@ -340,6 +342,79 @@ async def _poll(device: dict) -> dict:
     }
 
 
+# NW_WARN_V1 (20.11.2026): network warning logika.
+# Gledaju se samo fizicki ethernet portovi koji su admin up. Radio/virtuelni
+# interfejsi na AP-ovima se cesto lazno prijavljuju kao ifType 6/1 -- zato i
+# blacklist po imenu (suvi test 20.11.2026: br0 discardi, ath*/wifi* greske).
+# Interface walk ide na snmp_iface_poll_interval_sec (300 s) -> 3 walka = 15 min.
+WARN_IF_TYPES     = ["6", "62", "117"]
+WARN_NAME_EXCLUDE = r"^(br|bridge|ath|wifi|wlan|vap|wds|apcli|bond|veth|docker)"
+WARN_ERR_POLLS    = 2       # greske u bar 2 od poslednja 3 interface walka
+WARN_DISC_PER_MIN = 100.0   # discardi: prosek kroz prozor od 3 walka
+# NW_WARN_HYST (20.11.2026): histereza protiv treperenja. Port koji je vec u
+# upozorenju izlazi tek kad je prozor cist: errors -> 0 gresaka u 3 walka,
+# discards -> prosek ispod WARN_DISC_EXIT_PER_MIN.
+WARN_DISC_EXIT_PER_MIN = 50.0
+
+
+async def _read_iface_warnings(did) -> tuple[str | None, str | None]:
+    """Trenutno upisano stanje upozorenja interfejsa -> (vrsta, razlog)."""
+    rows = await fetch(
+        """SELECT if_name, warning FROM network_device_interfaces
+           WHERE device_id=$1 AND warning IS NOT NULL ORDER BY if_index""", did)
+    if not rows:
+        return None, None
+    errs  = [str(r["if_name"]) for r in rows if r["warning"] == "errors"]
+    discs = [str(r["if_name"]) for r in rows if r["warning"] == "discards"]
+    parts = []
+    if errs:
+        parts.append("Greške na portovima: " + ", ".join(errs))
+    if discs:
+        parts.append("Odbačeni paketi: " + ", ".join(discs))
+    return ("errors" if errs else "discards"), " | ".join(parts)[:500]
+
+
+async def _eval_iface_warnings(did) -> tuple[str | None, str | None]:
+    """Posle upisa metrika: preracunava warning po interfejsu iz poslednja 3
+    reda metrika (u bazi -> prezivljava restart), pa vraca stanje uredjaja."""
+    iv = float(get_settings().snmp_iface_poll_interval_sec)
+    await execute(
+        """WITH last3 AS (
+             SELECT m.interface_id,
+                    m.in_errors + m.out_errors     AS e,
+                    m.in_discards + m.out_discards AS dsc,
+                    row_number() OVER (PARTITION BY m.interface_id
+                                       ORDER BY m.collected_at DESC) AS rn
+             FROM network_device_interface_metrics m
+             JOIN network_device_interfaces i ON i.id = m.interface_id
+             WHERE i.device_id = $1
+               AND m.collected_at > NOW() - make_interval(secs => $2)
+           ), agg AS (
+             SELECT interface_id,
+                    count(*) FILTER (WHERE e > 0) AS err_polls,
+                    sum(dsc)::float8              AS disc
+             FROM last3 WHERE rn <= 3 GROUP BY interface_id
+           ), w AS (
+             SELECT i.id,
+                    CASE WHEN i.if_type = ANY($3::text[]) AND i.admin_status = 'up'
+                              AND COALESCE(i.if_name, '') !~* $4 THEN
+                      CASE WHEN a.err_polls >= $5
+                                OR (i.warning = 'errors' AND a.err_polls >= 1) THEN 'errors'
+                           WHEN a.disc / $6::float8 >= $7
+                                OR (i.warning = 'discards' AND a.disc / $6::float8 >= $8) THEN 'discards' END
+                    END AS warning
+             FROM network_device_interfaces i
+             LEFT JOIN agg a ON a.interface_id = i.id
+             WHERE i.device_id = $1
+           )
+           UPDATE network_device_interfaces t SET warning = w.warning
+           FROM w WHERE t.id = w.id AND t.warning IS DISTINCT FROM w.warning""",
+        did, iv * 4, WARN_IF_TYPES, WARN_NAME_EXCLUDE, WARN_ERR_POLLS,
+        iv * 3 / 60.0, WARN_DISC_PER_MIN, WARN_DISC_EXIT_PER_MIN,
+    )
+    return await _read_iface_warnings(did)
+
+
 async def _poll_and_save(device: dict):
     did = device["id"]
     old_status = device.get("status")  # POTVRDJEN status pre ovog poll-a
@@ -362,25 +437,7 @@ async def _poll_and_save(device: dict):
             await _log_status_transition(device, old_status, "offline", error=err)
         return
 
-    confirmed = _confirm_status(did, old_status, "online")
-    display_status = confirmed or old_status or "online"
-
-    await execute(
-        """UPDATE network_devices
-           SET status=$1, last_seen_at=NOW(), last_error=NULL,
-               sys_descr=$2, sys_uptime_ticks=$3, sys_object_id=$5
-           WHERE id=$4""",
-        display_status, result["sys_descr"][:500], result["sys_uptime_ticks"], did,
-        result.get("sys_object_id"),
-    )
-    await ws_manager.broadcast("network_status", {
-        "deviceId": str(did), "tenantId": str(device["tenant_id"]),
-        "status": display_status,
-    }, tenant_id=str(device["tenant_id"]))
-
-    if confirmed and old_status and old_status != confirmed:
-        await _log_status_transition(device, old_status, confirmed)
-
+    # NW_WARN_V1: status uredjaja se racuna POSLE interfejsa (vidi kraj funkcije)
     ifaces = result["interfaces"]
     if ifaces:
         iface_rows = await fetch(
@@ -460,6 +517,50 @@ async def _poll_and_save(device: dict):
                     f"SNMP {device.get('name', did)}: uklonjeno {len(gone)} nestalih "
                     f"interfejsa ({names[:300]})"
                 )
+
+    # NW_WARN_V1: status = warning ako bar jedan port ima upozorenje. Interface
+    # walk ide redje od poll-a uredjaja -- izmedju walkova vazi upisano stanje.
+    try:
+        if ifaces:
+            raw_kind, warn_reason = await _eval_iface_warnings(did)
+        else:
+            raw_kind, warn_reason = await _read_iface_warnings(did)
+    except Exception:
+        logger.exception(f"SNMP {device.get('name', did)}: greska racunanja upozorenja")
+        raw_kind, warn_reason = device.get("warning_kind"), device.get("last_error")
+
+    raw_status = "warning" if raw_kind else "online"
+    confirmed = _confirm_status(did, old_status, raw_status)
+    display_status = confirmed or old_status or raw_status
+    prev_kind = device.get("warning_kind")
+    if display_status == "warning":
+        # tokom debounce-a ka online zadrzava se vrsta potvrdjenog warninga
+        new_kind = raw_kind or prev_kind
+        reason = warn_reason if raw_kind else device.get("last_error")
+    else:
+        new_kind, reason = None, None
+
+    await execute(
+        """UPDATE network_devices
+           SET status=$1, last_seen_at=NOW(), last_error=$6,
+               sys_descr=$2, sys_uptime_ticks=$3, sys_object_id=$5, warning_kind=$7
+           WHERE id=$4""",
+        display_status, result["sys_descr"][:500], result["sys_uptime_ticks"], did,
+        result.get("sys_object_id"), reason, new_kind,
+    )
+    await ws_manager.broadcast("network_status", {
+        "deviceId": str(did), "tenantId": str(device["tenant_id"]),
+        "status": display_status, "error": reason,
+    }, tenant_id=str(device["tenant_id"]))
+
+    if confirmed and old_status and old_status != confirmed:
+        await _log_status_transition(device, old_status, confirmed, error=reason,
+                                     kind=new_kind, prev_kind=prev_kind)
+    elif (display_status == old_status == "warning"
+          and prev_kind == "discards" and new_kind == "errors"):
+        # greske su se pojavile dok je uredjaj vec bio u warningu zbog discarda
+        await _log_status_transition(device, "warning", "warning", error=reason,
+                                     kind=new_kind, prev_kind=prev_kind)
 
 
 async def _poll_guarded(device: dict):

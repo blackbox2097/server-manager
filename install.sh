@@ -620,6 +620,13 @@ CREATE TABLE IF NOT EXISTS network_device_interfaces (
     CONSTRAINT network_device_interfaces_unique UNIQUE (device_id, if_index)
 );
 CREATE INDEX IF NOT EXISTS idx_ndi_device ON network_device_interfaces (device_id);
+-- NW_WARN_V1 (20.11.2026): network warning logika
+-- warning po interfejsu: 'errors' | 'discards' | NULL
+ALTER TABLE network_device_interfaces ADD COLUMN IF NOT EXISTS warning TEXT;
+-- vrsta POTVRDJENOG warninga uredjaja (za odluku o mejlu) i prekidac mejla
+-- za upozorenja po uredjaju (offline/oporavak idu po tenant prekidacima)
+ALTER TABLE network_devices ADD COLUMN IF NOT EXISTS warning_kind TEXT;
+ALTER TABLE network_devices ADD COLUMN IF NOT EXISTS email_alerts BOOLEAN NOT NULL DEFAULT true;
 
 CREATE TABLE IF NOT EXISTS network_device_interface_metrics (
     id              BIGSERIAL   PRIMARY KEY,

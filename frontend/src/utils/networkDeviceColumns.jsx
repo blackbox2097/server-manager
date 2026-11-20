@@ -7,7 +7,7 @@
 // celije preko ovih istih definicija. StatusOverview.jsx (cross-tenant, bez
 // expand-a) koristi <Table> direktno sa getNetworkDeviceColumns({}).
 import React from 'react';
-import { ChevronRight, ChevronDown, Router, Edit, Trash2, Plug } from 'lucide-react';
+import { ChevronRight, ChevronDown, Router, Edit, Trash2, Plug, MailX } from 'lucide-react';
 import { StatusBadge, Badge, Spinner, formatUptimeFull } from '../components/ui';
 
 export const DEVICE_TYPES = [
@@ -49,7 +49,20 @@ export function getNetworkDeviceColumns({
         </div>
       ) : '—'
     )},
-    { key: 'status', label: 'Status', sortKey: 'status', render: d => <StatusBadge status={d.status} /> },
+    // NW_WARN_V1: razlog upozorenja ispod statusa + oznaka utisanog mejla
+    { key: 'status', label: 'Status', sortKey: 'status', render: d => (
+      <div>
+        <div className="flex items-center gap-1.5">
+          <StatusBadge status={d.status} />
+          {d.email_alerts === false && (
+            <span title="Mejl za upozorenja je isključen za ovaj uređaj"><MailX size={13} className="text-gray-500" /></span>
+          )}
+        </div>
+        {d.status === 'warning' && d.last_error && (
+          <div className="text-[11px] text-yellow-500/80 mt-0.5 max-w-[16rem] truncate" title={d.last_error}>{d.last_error}</div>
+        )}
+      </div>
+    )},
     { key: 'uptime', label: 'Uptime', sortValue: d => d.sys_uptime_ticks, render: d => (
       <span className="text-xs text-gray-500">{formatUptimeFull(d.sys_uptime_ticks != null ? d.sys_uptime_ticks / 100 : null)}</span>
     )},

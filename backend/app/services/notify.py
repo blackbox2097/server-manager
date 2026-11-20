@@ -266,13 +266,23 @@ async def notify_container_changes(server: dict, changes: list[dict]):
             server["tenant_id"], c["id"], name, old, new)
 
 
-async def notify_network_device_status(device: dict, old_status: str, new_status: str):
+async def notify_network_device_status(device: dict, old_status: str, new_status: str,
+                                       kind: str | None = None, prev_kind: str | None = None):
     """Poziva se iz snmp.py pri potvrdjenoj promeni statusa mreznog uredjaja.
     Ogledalo notify_server_status, ali koristi ODVOJENE tenant toggle-e
     (alert_network_offline/recovery/warning), ne alert_on_offline/recovery/warning
     koji vaze za servere -- svesna odluka od 11.8.2026 da se alarmi mogu
-    nezavisno ukljuciti/iskljuciti po tipu (server vs. mrezni uredjaj)."""
-    if old_status == new_status:
+    nezavisno ukljuciti/iskljuciti po tipu (server vs. mrezni uredjaj).
+
+    NW_WARN_V1 (20.11.2026): warning mejl SAMO za greske na portovima
+    (kind='errors'); discardi samo boje status. Oporavak iz warninga ide mejlom
+    samo ako je warning bio zbog gresaka. Prelaz discards -> errors dok je
+    uredjaj vec u warningu = nov warning mejl. Prekidac po uredjaju
+    (email_alerts) gasi SAMO warning mejlove i oporavak iz njih; offline i
+    oporavak iz offline-a idu po tenant prekidacima."""
+    escalation = (old_status == new_status == "warning"
+                  and prev_kind == "discards" and kind == "errors")
+    if old_status == new_status and not escalation:
         return
 
     tenant = await fetchrow(
@@ -283,9 +293,14 @@ async def notify_network_device_status(device: dict, old_status: str, new_status
     if not tenant or not tenant["alerts_enabled"]:
         return
 
-    is_recovery = new_status == "online" and old_status in ("offline", "warning")
+    warn_mail   = device.get("email_alerts") is not False
     is_offline  = new_status == "offline"
-    is_warning  = new_status == "warning" and old_status != "offline"
+    is_warning  = (new_status == "warning" and old_status != "offline"
+                   and kind == "errors" and warn_mail)
+    is_recovery = new_status == "online" and (
+        old_status == "offline"
+        or (old_status == "warning" and prev_kind == "errors" and warn_mail)
+    )
 
     should_send = (
         (is_offline  and tenant["alert_network_offline"]) or
@@ -295,13 +310,14 @@ async def notify_network_device_status(device: dict, old_status: str, new_status
     if not should_send:
         return
 
+    err = device.get("last_error")
     await execute(
         """INSERT INTO pending_notifications
              (tenant_id, resource_type, resource_id, resource_name, old_status, new_status,
               error_message, cpu_percent, ram_percent, disk_percent)
            VALUES ($1,'network_device',$2,$3,$4,$5,$6,NULL,NULL,NULL)""",
         device["tenant_id"], device["id"], device["name"], old_status, new_status,
-        (device.get("last_error")[:300] if is_offline and device.get("last_error") else None),
+        (err[:300] if err and (is_offline or is_warning) else None),
     )
     return
 

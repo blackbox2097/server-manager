@@ -5,6 +5,7 @@ from app.database import fetch, fetchrow, execute
 from app.services.auth import get_current_user, check_tenant_perm
 from app.services.crypto import encrypt
 from app.services.audit import log_event
+from app.config import get_settings
 
 router = APIRouter(prefix="/api/tenants", tags=["network-devices"])
 
@@ -34,6 +35,7 @@ class NetworkDeviceIn(BaseModel):
     rawRetentionHours: int = 72
     rollupBucketMinutes: int = 60
     rollupRetentionDays: int = 90
+    emailAlerts: bool = True   # NW_WARN_V1: mejl za upozorenja (samo warning)
 
     @field_validator("snmpVersion")
     @classmethod
@@ -61,6 +63,7 @@ async def list_network_devices(tid: str, user=Depends(get_current_user)):
         """SELECT id, name, description, ip_address, device_type, vendor, model, location,
                   snmp_port, snmp_version, poll_interval_sec, status, sys_descr,
                   sys_uptime_ticks, last_seen_at, last_error, active, created_at,
+                  email_alerts, warning_kind,
                   (SELECT COUNT(*) FROM network_device_interfaces WHERE device_id=network_devices.id) AS interface_count
            FROM network_devices WHERE tenant_id=$1 AND active=true ORDER BY name""",
         tid)
@@ -77,8 +80,8 @@ async def create_network_device(tid: str, req: Request, body: NetworkDeviceIn, u
                   snmp_port, snmp_version, community_enc, v3_username, v3_security_level,
                   v3_auth_protocol, v3_auth_password_enc, v3_priv_protocol, v3_priv_password_enc,
                   poll_interval_sec, raw_retention_hours, rollup_bucket_minutes,
-                  rollup_retention_days, created_by)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+                  rollup_retention_days, created_by, email_alerts)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
                RETURNING id, name, ip_address, device_type, snmp_version, status, created_at""",
             tid, body.name, _n(body.description), body.ipAddress, body.deviceType, _n(body.vendor), _n(body.model), _n(body.location),
             body.snmpPort, body.snmpVersion,
@@ -88,7 +91,7 @@ async def create_network_device(tid: str, req: Request, body: NetworkDeviceIn, u
             _n(body.v3PrivProtocol),
             encrypt(body.v3PrivPassword) if body.v3PrivPassword else None,
             body.pollIntervalSec, body.rawRetentionHours, body.rollupBucketMinutes,
-            body.rollupRetentionDays, user["id"])
+            body.rollupRetentionDays, user["id"], body.emailAlerts)
         await log_event("networkdevice.create", user_id=user["id"], username=user.get("username"),
                         tenant_id=tid, ip_address=_ip(req), resource_type="network_device",
                         resource_id=str(row["id"]), details={"name": body.name})
@@ -112,7 +115,7 @@ async def update_network_device(tid: str, did: str, req: Request, body: NetworkD
              v3_priv_protocol=$15,
              v3_priv_password_enc = COALESCE($16, v3_priv_password_enc),
              poll_interval_sec=$17, raw_retention_hours=$18, rollup_bucket_minutes=$19,
-             rollup_retention_days=$20
+             rollup_retention_days=$20, email_alerts=$23
            WHERE id=$21 AND tenant_id=$22
            RETURNING id, name, ip_address, device_type, snmp_version, status""",
         body.name, _n(body.description), body.ipAddress, body.deviceType, _n(body.vendor), _n(body.model), _n(body.location),
@@ -123,7 +126,7 @@ async def update_network_device(tid: str, did: str, req: Request, body: NetworkD
         _n(body.v3PrivProtocol),
         encrypt(body.v3PrivPassword) if body.v3PrivPassword else None,
         body.pollIntervalSec, body.rawRetentionHours, body.rollupBucketMinutes,
-        body.rollupRetentionDays, did, tid)
+        body.rollupRetentionDays, did, tid, body.emailAlerts)
     if not row:
         raise HTTPException(404, "Uredjaj nije pronadjen")
     await log_event("networkdevice.update", user_id=user["id"], username=user.get("username"),
@@ -170,18 +173,35 @@ async def list_interfaces(tid: str, did: str, user=Depends(get_current_user)):
         "SELECT id, name FROM network_devices WHERE id=$1 AND tenant_id=$2", did, tid)
     if not dev:
         raise HTTPException(404, "Uredjaj nije pronadjen")
+    iv = float(get_settings().snmp_iface_poll_interval_sec)
     rows = await fetch(
         """SELECT i.id, i.if_index, i.if_name, i.if_descr, i.if_alias, i.if_type,
                   i.if_speed_bps, i.mac_address, i.admin_status, i.oper_status,
-                  i.last_change_at, i.last_polled_at,
+                  i.last_change_at, i.last_polled_at, i.warning,
                   m.in_kbps, m.out_kbps, m.in_errors, m.out_errors,
-                  m.in_discards, m.out_discards, m.collected_at AS last_metric_at
+                  m.in_discards, m.out_discards, m.collected_at AS last_metric_at,
+                  w.win_n, w.win_err_polls, w.win_errors, w.win_disc_per_min
            FROM network_device_interfaces i
            LEFT JOIN LATERAL (
                SELECT in_kbps, out_kbps, in_errors, out_errors, in_discards, out_discards, collected_at
                FROM network_device_interface_metrics
                WHERE interface_id = i.id ORDER BY collected_at DESC LIMIT 1
            ) m ON true
+           -- NW_WARN_WIN: isti prozor kao warning logika u snmp.py (poslednja 3 walka)
+           LEFT JOIN LATERAL (
+               SELECT count(*) AS win_n,
+                      count(*) FILTER (WHERE x.in_errors + x.out_errors > 0) AS win_err_polls,
+                      COALESCE(sum(x.in_errors + x.out_errors), 0) AS win_errors,
+                      round((COALESCE(sum(x.in_discards + x.out_discards), 0) / $3::float8)::numeric, 1)
+                          AS win_disc_per_min
+               FROM (
+                   SELECT in_errors, out_errors, in_discards, out_discards
+                   FROM network_device_interface_metrics
+                   WHERE interface_id = i.id
+                     AND collected_at > NOW() - make_interval(secs => $2)
+                   ORDER BY collected_at DESC LIMIT 3
+               ) x
+           ) w ON true
            WHERE i.device_id=$1 ORDER BY i.if_index""",
-        did)
+        did, iv * 4, iv * 3 / 60.0)
     return {"deviceName": dev["name"], "interfaces": [dict(r) for r in rows]}
