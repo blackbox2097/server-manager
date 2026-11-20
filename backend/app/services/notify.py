@@ -96,8 +96,46 @@ async def _send_digest_unlocked(only_tenant: str | None = None):
                 by_resource[key] = []
                 order.append(key)
             by_resource[key].append(it)
+        # DIGEST_CORR_V1 (20.11.2026): server rucno povezan sa VM na hipervizoru
+        # (virtual_machines.linked_server_id). Ako je hipervizor u ISTOM paketu i
+        # ISTOJ sekciji (offline/oporavak), server ide ispod hipervizora umesto
+        # zasebne linije. Ako je hipervizor vec offline iz ranijeg paketa,
+        # linija servera ostaje uz napomenu (Ivanova odluka: opcija a).
+        def _cat(st):
+            return ("offline" if st == "offline" else "online" if st == "online"
+                    else "warning" if st in ("warning", "on_battery", "low_battery", "power_blip") else None)
+        corr_nested: dict = {}       # parent_key -> [imena povezanih servera]
+        corr_skip: set = set()       # child kljucevi prikazani ispod hipervizora
+        corr_note: dict = {}         # child_key -> napomena
+        corr_counts = {"offline": 0, "online": 0}
+        srv_ids = [rid for (rt, rid) in order if rt == "server"]
+        if srv_ids:
+            try:
+                links = await fetch(
+                    """SELECT v.linked_server_id::text AS child, v.hypervisor_id::text AS parent,
+                              h.name AS parent_name, h.status AS parent_status
+                       FROM virtual_machines v JOIN servers h ON h.id = v.hypervisor_id
+                       WHERE v.linked_server_id::text = ANY($1::text[])""", srv_ids)
+            except Exception:
+                logger.exception("Digest: korelacija hipervizor/VM nije uspela -- saljem bez nje")
+                links = []
+            for ln in links:
+                ck, pk = ("server", ln["child"]), ("server", ln["parent"])
+                if ck not in by_resource:
+                    continue
+                c_cat = _cat(by_resource[ck][-1]["new_status"])
+                p_cat = _cat(by_resource[pk][-1]["new_status"]) if pk in by_resource else None
+                if c_cat in ("offline", "online") and c_cat == p_cat:
+                    corr_nested.setdefault(pk, []).append(by_resource[ck][-1]["resource_name"])
+                    corr_skip.add(ck)
+                    corr_counts[c_cat] += 1
+                elif c_cat == "offline" and ln["parent_status"] == "offline":
+                    corr_note[ck] = f"hipervizor {html.escape(ln['parent_name'])} je offline"
+
         offline_lines, warning_lines, recovery_lines = [], [], []
         for key in order:
+            if key in corr_skip:
+                continue
             events = by_resource[key]
             last = events[-1]
             chain = [events[0]["old_status"]] + [e["new_status"] for e in events]
@@ -113,19 +151,26 @@ async def _send_digest_unlocked(only_tenant: str | None = None):
                 val = last[field]
                 if val is None:
                     continue
-                is_high = float(val) >= 90
-                style = "color:#ef4444; font-weight:600;" if is_high else "color:#374151;"
-                marker = " (prag prekoracen)" if is_high else ""
-                metrics_parts.append(f'<span style="{style}">{label}: {round(float(val))}%{marker}</span>')
+                # DIGEST_CORR_V1: bez oznake po fiksnih 90% -- prag je po serveru,
+                # a razlog upozorenja (sa pragom) je u liniji "Razlog:"
+                metrics_parts.append(f'<span style="color:#374151;">{label}: {round(float(val))}%</span>')
             metrics_html = (f'<div style="margin-top:2px; font-size:13px;">{" &nbsp;|&nbsp; ".join(metrics_parts)}</div>'
                              if metrics_parts else "")
-            error_html = (f'<div style="color:#888; font-size:12px; margin-top:2px;">Greška: {last["error_message"]}</div>'
+            err_label = "Razlog" if last["new_status"] == "warning" else "Greška"
+            error_html = (f'<div style="color:#888; font-size:12px; margin-top:2px;">{err_label}: {html.escape(last["error_message"])}</div>'
                           if last["error_message"] else "")
+            note_html = (f'<div style="color:#888; font-size:12px; margin-top:2px;">({corr_note[key]})</div>'
+                         if key in corr_note else "")
+            kids = corr_nested.get(key)
+            nested_html = (f'<div style="color:#555; font-size:13px; margin-top:2px;">↳ povezani serveri ({len(kids)}): '
+                           f'{html.escape(", ".join(sorted(kids, key=str.lower)))}</div>' if kids else "")
             line = f"""
                 <div style="padding:8px 0; border-bottom:1px solid #eee;">
                   <strong>[{tenant_label}] {last["resource_name"]}</strong>{flap_suffix} — {chain_str}
                   {metrics_html}
                   {error_html}
+                  {note_html}
+                  {nested_html}
                 </div>"""
             if last["new_status"] == "offline":
                 offline_lines.append(line)
@@ -137,17 +182,18 @@ async def _send_digest_unlocked(only_tenant: str | None = None):
             await execute("DELETE FROM pending_notifications WHERE id = ANY($1::bigint[])", ids)
             continue
         subject_parts = []
-        if offline_lines: subject_parts.append(f"{len(offline_lines)} offline")
+        _plus = lambda n: f" (+{n} povezana)" if n else ""
+        if offline_lines: subject_parts.append(f"{len(offline_lines)} offline{_plus(corr_counts['offline'])}")
         if warning_lines: subject_parts.append(f"{len(warning_lines)} upozorenja")
-        if recovery_lines: subject_parts.append(f"{len(recovery_lines)} oporavka")
+        if recovery_lines: subject_parts.append(f"{len(recovery_lines)} oporavka{_plus(corr_counts['online'])}")
         subject = f"[Server Manager] [{tenant_label}] Sažetak: {' · '.join(subject_parts)}"
         summary_bits = []
         if offline_lines:
-            summary_bits.append(f'<span style="color:#ef4444; font-weight:600;">{len(offline_lines)} offline</span>')
+            summary_bits.append(f'<span style="color:#ef4444; font-weight:600;">{len(offline_lines)} offline{_plus(corr_counts["offline"])}</span>')
         if warning_lines:
             summary_bits.append(f'<span style="color:#eab308; font-weight:600;">{len(warning_lines)} upozorenja</span>')
         if recovery_lines:
-            summary_bits.append(f'<span style="color:#22c55e; font-weight:600;">{len(recovery_lines)} oporavka</span>')
+            summary_bits.append(f'<span style="color:#22c55e; font-weight:600;">{len(recovery_lines)} oporavka{_plus(corr_counts["online"])}</span>')
         summary_html = f'<p style="font-size:14px;">{" &nbsp;·&nbsp; ".join(summary_bits)}</p>'
         sections_html = ""
         if offline_lines:
