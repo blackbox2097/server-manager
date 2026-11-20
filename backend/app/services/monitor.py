@@ -305,6 +305,10 @@ async def _poll_guarded(server: dict):
                 "serverId": str(server["id"]), "tenantId": str(server["tenant_id"]),
                 "status": display_status, "error": err,
             }, tenant_id=str(server["tenant_id"]))
+            # WATCHDOG_TRANSITION_V1 (20.11.2026): pad preko watchdoga ide kroz
+            # audit/mejl/automatizaciju kao svaki drugi pad (ranije je izostajao)
+            if confirmed and old_status and old_status != "offline":
+                await _log_status_transition(server, old_status, "offline", error=err)
         except Exception:
             logger.exception(f"Greska pri obradi watchdog timeout-a za {server.get('name')}")
 
