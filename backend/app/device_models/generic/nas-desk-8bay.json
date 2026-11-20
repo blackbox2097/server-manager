@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "id": "generic/nas-desk-8bay",
+  "vendor": "Generic",
+  "model": "NAS stoni (8× 3.5\")",
+  "type": "nas",
+  "match": {},
+  "form": {
+    "height_u": 0,
+    "mount": "none",
+    "body_width_mm": 345,
+    "body_height_mm": 166
+  },
+  "look": {
+    "chassis": "#1f2023",
+    "text": "#B4B2A9"
+  },
+  "front": {
+    "start_mm": 10,
+    "blocks": [],
+    "decor": [
+      {
+        "kind": "status_led",
+        "x_mm": 12,
+        "y_mm": 12
+      },
+      {
+        "kind": "button",
+        "x_mm": 333,
+        "y_mm": 12
+      },
+      {
+        "kind": "bays",
+        "x_mm": 10.5,
+        "y_mm": 91,
+        "w_mm": 37,
+        "h_mm": 130,
+        "cols": 8,
+        "rows": 1,
+        "gap_mm": 4
+      }
+    ],
+    "label": {
+      "text": "NAS",
+      "x": 0.04,
+      "y": 0.93
+    }
+  },
+  "snmp": {
+    "map": "name"
+  },
+  "notes": "Mrezni portovi se dodaju rucno (kao kod servera)."
+}

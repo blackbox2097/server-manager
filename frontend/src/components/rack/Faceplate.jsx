@@ -210,7 +210,7 @@ export const STATUS_LED = {
 
 function Decor({ d, geo, statusColor }) {
   const { bx, by, bw, bh } = geo;
-  const cy = by + bh / 2;
+  const cy = d.y_mm != null ? by + d.y_mm : by + bh / 2;   // RACK_GENERIC_V1: y_mm
   const x = bx + (d.x_mm || 0);
   switch (d.kind) {
     case 'handles':
@@ -235,7 +235,7 @@ function Decor({ d, geo, statusColor }) {
         <rect x={x + 2} y={cy - d.h_mm / 2 + 2} width={d.w_mm - 4} height={d.h_mm - 4} fill="#185FA5" opacity={0.35} />
       </g>);
     case 'vent': {
-      const h = bh * 0.62, y = cy - h / 2, slots = [];
+      const h = d.h_mm || bh * 0.62, y = cy - h / 2, slots = [];
       for (let sx = x; sx < x + d.w_mm - 1; sx += 3) slots.push(<rect key={sx} x={sx} y={y} width={1.3} height={h} rx={0.6} fill="#1a1b1d" />);
       return <g>{slots}</g>;
     }
@@ -254,6 +254,22 @@ function Decor({ d, geo, statusColor }) {
       }
       return <g>{out}</g>;
     }
+    case 'usb': {   // RACK_GENERIC_V1: USB-A prikljucci (samo izgled)
+      const n = d.count || 1, w = d.w_mm || 12, h = d.h_mm || 4.5, g = d.gap_mm ?? 3;
+      return <g>{Array.from({ length: n }, (_, i) => (
+        <g key={i}>
+          <rect x={x + i * (w + g)} y={cy - h / 2} width={w} height={h} rx={0.4} fill="#1a1b1d" stroke="#888780" strokeWidth={0.4} />
+          <rect x={x + i * (w + g) + 1.5} y={cy - h / 2 + 0.9} width={w - 3} height={h * 0.38} fill="#185FA5" opacity={0.8} />
+        </g>))}</g>;
+    }
+    case 'optical': {   // RACK_GENERIC_V1: opticki uredjaj (5.25")
+      const w = d.w_mm || 140, h = d.h_mm || 42, y = cy - h / 2;
+      return (<g>
+        <rect x={x} y={y} width={w} height={h} rx={0.8} fill="#26282b" stroke="#1a1b1d" strokeWidth={0.4} />
+        <rect x={x + 8} y={y + h * 0.35} width={w - 30} height={1.4} rx={0.6} fill="#1a1b1d" />
+        <rect x={x + w - 16} y={y + h - 9} width={10} height={3.2} rx={1} fill="#5F5E5A" />
+      </g>);
+    }
     default: return null;
   }
 }
@@ -268,11 +284,12 @@ function Decor({ d, geo, statusColor }) {
  *  onPortClick  -- (port) => void
  *  showNumbers  -- brojevi iznad/ispod portova (iskljuci u malom rack prikazu)
  *  statusColor  -- boja status LED-a (iz monitoringa), vidi STATUS_LED
+ *  maxHeight    -- najveca visina u px (default 240 za uredjaje van racka)
  *  className
  */
 export default function Faceplate({
   model, side = 'front', portState, portInfo, selected, onPortClick,
-  showNumbers = true, className, statusColor, modules, cables, highlight,
+  showNumbers = true, className, statusColor, modules, cables, highlight, maxHeight,
 }) {
   const geo = useMemo(() => faceGeometry(model), [model]);
   const face = side === 'rear' ? model.rear : model.front;
@@ -291,7 +308,9 @@ export default function Faceplate({
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" className={className} role="img"
-      aria-label={`${model.vendor} ${model.model}`} style={{ display: 'block' }}>
+      aria-label={`${model.vendor} ${model.model}`}
+      // RACK_GENERIC_V1: visoki uredjaji van racka (tower, stoni NAS) -- ograniceno po visini, centrirano
+      style={{ display: 'block', maxHeight: maxHeight ?? (inRack ? undefined : 240) }}>
       {inRack && <Ears geo={geo} mount={model.form.mount} />}
       <rect x={bx} y={by} width={bw} height={bh} rx={1.2} fill={look.chassis || '#e9e8e4'}
         stroke="#5F5E5A" strokeWidth={0.4} />

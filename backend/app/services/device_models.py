@@ -30,7 +30,8 @@ SCHEMA_VERSION = 1
 PortType = Literal["rj45", "sfp", "sfp+", "sfp28", "qsfp+", "console", "usb", "power", "mgmt",
                    "lc", "sc", "outlet"]  # lc/sc: opticki paneli; outlet: uticnica na PDU-u
 DeviceType = Literal["switch", "router", "firewall", "ap", "patch_panel", "fiber_panel",
-                     "ups", "server", "nas", "pdu", "shelf", "blank", "cable_manager", "other"]
+                     "ups", "server", "nas", "pdu", "shelf", "blank", "cable_manager", "other",
+                     "pc", "nvr"]  # pc: racunar / mini PC (RACK_GENERIC_V1); nvr: snimac (RACK_NVR_V1)
 # Tipovi "porta" koji nisu mrezni -- crtaju se, ali se ne mapiraju na SNMP i ne pecuju
 NON_NETWORK = {"usb", "power", "outlet"}
 # Slotovi u koje ide modul (polje "modul" u dokumentaciji porta)
@@ -107,10 +108,14 @@ class Label(_Strict):
 class Decor(_Strict):
     """Elementi izgleda bez portova (diskovi, ventilacija, ekran, dugmad...).
     x_mm je od leve ivice kucista; vertikalno je centrirano."""
-    kind: Literal["bays", "vent", "lcd", "button", "leds", "status_led", "handles"]
+    kind: Literal["bays", "vent", "lcd", "button", "leds", "status_led", "handles",
+                  "usb", "optical"]  # RACK_GENERIC_V1: usb, optical
     x_mm: float = 0
+    # RACK_GENERIC_V1: vertikalni centar elementa od gornje ivice kucista
+    # (None = centrirano po visini, kao do sada) -- za tower/stone uredjaje
+    y_mm: float | None = Field(None, ge=0)
     w_mm: float = 0                  # bays: sirina jednog lezista; vent/lcd: sirina
-    h_mm: float = 0                  # bays: visina jednog lezista; lcd: visina
+    h_mm: float = 0                  # bays: visina jednog lezista; lcd/optical/vent: visina
     cols: int = Field(1, ge=1)
     rows: int = Field(1, ge=1)
     gap_mm: float = 1.5

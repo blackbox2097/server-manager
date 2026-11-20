@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "id": "generic/pc-tower",
+  "vendor": "Generic",
+  "model": "Računar (tower)",
+  "type": "pc",
+  "match": {},
+  "form": {
+    "height_u": 0,
+    "mount": "none",
+    "body_width_mm": 180,
+    "body_height_mm": 400
+  },
+  "look": {
+    "chassis": "#2b2d31",
+    "text": "#B4B2A9"
+  },
+  "front": {
+    "start_mm": 10,
+    "blocks": [],
+    "decor": [
+      {
+        "kind": "optical",
+        "x_mm": 20,
+        "y_mm": 36,
+        "w_mm": 140,
+        "h_mm": 42
+      },
+      {
+        "kind": "usb",
+        "x_mm": 22,
+        "y_mm": 84,
+        "count": 2
+      },
+      {
+        "kind": "status_led",
+        "x_mm": 132,
+        "y_mm": 84
+      },
+      {
+        "kind": "button",
+        "x_mm": 150,
+        "y_mm": 84
+      },
+      {
+        "kind": "vent",
+        "x_mm": 25,
+        "y_mm": 300,
+        "w_mm": 130,
+        "h_mm": 120
+      }
+    ]
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

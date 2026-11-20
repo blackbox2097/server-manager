@@ -52,6 +52,14 @@ function RackColumn({ rack, devices, models, canManage, selectedId, onSelect, on
   const taken = new Set();
   devices.forEach(d => { const t = topRowOf(rack, d.rack_position, d.height_u); for (let r = t; r < t + d.height_u; r++) taken.add(r); });
   const myPreview = preview?.rackId === rack.id ? preview : null;
+  // RACK_ATTACH_V1: parovi povezanih stavki u ovom racku (centar jedne -> centar druge)
+  const attachLinks = devices.filter(d => d.attached_to_id).map(d => {
+    const p = devices.find(x => x.id === d.attached_to_id);
+    if (!p) return null;
+    const mid = x => (topRowOf(rack, x.rack_position, x.height_u) + x.height_u / 2) * ROW_H;
+    const a = mid(d), b = mid(p);
+    return { id: d.id, childName: d.name, parentName: p.name, top: Math.min(a, b), bottom: Math.max(a, b) };
+  }).filter(Boolean);
 
   const dragOver = e => {
     const drag = dragRef.current;
@@ -150,12 +158,18 @@ function RackColumn({ rack, devices, models, canManage, selectedId, onSelect, on
         </div>
         {/* nazivi desno */}
         <div className="relative" style={{ width: NAMES_W, height: H * ROW_H }}>
+          {/* RACK_ATTACH_V1: zagrada izmedju povezanih stavki (ekstenzija -> NAS) */}
+          {attachLinks.map((l, i) => (
+            <div key={l.id} className="absolute border-y-2 border-l-2 border-gray-500/80 rounded-l pointer-events-none"
+              title={`${l.childName} → ${l.parentName}`}
+              style={{ left: 3 + i * 5, width: 6, top: l.top, height: Math.max(2, l.bottom - l.top) }} />
+          ))}
           {devices.map(d => {
             const t = topRowOf(rack, d.rack_position, d.height_u);
             return (
               <button key={d.id} onClick={() => onSelect(d.id)}
-                className={`absolute left-0 right-0 flex items-center gap-1.5 pl-2 text-left text-xs truncate ${selectedId === d.id ? 'text-brand-200' : 'text-gray-300 hover:text-gray-100'}`}
-                style={{ top: t * ROW_H, height: d.height_u * ROW_H }}>
+                className={`absolute left-0 right-0 flex items-center gap-1.5 text-left text-xs truncate ${selectedId === d.id ? 'text-brand-200' : 'text-gray-300 hover:text-gray-100'}`}
+                style={{ top: t * ROW_H, height: d.height_u * ROW_H, paddingLeft: 8 + attachLinks.length * 5 + (attachLinks.length ? 6 : 0) }}>
                 {d.linked_kind && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[d.linked_status] || 'bg-gray-600'}`} />}
                 <span className="truncate">{d.name}</span>
               </button>
@@ -239,17 +253,19 @@ function WideModal({ open, onClose, title, children, footer }) {
 }
 
 const CAND_GROUPS = [['network', 'Mrežni uređaji'], ['server', 'Serveri'], ['ups', 'UPS']];
-const PASSIVE_TYPES = ['patch_panel', 'fiber_panel', 'cable_manager', 'shelf', 'blank', 'pdu', 'ups', 'server'];
+const PASSIVE_TYPES = ['patch_panel', 'fiber_panel', 'cable_manager', 'shelf', 'blank', 'pdu', 'ups', 'server', 'nas', 'pc', 'nvr'];
 const PASSIVE_GROUPS = [
   ['Patch paneli', ['patch_panel']], ['Optički paneli', ['fiber_panel']],
-  ['Organizatori i police', ['cable_manager', 'shelf', 'blank']], ['Napajanje', ['pdu', 'ups']], ['Ostalo', ['server']],
+  ['Organizatori i police', ['cable_manager', 'shelf', 'blank']], ['Napajanje', ['pdu', 'ups']],
+  ['Serveri i storage', ['server', 'nas']], ['Računari', ['pc']],   // RACK_GENERIC_V1
+  ['Video nadzor', ['nvr']],   // RACK_NVR_V1
 ];
 
 function ModelTile({ m, full, active, onClick }) {
   return (
     <button type="button" onClick={onClick}
       className={`text-left rounded-lg border p-2 transition-colors ${active ? 'border-brand-500 bg-brand-600/10' : 'border-gray-700 hover:border-gray-500'}`}>
-      <div className="bg-gray-950 rounded p-1.5 mb-1.5">{full ? <Faceplate model={full} showNumbers={false} /> : <div className="h-6" />}</div>
+      <div className="bg-gray-950 rounded p-1.5 mb-1.5">{full ? <Faceplate model={full} showNumbers={false} maxHeight={90} /> : <div className="h-6" />}</div>
       <p className="text-xs text-gray-200 truncate">{m.model}</p>
       <p className="text-[11px] text-gray-500">{m.heightU ? `${m.heightU}U` : 'van racka'}{m.portCount ? ` · ${m.portCount} port.` : ''}</p>
     </button>
@@ -274,6 +290,7 @@ function DeviceForm({ open, device, preset, room, rooms, racks, devices, tenantI
     setF({ name: device?.name || '', modelId: device?.model_id || '', heightU: device?.height_u || 1,
            serialNumber: device?.serial_number || '', notes: device?.notes || '', link, roomId: room.id,
            nics: (device?.nics_manual || []).map(n => ({ name: n.name, type: n.type })),
+           attachedToId: device?.attached_to_id || '',   // RACK_ATTACH_V1
            rackId: preset?.rackId ?? (device ? (device.rack_id || '') : (racks[0]?.id || '')),
            pos: preset?.position ?? device?.rack_position ?? null });
     api.get(`/tenants/${tenantId}/infra/link-candidates`).then(r => setCands(r.data)).catch(() => setCands({ network: [], servers: [], ups: [] }));
@@ -310,6 +327,7 @@ function DeviceForm({ open, device, preset, room, rooms, racks, devices, tenantI
       serialNumber: f.serialNumber, notes: f.notes,
       networkDeviceId: lk === 'network' ? id : null, serverId: lk === 'server' ? id : null, upsId: lk === 'ups' ? id : null,
       nics: nicsAllowed ? (f.nics || []).filter(n => n.name.trim()).map(n => ({ name: n.name.trim(), type: n.type })) : undefined,
+      attachedToId: f.attachedToId || null,   // RACK_ATTACH_V1
     };
     const otherRoom = isEdit && f.roomId && f.roomId !== room.id;
     const wantRack = !otherRoom && rackable && f.rackId ? f.rackId : null;
@@ -334,7 +352,7 @@ function DeviceForm({ open, device, preset, room, rooms, racks, devices, tenantI
   const sel = modelList?.find(m => m.id === f.modelId);
   const height = f.modelId ? (sel?.heightU ?? 1) : (Number(f.heightU) || 1);
   // RACK_NIC_V1: rucni portovi za servere, NAS, "ostalo" i uredjaje bez modela
-  const nicsAllowed = !f.modelId || ['server', 'nas', 'other'].includes(sel?.type) || f.link?.startsWith('server:');
+  const nicsAllowed = !f.modelId || ['server', 'nas', 'pc', 'nvr', 'other'].includes(sel?.type) || f.link?.startsWith('server:');
   const rackable = height > 0;
   // slobodne pocetne pozicije u izabranom racku za ovu visinu (od vrha racka nadole)
   const freeIn = rackId => {
@@ -352,8 +370,16 @@ function DeviceForm({ open, device, preset, room, rooms, racks, devices, tenantI
   useEffect(() => {
     if (!open || !f.rackId) return;
     if (!rackable) { setF(p => ({ ...p, rackId: '', pos: null })); return; }
-    if (!freePos.includes(f.pos)) setF(p => ({ ...p, pos: freePos[0] ?? null }));
+    // RACK_EDITPOS_FIX: menja se samo ako se stanje u medjuvremenu nije promenilo
+    // (inace bi stara vrednost pregazila poziciju upravo otvorenog uredjaja)
+    if (!freePos.includes(f.pos))
+      setF(p => (p.rackId === f.rackId && p.pos === f.pos ? { ...p, pos: freePos[0] ?? null } : p));
   }, [open, f.rackId, height, rackable, freePos.join(',')]);  // eslint-disable-line
+  // RACK_ATTACH_V1: kandidati za "Povezano sa" -- glavne stavke iz istog racka
+  // (ili iz prostorije, ako uredjaj nije u racku); jedan nivo veze
+  const attachChildren = (devices || []).filter(d => device?.id && d.attached_to_id === device.id);
+  const attachCands = (devices || []).filter(d => d.id !== device?.id && !d.attached_to_id
+    && (f.rackId ? d.rack_id === f.rackId : true));
   const byVendor = useMemo(() => {
     const g = {};
     (modelList || []).forEach(m => { (g[m.vendor] ||= []).push(m); });
@@ -424,6 +450,20 @@ function DeviceForm({ open, device, preset, room, rooms, racks, devices, tenantI
       {isEdit && <div className="col-span-2"><label className="label">Povezan sa monitoringom</label>{linkSelect}</div>}
       {isEdit && rooms?.length > 1 && <div className="col-span-2"><label className="label">Prostorija</label>
         <RoomSelect rooms={rooms} value={f.roomId || room.id} onChange={v => setF(p => ({ ...p, roomId: v }))} /></div>}
+      {/* RACK_ATTACH_V1 */}
+      {(!isEdit || !f.roomId || f.roomId === room.id) && <div className="col-span-2"><label className="label">Povezano sa</label>
+        {attachChildren.length > 0 ? (
+          <p className="text-sm text-gray-400">Glavna stavka za: {attachChildren.map(d => d.name).join(', ')}</p>
+        ) : (<>
+          <select className="input" value={f.attachedToId || ''} onChange={e => setF(p => ({ ...p, attachedToId: e.target.value }))}>
+            <option value="">— nije povezan —</option>
+            {f.attachedToId && !attachCands.some(d => d.id === f.attachedToId) && (
+              <option value={f.attachedToId}>{(devices || []).find(d => d.id === f.attachedToId)?.name || 'nepoznat'} (nije u ovom racku)</option>)}
+            {attachCands.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          <p className="text-xs text-gray-500 mt-1">Logička veza, npr. ekstenzija → NAS. Nije kabl i ne ulazi u pečovanje.</p>
+        </>)}
+      </div>}
       <div><label className="label">Serijski broj</label>
         <input className="input" value={f.serialNumber || ''} onChange={e => setF(p => ({ ...p, serialNumber: e.target.value }))} /></div>
       <div className="col-span-2"><label className="label">Napomena</label>
@@ -527,7 +567,11 @@ function DeviceForm({ open, device, preset, room, rooms, racks, devices, tenantI
 
 // ── panel izabranog uredjaja ────────────────────────────────────────────────
 function DevicePanel({ device, rack, model, mapping, states, modules, marks, highlight, selPort, onPortClick,
-                       canManage, onClose, onEdit, onUnplace, onDelete, children }) {
+                       canManage, onClose, onEdit, onUnplace, onDelete, children, devices = [], onSelect }) {
+  // RACK_ATTACH_V1
+  const attParent = device.attached_to_id ? devices.find(d => d.id === device.attached_to_id) : null;
+  const attChildren = devices.filter(d => d.attached_to_id === device.id);
+  const devLink = d => <button key={d.id} className="text-blue-400 hover:underline" onClick={() => onSelect?.(d.id)}>{d.name}</button>;
   const where = rack ? `${rack.name} · U${device.rack_position}${device.height_u > 1 ? `–U${device.rack_position + device.height_u - 1}` : ''}` : 'van racka';
   return (
     <div className="card space-y-3">
@@ -556,6 +600,9 @@ function DevicePanel({ device, rack, model, mapping, states, modules, marks, hig
             <span className="text-gray-500">({device.linked_status})</span>
           </p>
         ) : <p className="text-gray-500 text-xs">Nije povezan sa monitoringom.</p>}
+        {attParent && <p className="text-xs"><span className="text-gray-500">Povezano sa:</span> {devLink(attParent)}</p>}
+        {attChildren.length > 0 && <p className="text-xs"><span className="text-gray-500">Povezane stavke:</span>{' '}
+          {attChildren.map((d, i) => <React.Fragment key={d.id}>{i > 0 && ', '}{devLink(d)}</React.Fragment>)}</p>}
         {device.serial_number && <p className="text-xs"><span className="text-gray-500">S/N:</span> <span className="font-mono">{device.serial_number}</span></p>}
         {device.notes && <p className="text-xs text-gray-400 whitespace-pre-wrap">{device.notes}</p>}
         {mapping?.unmatched?.length > 0 && <p className="text-xs text-yellow-400">Portovi bez SNMP interfejsa: {mapping.unmatched.join(', ')}</p>}
@@ -968,7 +1015,8 @@ export default function RoomView() {
               onClose={() => setSelectedId(null)}
               onEdit={() => setDevForm({ open: true, device: selected, preset: null })}
               onUnplace={() => place(selected.id, null, null)}
-              onDelete={() => setConfirm({ kind: 'device', item: selected })}>
+              onDelete={() => setConfirm({ kind: 'device', item: selected })}
+              devices={devices} onSelect={id => { setSelectedId(id); setSelPort(null); }}>
               {portDetail}
             </DevicePanel>
           </div>
@@ -976,7 +1024,9 @@ export default function RoomView() {
       </div>
       )}
 
-      <DeviceForm open={devForm.open} device={devForm.device} preset={devForm.preset} room={room} rooms={allRooms} racks={racks}
+      {/* RACK_EDITPOS_FIX: svako otvaranje = sveza forma (bez stanja prethodnog uredjaja) */}
+      <DeviceForm key={devForm.open ? `${devForm.device?.id || 'new'}:${devForm.preset?.rackId || ''}:${devForm.preset?.position || ''}` : 'closed'}
+        open={devForm.open} device={devForm.device} preset={devForm.preset} room={room} rooms={allRooms} racks={racks}
         devices={devices} models={models}
         tenantId={tenantId} modelList={modelList}
         onClose={() => setDevForm({ open: false })}

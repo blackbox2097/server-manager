@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "id": "generic/server-tower",
+  "vendor": "Generic",
+  "model": "Server (tower, 4× 3.5\")",
+  "type": "server",
+  "match": {},
+  "form": {
+    "height_u": 0,
+    "mount": "none",
+    "body_width_mm": 200,
+    "body_height_mm": 440
+  },
+  "look": {
+    "chassis": "#2b2d31",
+    "text": "#B4B2A9"
+  },
+  "front": {
+    "start_mm": 10,
+    "blocks": [],
+    "decor": [
+      {
+        "kind": "leds",
+        "x_mm": 22,
+        "y_mm": 24,
+        "count": 3
+      },
+      {
+        "kind": "status_led",
+        "x_mm": 164,
+        "y_mm": 24
+      },
+      {
+        "kind": "button",
+        "x_mm": 180,
+        "y_mm": 24
+      },
+      {
+        "kind": "optical",
+        "x_mm": 25,
+        "y_mm": 72,
+        "w_mm": 150,
+        "h_mm": 42
+      },
+      {
+        "kind": "bays",
+        "x_mm": 25,
+        "y_mm": 250,
+        "w_mm": 150,
+        "h_mm": 27,
+        "cols": 1,
+        "rows": 4,
+        "gap_mm": 3
+      },
+      {
+        "kind": "vent",
+        "x_mm": 25,
+        "y_mm": 385,
+        "w_mm": 150,
+        "h_mm": 60
+      }
+    ]
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

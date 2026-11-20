@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "id": "generic/mini-pc",
+  "vendor": "Generic",
+  "model": "Mini PC (NUC)",
+  "type": "pc",
+  "match": {},
+  "form": {
+    "height_u": 0,
+    "mount": "none",
+    "body_width_mm": 117,
+    "body_height_mm": 51
+  },
+  "look": {
+    "chassis": "#2b2d31",
+    "text": "#B4B2A9"
+  },
+  "front": {
+    "start_mm": 10,
+    "blocks": [],
+    "decor": [
+      {
+        "kind": "button",
+        "x_mm": 12
+      },
+      {
+        "kind": "status_led",
+        "x_mm": 22
+      },
+      {
+        "kind": "usb",
+        "x_mm": 72,
+        "count": 2
+      }
+    ]
+  },
+  "snmp": {
+    "map": "name"
+  }
+}

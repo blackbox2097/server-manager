@@ -1013,6 +1013,17 @@ DO $$ BEGIN
 END $$;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON infra_sites TO servermanager;
+
+-- ── RACK_ATTACH_V1: logicka veza stavki u racku (20.11.2026) ──
+-- npr. ekstenzija (JBOD) -> NAS/server. Nije kabl: ne ulazi u pecovanje ni trace.
+ALTER TABLE infra_devices ADD COLUMN IF NOT EXISTS attached_to_id UUID REFERENCES infra_devices(id) ON DELETE SET NULL;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'infra_devices_attach_self_check') THEN
+        ALTER TABLE infra_devices ADD CONSTRAINT infra_devices_attach_self_check
+            CHECK (attached_to_id IS NULL OR attached_to_id <> id);
+    END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_infra_devices_attached ON infra_devices (attached_to_id) WHERE attached_to_id IS NOT NULL;
 SCHEMA
 
     # Superadmin lozinka — generisemo hash dinamicki

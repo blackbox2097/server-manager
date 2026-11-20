@@ -14,7 +14,7 @@ import { loadModelList, loadModel, mapInterfaces } from '../../components/rack/d
 
 const TYPE_LABEL = {
   switch: 'Svič', router: 'Ruter', firewall: 'Firewall', ap: 'AP / link', patch_panel: 'Patch panel',
-  fiber_panel: 'Optički panel', ups: 'UPS', server: 'Server', nas: 'NAS', pdu: 'PDU',
+  fiber_panel: 'Optički panel', ups: 'UPS', server: 'Server', nas: 'NAS', pdu: 'PDU', pc: 'Računar', nvr: 'NVR',
   shelf: 'Polica', blank: 'Slepa ploča', cable_manager: 'Organizator kablova', other: 'Ostalo',
 };
 const MOUNT_LABEL = { rack: 'rack', ears: 'uši', bracket: 'nosač', none: 'van racka' };
@@ -106,7 +106,7 @@ function ModelDetail({ model, device, onClose }) {
 
       <div className="bg-gray-950 rounded-lg p-4">
         <div style={{ maxWidth: model.form.mount === 'none' ? 420 : 1100 }}>
-          <Faceplate model={model} selected={sel}
+          <Faceplate model={model} selected={sel} maxHeight={model.form.mount === 'none' ? 360 : undefined}
             portState={mapping?.state} portInfo={mapping?.info}
             onPortClick={p => setSel(p.pkey)} />
         </div>
@@ -271,7 +271,7 @@ export default function DeviceModels() {
                     </span>
                   </div>
                   <div className="bg-gray-950 rounded-md p-2" style={{ minHeight: 40 }}>
-                    {m ? <div style={{ maxWidth: s.mount === 'none' ? 160 : '100%' }}><Faceplate model={m} showNumbers={false} /></div>
+                    {m ? <div style={{ maxWidth: s.mount === 'none' ? 160 : '100%' }}><Faceplate model={m} showNumbers={false} maxHeight={140} /></div>
                        : <Spinner />}
                   </div>
                   <p className="text-xs text-gray-500 mt-1.5">{TYPE_LABEL[s.type] || s.type}{s.sku ? ` · ${s.sku}` : ''}</p>

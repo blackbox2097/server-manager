@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "id": "generic/nas-rack-2u-8bay",
+  "vendor": "Generic",
+  "model": "NAS 2U (8× 3.5\")",
+  "type": "nas",
+  "match": {},
+  "form": {
+    "height_u": 2,
+    "mount": "rack",
+    "body_width_mm": 440
+  },
+  "look": {
+    "chassis": "#1f2023",
+    "text": "#B4B2A9"
+  },
+  "front": {
+    "start_mm": 10,
+    "blocks": [],
+    "decor": [
+      {
+        "kind": "status_led",
+        "x_mm": 14
+      },
+      {
+        "kind": "button",
+        "x_mm": 26
+      },
+      {
+        "kind": "bays",
+        "x_mm": 45,
+        "w_mm": 92,
+        "h_mm": 37,
+        "cols": 4,
+        "rows": 2,
+        "gap_mm": 3
+      }
+    ],
+    "label": {
+      "text": "NAS",
+      "x": 0.02,
+      "y": 0.78
+    }
+  },
+  "snmp": {
+    "map": "name"
+  },
+  "notes": "Mrezni portovi se dodaju rucno (kao kod servera)."
+}

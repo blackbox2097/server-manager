@@ -80,6 +80,7 @@ class DeviceIn(_Name):
     rackId: str | None = None           # samo pri kreiranju (posle: /place)
     rackPosition: int | None = None
     nics: list["NicIn"] | None = None   # RACK_NIC_V1: rucni portovi (None = ne menjaj)
+    attachedToId: str | None = None     # RACK_ATTACH_V1: logicka veza (ekstenzija -> NAS/server)
 
 
 # ── RACK_NIC_V1: mrezni portovi servera (samo Zoom prikaz) ──────────────────
@@ -203,6 +204,29 @@ async def _check_links(tid: str, body: DeviceIn):
         ok = await fetchrow(f"SELECT 1 FROM {table} WHERE id=$1 AND tenant_id=$2", lid, tid)
         if not ok:
             raise HTTPException(400, f"{label} nije pronadjen u ovom tenantu")
+
+
+# RACK_ATTACH_V1: logicka veza "Povezano sa" (npr. ekstenzija -> NAS). Nije
+# kabl -- ne ulazi u pecovanje ni trace. Jedan nivo: glavna stavka ne moze i
+# sama biti povezana, a stavka koja ima povezane ne moze se povezati.
+async def _check_attach(conn, tid: str, did: str | None, room_id: str, target: str | None):
+    if not target:
+        return None
+    if did and target == did:
+        raise HTTPException(400, "Uredjaj ne moze biti povezan sam sa sobom")
+    t = await conn.fetchrow(
+        "SELECT name, room_id, attached_to_id FROM infra_devices WHERE id=$1 AND tenant_id=$2", target, tid)
+    if not t:
+        raise HTTPException(400, "Uredjaj za vezu nije pronadjen")
+    if str(t["room_id"]) != str(room_id):
+        raise HTTPException(400, f"{t['name']} nije u istoj prostoriji")
+    if t["attached_to_id"]:
+        raise HTTPException(400, f"{t['name']} je i sam povezan sa drugim uredjajem -- veza ide samo na glavnu stavku")
+    if did:
+        child = await conn.fetchrow("SELECT name FROM infra_devices WHERE attached_to_id=$1 LIMIT 1", did)
+        if child:
+            raise HTTPException(400, f"Ovaj uredjaj vec ima povezane stavke ({child['name']}) -- ne moze biti i sam povezan")
+    return target
 
 
 async def _place(conn, tid: str, device_id: str | None, room_id: str, rack_id: str,
@@ -398,7 +422,7 @@ async def get_room(tid: str, rid: str, user=Depends(get_current_user)):
     devices = await fetch(
         """SELECT d.id, d.name, d.model_id, d.height_u, d.rack_id, d.rack_position,
                   d.serial_number, d.notes,
-                  d.network_device_id, d.server_id, d.ups_id,
+                  d.network_device_id, d.server_id, d.ups_id, d.attached_to_id,
                   (SELECT COALESCE(json_agg(json_build_object('name', n.name, 'type', n.type)
                                             ORDER BY n.sort, n.name), '[]'::json)
                    FROM infra_device_nics n WHERE n.device_id = d.id) AS nics_manual,
@@ -488,6 +512,11 @@ async def update_rack(tid: str, kid: str, req: Request, body: RackIn, user=Depen
                 # uredjaji idu sa rackom (kablovi ostaju -- vezani su za uredjaje)
                 await conn.execute(
                     "UPDATE infra_devices SET room_id=$1, updated_at=NOW() WHERE rack_id=$2", body.roomId, kid)
+                # RACK_ATTACH_V1: veze koje sada prelaze granicu prostorije se raskidaju
+                await conn.execute(
+                    """UPDATE infra_devices c SET attached_to_id=NULL FROM infra_devices p
+                       WHERE c.attached_to_id = p.id AND c.room_id <> p.room_id
+                         AND (c.rack_id = $1 OR p.rack_id = $1)""", kid)
     await _log("infra.rack.update", req, user, tid, kid,
                {"name": body.name, "heightU": body.heightU, **({"movedToRoom": body.roomId} if moved else {})})
     return {"ok": True}
@@ -521,15 +550,16 @@ async def create_device(tid: str, req: Request, body: DeviceIn, user=Depends(get
             rack_id = _n(body.rackId)
             if rack_id:
                 await _place(conn, tid, None, body.roomId, rack_id, body.rackPosition, height)
+            attach = await _check_attach(conn, tid, None, body.roomId, _n(body.attachedToId))
             try:
                 row = await conn.fetchrow(
                     """INSERT INTO infra_devices
                          (tenant_id, room_id, rack_id, rack_position, height_u, model_id, name,
-                          serial_number, notes, network_device_id, server_id, ups_id)
-                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id, name""",
+                          serial_number, notes, network_device_id, server_id, ups_id, attached_to_id)
+                       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id, name""",
                     tid, body.roomId, rack_id, body.rackPosition if rack_id else None,
                     max(height, 1), model_id, body.name, _n(body.serialNumber), _n(body.notes),
-                    _n(body.networkDeviceId), _n(body.serverId), _n(body.upsId))
+                    _n(body.networkDeviceId), _n(body.serverId), _n(body.upsId), attach)
             except asyncpg.UniqueViolationError as e:
                 raise HTTPException(409, _unique_msg(e))
             if body.nics:
@@ -558,24 +588,32 @@ async def update_device(tid: str, did: str, req: Request, body: DeviceIn, user=D
             await _check_cables_fit(conn, did, model_id, _n(body.serverId),
                                     [n.model_dump() for n in body.nics] if body.nics is not None else None)
             rack_id, pos = cur["rack_id"], cur["rack_position"]
-            if str(cur["room_id"]) != body.roomId:
+            room_changed = str(cur["room_id"]) != body.roomId
+            if room_changed:
                 rack_id, pos = None, None
             if rack_id:
                 await _place(conn, tid, did, body.roomId, str(rack_id), pos, height)
+            # RACK_ATTACH_V1: prelazak u drugu prostoriju raskida veze (u oba smera)
+            if room_changed:
+                attach = None
+                await conn.execute("UPDATE infra_devices SET attached_to_id=NULL WHERE attached_to_id=$1", did)
+            else:
+                attach = await _check_attach(conn, tid, did, body.roomId, _n(body.attachedToId))
             try:
                 await conn.execute(
                     """UPDATE infra_devices SET room_id=$1, rack_id=$2, rack_position=$3, height_u=$4,
                          model_id=$5, name=$6, serial_number=$7, notes=$8,
-                         network_device_id=$9, server_id=$10, ups_id=$11, updated_at=NOW()
+                         network_device_id=$9, server_id=$10, ups_id=$11, attached_to_id=$13, updated_at=NOW()
                        WHERE id=$12""",
                     body.roomId, rack_id, pos, max(height, 1), model_id, body.name,
                     _n(body.serialNumber), _n(body.notes),
-                    _n(body.networkDeviceId), _n(body.serverId), _n(body.upsId), did)
+                    _n(body.networkDeviceId), _n(body.serverId), _n(body.upsId), did, attach)
             except asyncpg.UniqueViolationError as e:
                 raise HTTPException(409, _unique_msg(e))
             if body.nics is not None:
                 await _save_manual_nics(conn, did, body.nics)
-    await _log("infra.device.update", req, user, tid, did, {"name": body.name, "model": model_id})
+    await _log("infra.device.update", req, user, tid, did,
+               {"name": body.name, "model": model_id, "attachedTo": attach})
     return {"ok": True}
 
 
