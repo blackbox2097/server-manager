@@ -46,7 +46,8 @@ export default function PortStrip({ model, states, info, selected, onPick, cable
         const names = b.from == null ? [b.name] : Array.from({ length: b.to - b.from + 1 }, (_, k) => b.name.replace('{n}', b.from + k));
         const rows = b.layout?.rows || 1, cols = Math.ceil(names.length / rows), gc = b.layout?.group_cols || 0;
         const sfp = b.type.startsWith('sfp') || b.type === 'qsfp+';
-        const w = sfp ? CELL_W + 6 : CELL_W;
+        // RACK_NIC_V1: port servera (eno1, iLO...) -- celica sa celim imenom
+        const w = b.nic ? Math.max(CELL_W, 10 + 7 * String(b.name).length) : sfp ? CELL_W + 6 : CELL_W;
         const width = cols * (w + CELL_GAP) - CELL_GAP + (gc ? Math.floor((cols - 1) / gc) * GROUP_GAP : 0);
         const height = rows * (CELL_H + CELL_GAP) - CELL_GAP;
         return (
@@ -69,7 +70,7 @@ export default function PortStrip({ model, states, info, selected, onPick, cable
                   className={`absolute border text-[11px] font-mono flex items-center justify-center ${sfp ? 'rounded-sm' : 'rounded'} ${STRIP_CLS[st] || STRIP_CLS.unknown}
                     ${sel ? 'ring-2 ring-white z-[2]' : hl ? 'ring-2 ring-yellow-400 z-[1]' : off ? 'opacity-30 cursor-not-allowed' : 'hover:brightness-125'}`}
                   style={{ left: c * (w + CELL_GAP) + (gc ? Math.floor(c / gc) * GROUP_GAP : 0), top: r * (CELL_H + CELL_GAP), width: w, height: CELL_H }}>
-                  {portNum(n, b.type)}
+                  {b.nic ? n : portNum(n, b.type)}
                   {cab?.front && <span className="absolute left-1 right-1 bottom-0.5 h-1 rounded-sm border border-black/40"
                     style={{ background: cab.front === true ? '#C9C9C4' : cableHex(cab.front) }} />}
                   {cab?.rear && <span className="absolute right-0.5 top-0.5 w-1.5 h-1.5 rounded-sm border border-black/40"

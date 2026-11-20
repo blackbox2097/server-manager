@@ -144,6 +144,54 @@ def _write_remote(client: paramiko.SSHClient, path: str, content: str, mode: int
         sftp.close()
 
 
+# RACK_NIC_V1 (20.11.2026): fizicki NIC-ovi za rack (portovi servera u Zoom prikazu)
+def _nic_state(s: str | None) -> str:
+    s = (s or "").strip().lower()
+    if s == "up":
+        return "up"
+    if s == "disabled":
+        return "disabled"
+    if s in ("not present", "notpresent"):
+        return "notPresent"
+    if s in ("down", "disconnected", "lowerlayerdown", "dormant"):
+        return "down"
+    return "unknown"
+
+
+def _parse_nics_linux(sections: dict) -> list[dict]:
+    out = []
+    for line in sections.get("NICS", []):
+        parts = line.split("|")
+        if len(parts) < 4 or not parts[0]:
+            continue
+        try:
+            speed = int(parts[2])
+        except ValueError:
+            speed = None
+        out.append({"name": parts[0][:60], "mac": parts[1] or None,
+                    "speed": speed if speed and speed > 0 else None, "state": _nic_state(parts[3])})
+    return out
+
+
+def _parse_nics_windows(raw: str | None) -> list[dict] | None:
+    if raw is None:
+        return None          # stara skripta / WinRM -- ne diraj sacuvane NIC-ove
+    if raw == "NONE":
+        return []
+    out = []
+    for part in raw.split(";"):
+        bits = part.split("=")
+        if len(bits) < 4 or not bits[0].strip():
+            continue
+        try:
+            speed = int(bits[2]) // 1_000_000
+        except ValueError:
+            speed = None
+        out.append({"name": bits[0].strip()[:60], "mac": bits[1].replace("-", ":").lower() or None,
+                    "speed": speed if speed and speed > 0 else None, "state": _nic_state(bits[3])})
+    return out
+
+
 async def _get_metrics_linux(server: dict) -> dict:
     def _run():
         client = _connect(server)
@@ -172,6 +220,11 @@ async def _get_metrics_linux(server: dict) -> dict:
                 ". /etc/os-release 2>/dev/null && echo \"$PRETTY_NAME\" || uname -sr",
                 'echo "---VIRT---"',
                 "systemd-detect-virt 2>/dev/null || echo none",
+                # RACK_NIC_V1: fizicki NIC-ovi -- ime|mac|brzina(Mb/s)|operstate
+                'echo "---NICS---"',
+                'for n in /sys/class/net/*; do [ -e "$n/device" ] || continue; '
+                'printf "%s|%s|%s|%s\\n" "$(basename $n)" "$(cat $n/address 2>/dev/null)" '
+                '"$(cat $n/speed 2>/dev/null)" "$(cat $n/operstate 2>/dev/null)"; done || true',
             ])
             stdout, stderr, code = _exec(client, cmd, deadline=60)
             if code != 0 and stderr and not stdout:
@@ -222,6 +275,7 @@ async def _get_metrics_linux(server: dict) -> dict:
                 "processCount":  int(first("PROCS") or 0),
                 "osName":        first("OSNAME") or "Linux",
                 "virtType":      first("VIRT", "unknown"),
+                "nics":          _parse_nics_linux(sections) if "NICS" in sections else None,
             }
         finally:
             client.close()
@@ -432,6 +486,10 @@ async def _get_metrics_windows(server: dict) -> dict:
         "$model=$cs.Model",
         "$mfg=$cs.Manufacturer",
         "Write-Output \"SM_CPU:$cpu|SM_RAM:$ram|SM_DISK:$diskMax|SM_DISKS:$disksStr|SM_UP:$up|SM_PROCS:$procs|SM_RX:$rx|SM_TX:$tx|SM_OS:$($os.Caption)|SM_MODEL:$model|SM_MFG:$mfg\"",
+        # RACK_NIC_V1: fizicki adapteri -- ime=mac=brzina(b/s)=status;...
+        "$nicParts=@(); Get-NetAdapter -Physical | ForEach-Object { $nicParts += \"$($_.Name)=$($_.MacAddress)=$($_.Speed)=$($_.Status)\" }",
+        "$nicsStr=($nicParts -join ';'); if (-not $nicsStr) { $nicsStr='NONE' }",
+        "Write-Output \"SM_NICS:$nicsStr\"",
     ]
     ps_script = "\r\n".join(ps_lines) + "\r\n"
 
@@ -495,6 +553,7 @@ async def _get_metrics_windows(server: dict) -> dict:
                 "processCount": int(g("PROCS") or 0),
                 "osName": g("OS") or "Windows",
                 "virtType": virt_type,
+                "nics": _parse_nics_windows(g("NICS")),
             }
         finally:
             client.close()

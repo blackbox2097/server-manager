@@ -176,6 +176,26 @@ async def _log_status_transition(srv: dict, old_status: str, new_status: str,
     create_bg_task(notify_server_status(notify_srv, old_status, new_status, metrics=metrics))
 
 
+async def _save_nics(server_id, nics: list[dict]):
+    """RACK_NIC_V1: poslednje vidjeno stanje fizickih NIC-ova servera."""
+    seen = {}
+    for n in nics:
+        seen[n["name"]] = n          # duplikat imena -- poslednji pobedjuje
+    names = list(seen)
+    if names:
+        await execute(
+            """INSERT INTO server_nics (server_id, name, mac, speed_mbps, oper_status, last_seen_at)
+               SELECT $1, x.name, x.mac, x.speed, x.st, NOW()
+               FROM UNNEST($2::text[], $3::text[], $4::int[], $5::text[]) AS x(name, mac, speed, st)
+               ON CONFLICT (server_id, name) DO UPDATE SET
+                 mac=EXCLUDED.mac, speed_mbps=EXCLUDED.speed_mbps,
+                 oper_status=EXCLUDED.oper_status, last_seen_at=NOW()""",
+            server_id, names, [seen[k]["mac"] for k in names],
+            [seen[k]["speed"] for k in names], [seen[k]["state"] for k in names])
+    await execute("DELETE FROM server_nics WHERE server_id=$1 AND NOT (name = ANY($2::text[]))",
+                  server_id, names)
+
+
 async def _poll(server: dict):
     srv = dict(server)
     old_status = srv.get("status")  # POTVRDJEN status pre ovog poll-a
@@ -209,6 +229,12 @@ async def _poll(server: dict):
             m["uptimeSeconds"], m.get("loadAvg1m"), m.get("loadAvg5m"), m.get("loadAvg15m"),
             rx_kbps, tx_kbps, m.get("processCount"), m.get("disks") or [],
         )
+        # RACK_NIC_V1: fizicki NIC-ovi (None = izvor ih ne daje -- ne diraj sacuvane)
+        if m.get("nics") is not None:
+            try:
+                await _save_nics(srv["id"], m["nics"])
+            except Exception:
+                logger.exception(f"NIC-ovi nisu sacuvani za {srv.get('name')}")
 
         confirmed = _confirm_status(srv["id"], old_status, raw_status)
         display_status = confirmed or old_status or raw_status

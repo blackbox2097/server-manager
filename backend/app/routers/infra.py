@@ -79,6 +79,83 @@ class DeviceIn(_Name):
     upsId: str | None = None
     rackId: str | None = None           # samo pri kreiranju (posle: /place)
     rackPosition: int | None = None
+    nics: list["NicIn"] | None = None   # RACK_NIC_V1: rucni portovi (None = ne menjaj)
+
+
+# ── RACK_NIC_V1: mrezni portovi servera (samo Zoom prikaz) ──────────────────
+NIC_TYPES = ("rj45", "sfp", "sfp+", "sfp28", "qsfp+")
+
+
+class NicIn(BaseModel):
+    name: str
+    type: str = "rj45"
+
+    @field_validator("name")
+    @classmethod
+    def _nm(cls, v):
+        v = (v or "").strip()
+        if not 1 <= len(v) <= 40:
+            raise ValueError("Ime porta mora imati 1-40 znakova")
+        if "@" in v:
+            raise ValueError("Ime porta ne sme sadrzati '@'")
+        return v
+
+    @field_validator("type")
+    @classmethod
+    def _tp(cls, v):
+        if v not in NIC_TYPES:
+            raise ValueError(f"Tip porta mora biti jedan od: {', '.join(NIC_TYPES)}")
+        return v
+
+
+def _speed_txt(mbps) -> str | None:
+    if not mbps or mbps <= 0:
+        return None
+    if mbps >= 1000:
+        g = mbps / 1000
+        return f"{int(g) if g == int(g) else round(g, 1)}G"
+    return f"{mbps}M"
+
+
+def _merge_nics(auto_rows, manual_rows) -> dict[str, dict]:
+    """{kljuc: port}. Automatski (monitoring) + rucni; rucni sa istim imenom
+    samo prepisuje tip (npr. SFP+ koji OS prijavi bez tipa)."""
+    out: dict[str, dict] = {}
+    for r in auto_rows:
+        out[r["name"]] = {"key": r["name"], "name": r["name"], "type": "rj45",
+                          "speed": _speed_txt(r["speed_mbps"]), "mac": r["mac"],
+                          "state": r["oper_status"], "source": "auto"}
+    for r in manual_rows:
+        if r["name"] in out:
+            out[r["name"]]["type"] = r["type"]
+        else:
+            out[r["name"]] = {"key": r["name"], "name": r["name"], "type": r["type"],
+                              "speed": None, "mac": None, "state": None, "source": "manual"}
+    return out
+
+
+async def _nic_ports(conn, did: str | None, server_id=None, manual: list[dict] | None = None) -> dict[str, dict]:
+    auto = await conn.fetch(
+        "SELECT name, mac, speed_mbps, oper_status FROM server_nics WHERE server_id=$1 ORDER BY name",
+        server_id) if server_id else []
+    if manual is None:
+        manual = await conn.fetch(
+            "SELECT name, type FROM infra_device_nics WHERE device_id=$1 ORDER BY sort, name", did) if did else []
+    return _merge_nics(auto, manual)
+
+
+async def _save_manual_nics(conn, did: str, nics: list[NicIn]):
+    names = [n.name for n in nics]
+    if len(set(names)) != len(names):
+        raise HTTPException(400, "Imena portova se ponavljaju")
+    await conn.execute("DELETE FROM infra_device_nics WHERE device_id=$1", did)
+    for i, n in enumerate(nics):
+        await conn.execute("INSERT INTO infra_device_nics (device_id, name, type, sort) VALUES ($1,$2,$3,$4)",
+                           did, n.name, n.type, i)
+
+
+DeviceIn.model_rebuild()   # DeviceIn.nics referise NicIn (definisan posle DeviceIn)
+
 
 
 class PlaceIn(BaseModel):
@@ -322,6 +399,9 @@ async def get_room(tid: str, rid: str, user=Depends(get_current_user)):
         """SELECT d.id, d.name, d.model_id, d.height_u, d.rack_id, d.rack_position,
                   d.serial_number, d.notes,
                   d.network_device_id, d.server_id, d.ups_id,
+                  (SELECT COALESCE(json_agg(json_build_object('name', n.name, 'type', n.type)
+                                            ORDER BY n.sort, n.name), '[]'::json)
+                   FROM infra_device_nics n WHERE n.device_id = d.id) AS nics_manual,
                   COALESCE(nd.name, s.name, u.name)       AS linked_name,
                   COALESCE(nd.status, s.status, u.status) AS linked_status,
                   COALESCE(host(nd.ip_address), host(s.ip_address), u.host) AS linked_ip,
@@ -452,6 +532,8 @@ async def create_device(tid: str, req: Request, body: DeviceIn, user=Depends(get
                     _n(body.networkDeviceId), _n(body.serverId), _n(body.upsId))
             except asyncpg.UniqueViolationError as e:
                 raise HTTPException(409, _unique_msg(e))
+            if body.nics:
+                await _save_manual_nics(conn, str(row["id"]), body.nics)
     await _log("infra.device.create", req, user, tid, row["id"], {"name": body.name, "model": model_id})
     return dict(row)
 
@@ -473,8 +555,8 @@ async def update_device(tid: str, did: str, req: Request, body: DeviceIn, user=D
                 did, tid)
             if not cur:
                 raise HTTPException(404, "Uredjaj nije pronadjen")
-            if (cur["model_id"] or None) != model_id:
-                await _check_cables_fit(conn, did, model_id)
+            await _check_cables_fit(conn, did, model_id, _n(body.serverId),
+                                    [n.model_dump() for n in body.nics] if body.nics is not None else None)
             rack_id, pos = cur["rack_id"], cur["rack_position"]
             if str(cur["room_id"]) != body.roomId:
                 rack_id, pos = None, None
@@ -491,6 +573,8 @@ async def update_device(tid: str, did: str, req: Request, body: DeviceIn, user=D
                     _n(body.networkDeviceId), _n(body.serverId), _n(body.upsId), did)
             except asyncpg.UniqueViolationError as e:
                 raise HTTPException(409, _unique_msg(e))
+            if body.nics is not None:
+                await _save_manual_nics(conn, did, body.nics)
     await _log("infra.device.update", req, user, tid, did, {"name": body.name, "model": model_id})
     return {"ok": True}
 
@@ -616,37 +700,46 @@ def _port_label(key: str) -> str:
 
 async def _device_with_model(conn, tid: str, did: str):
     row = await conn.fetchrow(
-        "SELECT id, name, model_id, room_id FROM infra_devices WHERE id=$1 AND tenant_id=$2", did, tid)
+        "SELECT id, name, model_id, room_id, server_id FROM infra_devices WHERE id=$1 AND tenant_id=$2", did, tid)
     if not row:
         raise HTTPException(404, "Uredjaj nije pronadjen")
     model = dm.get_model(row["model_id"]) if row["model_id"] else None
-    return row, model
+    dev = dict(row)
+    dev["_nics"] = await _nic_ports(conn, did, row["server_id"])   # RACK_NIC_V1
+    return dev, model
 
 
 def _check_port(dev, model, key: str, side: str = "front") -> dict:
-    if not model:
-        raise HTTPException(400, f"{dev['name']}: uredjaj nema model -- portovi nisu poznati")
-    port = model.cable_ports().get(key)
+    # RACK_NIC_V1: portovi = model + NIC portovi servera (model ima prednost)
+    ports = dict(dev.get("_nics") or {})
+    if model:
+        ports.update(model.cable_ports())
+    if not ports:
+        raise HTTPException(400, f"{dev['name']}: uredjaj nema portove (nema model ni mrezne portove)")
+    port = ports.get(key)
     if not port:
-        raise HTTPException(400, f"{dev['name']}: port '{_port_label(key)}' ne postoji u modelu")
+        raise HTTPException(400, f"{dev['name']}: port '{_port_label(key)}' ne postoji")
     if side not in SIDES:
         raise HTTPException(400, "Strana mora biti 'front' ili 'rear'")
-    if side == "rear" and not model.passthrough:
+    if side == "rear" and not (model and model.passthrough):
         raise HTTPException(400, f"{dev['name']}: zadnja strana postoji samo kod panela")
     return port
 
 
-async def _check_cables_fit(conn, did: str, model_id: str | None):
-    """Promena modela ne sme da ostavi kabl na portu koji vise ne postoji."""
+async def _check_cables_fit(conn, did: str, model_id: str | None, server_id=None, manual=None):
+    """Promena modela, veze sa serverom ili rucnih portova ne sme da ostavi
+    kabl na portu koji vise ne postoji. RACK_NIC_V1: + NIC portovi."""
     ends = await conn.fetch("SELECT port_key, side FROM infra_cable_ends WHERE device_id=$1", did)
     if not ends:
         return
     model = dm.get_model(model_id) if model_id else None
-    ports = model.cable_ports() if model else {}
+    ports = dict(await _nic_ports(conn, did, server_id, manual))
+    if model:
+        ports.update(model.cable_ports())
     bad = sorted({_port_label(e["port_key"]) for e in ends
-                  if e["port_key"] not in ports or (e["side"] == "rear" and not model.passthrough)})
+                  if e["port_key"] not in ports or (e["side"] == "rear" and not (model and model.passthrough))})
     if bad:
-        raise HTTPException(409, "Novi model nema portove na kojima su kablovi: "
+        raise HTTPException(409, "Posle izmene ne postoje portovi na kojima su kablovi: "
                                  + ", ".join(bad) + " -- prvo otkaci te kablove")
 
 
@@ -680,6 +773,19 @@ async def room_cabling(tid: str, rid: str, user=Depends(get_current_user)):
                SELECT e2.cable_id FROM infra_cable_ends e2
                JOIN infra_devices d2 ON d2.id = e2.device_id WHERE d2.room_id = $1)
            ORDER BY c.id, e.end_no""", rid, tid)
+    # RACK_NIC_V1: NIC portovi stavki (monitoring + rucni)
+    nic_auto = await fetch(
+        """SELECT d.id AS device_id, n.name, n.mac, n.speed_mbps, n.oper_status
+           FROM infra_devices d JOIN server_nics n ON n.server_id = d.server_id
+           WHERE d.room_id=$1 AND d.tenant_id=$2 ORDER BY n.name""", rid, tid)
+    nic_man = await fetch(
+        """SELECT n.device_id, n.name, n.type FROM infra_device_nics n
+           JOIN infra_devices d ON d.id = n.device_id
+           WHERE d.room_id=$1 AND d.tenant_id=$2 ORDER BY n.sort, n.name""", rid, tid)
+    nic_ids = {str(r["device_id"]) for r in nic_auto} | {str(r["device_id"]) for r in nic_man}
+    nics = {d: list(_merge_nics([r for r in nic_auto if str(r["device_id"]) == d],
+                                [r for r in nic_man if str(r["device_id"]) == d]).values())
+            for d in nic_ids}
     ports: dict[str, dict] = {}
     for r in info:
         ports.setdefault(str(r["device_id"]), {})[r["port_key"]] = {
@@ -692,7 +798,7 @@ async def room_cabling(tid: str, rid: str, user=Depends(get_current_user)):
                           "roomId": str(r["room_id"]), "roomName": r["room_name"], "rackName": r["rack_name"],
                           "siteId": str(r["site_id"]), "siteName": r["site_name"]})
     return {"ports": ports, "cables": [c for c in cables.values() if len(c["ends"]) == 2],
-            "modules": MODULES}
+            "modules": MODULES, "nics": nics}
 
 
 @router.put("/{tid}/infra/port-info")

@@ -7,7 +7,7 @@ import { Cable, Pencil, Unlink, ArrowRight } from 'lucide-react';
 import api from '../../services/api';
 import { Alert, Spinner } from '../../components/ui';
 import { CABLE_COLORS, cableHex } from '../../components/rack/Faceplate';
-import { loadModel, MODULE_TYPES } from '../../components/rack/deviceModels';
+import { loadModel, MODULE_TYPES, nicModel } from '../../components/rack/deviceModels';  // RACK_NIC_V1
 import PortStrip, { STATE_LABEL, STRIP_CLS } from '../../components/rack/PortStrip';
 
 export const MODULE_LABEL = {
@@ -107,6 +107,10 @@ export function PortDetail({ tenantId, device, model, port, mapping, info, cable
         {port.speed && <><span className="text-gray-500">Brzina</span><span className="font-mono">{port.speed}</span></>}
         {port.poe && <><span className="text-gray-500">PoE</span><span className="font-mono">PoE-{port.poe}</span></>}
         {port.combo && <><span className="text-gray-500">Combo</span><span className="font-mono">deli port sa RJ45</span></>}
+        {port.nic && <>
+          <span className="text-gray-500">Izvor</span><span>{port.nic.source === 'manual' ? 'ručno dodat' : 'monitoring servera'}</span>
+          {port.nic.mac && <><span className="text-gray-500">MAC</span><span className="font-mono">{port.nic.mac}</span></>}
+        </>}
         {iface && <>
           <span className="text-gray-500">SNMP ime</span><span className="font-mono">{iface.if_name}{mapping.byPort[port.name].how === 'redosled' ? ' *' : ''}</span>
           {iface.if_alias && <><span className="text-gray-500">Opis</span><span>{iface.if_alias}</span></>}
@@ -273,17 +277,19 @@ export function CableDialog({ open, tenantId, room, from, edit, onClose, onSaved
   }, [open, edit, roomId, tenantId]);
 
   const idx = useMemo(() => indexCables(roomCab?.cables), [roomCab]);
+  // RACK_NIC_V1: model + NIC portovi servera
+  const effOf = d => nicModel(d.model_id && models[d.model_id], roomCab?.nics?.[d.id]);
   // uredjaji sa portovima za kabl, grupisani po racku
   const groups = useMemo(() => {
     if (!roomData) return [];
-    const ok = d => { const m = models[d.model_id]; return m && (m.ports || []).some(p => !['power', 'usb', 'outlet'].includes(p.type)); };
+    const ok = d => { const m = effOf(d); return m && (m.ports || []).some(p => !['power', 'usb', 'outlet'].includes(p.type)); };
     const out = roomData.racks.map(r => [r.name, roomData.devices.filter(d => d.rack_id === r.id && ok(d))
       .sort((a, b) => b.rack_position - a.rack_position)]);
     out.push(['Van racka', roomData.devices.filter(d => !d.rack_id && ok(d))]);
     return out.filter(([, ds]) => ds.length);
-  }, [roomData, models]);
+  }, [roomData, models, roomCab]);  // eslint-disable-line
   const dev = roomData?.devices.find(d => d.id === devId);
-  const devModel = dev && models[dev.model_id];
+  const devModel = dev && effOf(dev);
   const busy = useMemo(() => {
     const s = new Set();
     if (!dev || !devModel) return s;

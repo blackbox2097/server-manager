@@ -951,6 +951,28 @@ CREATE TRIGGER trg_infra_cable_ends_cleanup
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON infra_port_info, infra_cables, infra_cable_ends TO servermanager;
 
+-- RACK_NIC_V1 (20.11.2026): mrezni portovi servera u racku (samo Zoom prikaz).
+-- server_nics: fizicki NIC-ovi iz monitoringa (poslednje vidjeno stanje).
+CREATE TABLE IF NOT EXISTS server_nics (
+    server_id     UUID        NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    name          TEXT        NOT NULL,
+    mac           TEXT,
+    speed_mbps    INTEGER,
+    oper_status   TEXT,
+    last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (server_id, name)
+);
+-- infra_device_nics: rucno dodati portovi stavke u racku (iLO/iDRAC, nemonitorisani)
+CREATE TABLE IF NOT EXISTS infra_device_nics (
+    device_id  UUID     NOT NULL REFERENCES infra_devices(id) ON DELETE CASCADE,
+    name       TEXT     NOT NULL,
+    type       TEXT     NOT NULL DEFAULT 'rj45',
+    sort       SMALLINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (device_id, name),
+    CONSTRAINT infra_device_nics_type_check CHECK (type IN ('rj45', 'sfp', 'sfp+', 'sfp28', 'qsfp+'))
+);
+GRANT SELECT, INSERT, UPDATE, DELETE ON server_nics, infra_device_nics TO servermanager;
+
 -- ── Infrastruktura: lokacija (objekat) -> prostorija -> rack (13.11.2026) ──
 -- infra_rooms su do sada bile "lokacije"; sada su PROSTORIJE unutar lokacije.
 -- Postojece prostorije dobijaju lokaciju po polju "Zgrada / adresa"

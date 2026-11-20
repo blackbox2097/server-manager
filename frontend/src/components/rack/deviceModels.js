@@ -97,6 +97,40 @@ export function effectiveState(st, module) {
   return st || 'unknown';
 }
 
+// RACK_NIC_V1 (20.11.2026): mrezni portovi servera (monitoring + rucni).
+// Efektivni model = model + NIC portovi kao blokovi od po jednog porta.
+// Koristi se SAMO za Zoom prikaz, detalj porta i izbor drugog kraja kabla --
+// Faceplate (grafika racka) i dalje dobija cist model iz biblioteke.
+const NIC_BASE = { id: '_nic', vendor: 'Generic', model: 'bez modela', type: 'server', form: { height_u: 1 },
+  front: { blocks: [], decor: [] }, ports: [], passthrough: false };
+
+export function nicModel(model, nics) {
+  const list = (nics || []).filter(n => !(model?.ports || []).some(p => p.key === n.name));
+  if (!list.length) return model || null;
+  const base = model || NIC_BASE;
+  const off = (base.front?.blocks || []).length;
+  return {
+    ...base,
+    front: { ...(base.front || {}), blocks: [...(base.front?.blocks || []),
+      ...list.map(n => ({ name: n.name, type: n.type, speed: n.speed, nic: true }))] },
+    ports: [...(base.ports || []), ...list.map((n, i) => ({
+      key: n.name, name: n.name, snmp_name: null, type: n.type, speed: n.speed,
+      poe: null, combo: false, face: 'front', block: off + i, nic: n }))],
+  };
+}
+
+/** Stanje/opis NIC portova (umesto SNMP mapiranja kod mreznih uredjaja). */
+export function nicMapping(nics) {
+  if (!nics?.length) return undefined;
+  const state = {}, info = {};
+  nics.forEach(n => {
+    state[n.name] = n.source === 'manual' ? 'unknown' : (n.state || 'unknown');
+    info[n.name] = n.source === 'manual' ? 'ručno dodat port'
+      : ['monitoring', n.mac, n.speed].filter(Boolean).join(' · ');
+  });
+  return { state, info, byPort: {}, unmatched: [] };
+}
+
 /** Stanje po kljucu porta (combo SFP odvojeno od RJ45 para), uz modul. */
 export function portStates(model, mapping, modules) {
   if (!model) return undefined;

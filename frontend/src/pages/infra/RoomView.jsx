@@ -9,7 +9,7 @@ import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import { Modal, ConfirmDialog, Alert, Spinner } from '../../components/ui';
 import Faceplate, { STATUS_LED } from '../../components/rack/Faceplate';
-import { loadModelList, loadModel, mapInterfaces, portStates as computePortStates } from '../../components/rack/deviceModels';
+import { loadModelList, loadModel, mapInterfaces, portStates as computePortStates, nicModel, nicMapping } from '../../components/rack/deviceModels';  // RACK_NIC_V1
 import PortStrip, { STATE_LABEL, STRIP_CLS, STRIP_HIDDEN } from '../../components/rack/PortStrip';
 import { RoomForm } from './Site';
 import { PortDetail, CableDialog, indexCables, cableMarks } from './Cabling';
@@ -273,6 +273,7 @@ function DeviceForm({ open, device, preset, room, rooms, racks, devices, tenantI
       : device?.server_id ? `server:${device.server_id}` : device?.ups_id ? `ups:${device.ups_id}` : '';
     setF({ name: device?.name || '', modelId: device?.model_id || '', heightU: device?.height_u || 1,
            serialNumber: device?.serial_number || '', notes: device?.notes || '', link, roomId: room.id,
+           nics: (device?.nics_manual || []).map(n => ({ name: n.name, type: n.type })),
            rackId: preset?.rackId ?? (device ? (device.rack_id || '') : (racks[0]?.id || '')),
            pos: preset?.position ?? device?.rack_position ?? null });
     api.get(`/tenants/${tenantId}/infra/link-candidates`).then(r => setCands(r.data)).catch(() => setCands({ network: [], servers: [], ups: [] }));
@@ -308,6 +309,7 @@ function DeviceForm({ open, device, preset, room, rooms, racks, devices, tenantI
       heightU: f.modelId ? null : Number(f.heightU) || 1,
       serialNumber: f.serialNumber, notes: f.notes,
       networkDeviceId: lk === 'network' ? id : null, serverId: lk === 'server' ? id : null, upsId: lk === 'ups' ? id : null,
+      nics: nicsAllowed ? (f.nics || []).filter(n => n.name.trim()).map(n => ({ name: n.name.trim(), type: n.type })) : undefined,
     };
     const otherRoom = isEdit && f.roomId && f.roomId !== room.id;
     const wantRack = !otherRoom && rackable && f.rackId ? f.rackId : null;
@@ -331,6 +333,8 @@ function DeviceForm({ open, device, preset, room, rooms, racks, devices, tenantI
 
   const sel = modelList?.find(m => m.id === f.modelId);
   const height = f.modelId ? (sel?.heightU ?? 1) : (Number(f.heightU) || 1);
+  // RACK_NIC_V1: rucni portovi za servere, NAS, "ostalo" i uredjaje bez modela
+  const nicsAllowed = !f.modelId || ['server', 'nas', 'other'].includes(sel?.type) || f.link?.startsWith('server:');
   const rackable = height > 0;
   // slobodne pocetne pozicije u izabranom racku za ovu visinu (od vrha racka nadole)
   const freeIn = rackId => {
@@ -424,6 +428,31 @@ function DeviceForm({ open, device, preset, room, rooms, racks, devices, tenantI
         <input className="input" value={f.serialNumber || ''} onChange={e => setF(p => ({ ...p, serialNumber: e.target.value }))} /></div>
       <div className="col-span-2"><label className="label">Napomena</label>
         <textarea className="input" rows={2} value={f.notes || ''} onChange={e => setF(p => ({ ...p, notes: e.target.value }))} /></div>
+      {/* RACK_NIC_V1: rucni mrezni portovi (vide se samo u Zoom prikazu) */}
+      {nicsAllowed && (
+        <div className="col-span-2 space-y-2">
+          <label className="label">Mrežni portovi (ručno)</label>
+          <p className="text-xs text-gray-500 -mt-1">
+            {f.link?.startsWith('server:')
+              ? 'Portovi iz monitoringa dodaju se sami. Ovde dodaj one koje OS ne vidi (iLO, iDRAC, IPMI).'
+              : 'Portovi servera za pečovanje. Vide se samo u Zoom prikazu racka.'}
+          </p>
+          {(f.nics || []).map((n, i) => (
+            <div key={i} className="flex gap-2">
+              <input className="input flex-1" value={n.name} placeholder="npr. eno1, iLO"
+                onChange={e => setF(p => ({ ...p, nics: p.nics.map((x, k) => k === i ? { ...x, name: e.target.value } : x) }))} />
+              <select className="input w-28" value={n.type}
+                onChange={e => setF(p => ({ ...p, nics: p.nics.map((x, k) => k === i ? { ...x, type: e.target.value } : x) }))}>
+                {['rj45', 'sfp', 'sfp+', 'sfp28', 'qsfp+'].map(t => <option key={t} value={t}>{t.toUpperCase()}</option>)}
+              </select>
+              <button type="button" className="btn-ghost p-1.5 text-red-400" title="Ukloni port"
+                onClick={() => setF(p => ({ ...p, nics: p.nics.filter((_, k) => k !== i) }))}><X size={14} /></button>
+            </div>
+          ))}
+          <button type="button" className="text-xs text-blue-400 hover:underline"
+            onClick={() => setF(p => ({ ...p, nics: [...(p.nics || []), { name: '', type: 'rj45' }] }))}>+ Dodaj port</button>
+        </div>
+      )}
     </div>
   );
 
@@ -558,7 +587,7 @@ const TYPE_BADGE = {
 };
 const LINK_BADGE = { online: 'badge-green', offline: 'badge-red', warning: 'badge-yellow', on_battery: 'badge-orange', low_battery: 'badge-red' };
 
-function RackPortsView({ rack, devices, models, mappings, states, marks, highlights, labels, selectedId, selPort,
+function RackPortsView({ rack, devices, models, devModels, mappings, states, marks, highlights, labels, selectedId, selPort,
                          onPick, canManage, onBack, onEdit, onUnplace, onDelete, children }) {
   const ordered = [...devices].sort((a, b) => topRowOf(rack, a.rack_position, a.height_u) - topRowOf(rack, b.rack_position, b.height_u));
   const span = d => `U${d.rack_position}${d.height_u > 1 ? `–U${d.rack_position + d.height_u - 1}` : ''}`;
@@ -586,7 +615,7 @@ function RackPortsView({ rack, devices, models, mappings, states, marks, highlig
         <div className="flex-1 min-w-0 space-y-3">
           {ordered.length === 0 && <div className="card text-sm text-gray-400">Rack je prazan.</div>}
           {ordered.map(d => {
-            const m = d.model_id && models[d.model_id];
+            const m = devModels?.[d.id] || (d.model_id && models[d.model_id]);
             const hasPorts = m && (m.front?.blocks || []).some(b => !STRIP_HIDDEN.has(b.type));
             const head = (
               <div className="flex items-center gap-2 min-w-0 flex-wrap">
@@ -716,14 +745,18 @@ export default function RoomView() {
   // promena tenanta -- lokacija pripada drugom tenantu
   useEffect(() => { if (firstTenant.current && tenantId !== firstTenant.current) navigate('/infra'); }, [tenantId, navigate]);
 
+  // RACK_NIC_V1: efektivni model po uredjaju (model + NIC portovi) -- NE za Faceplate
+  const devModels = useMemo(() => Object.fromEntries((data?.devices || []).map(d =>
+    [d.id, nicModel(d.model_id && models[d.model_id], cabling.nics?.[d.id])])), [data, models, cabling]);
   const mappings = useMemo(() => {
     const out = {};
     (data?.devices || []).forEach(d => {
       const m = d.model_id && models[d.model_id];
       if (m && d.network_device_id) out[d.id] = mapInterfaces(m, portStates[d.id] || []);
+      else if (cabling.nics?.[d.id]?.length) out[d.id] = nicMapping(cabling.nics[d.id]);
     });
     return out;
-  }, [data, models, portStates]);
+  }, [data, models, portStates, cabling]);
 
   // dokumentacija portova: moduli, oznake, kablovi -> po uredjaju
   const cableIdx = useMemo(() => indexCables(cabling.cables), [cabling]);
@@ -734,18 +767,18 @@ export default function RoomView() {
       modules[d.id] = Object.fromEntries(Object.entries(info).filter(([, v]) => v.module).map(([k, v]) => [k, v.module]));
       labels[d.id] = Object.fromEntries(Object.entries(info).filter(([, v]) => v.label).map(([k, v]) => [k, v.label]));
       marks[d.id] = cableMarks(cableIdx, d.id);
-      const m = d.model_id && models[d.model_id];
+      const m = devModels[d.id];
       states[d.id] = computePortStates(m, mappings[d.id], modules[d.id]);
     });
     // Faceplate crta samo prednju stranu -- oznaka = kabl spreda
     const frontMarks = Object.fromEntries(Object.entries(marks).map(([id, mk]) =>
       [id, Object.fromEntries(Object.entries(mk).filter(([, v]) => v.front).map(([k, v]) => [k, v.front]))]));
     return { modules, labels, marks: { strip: marks, face: frontMarks }, states };
-  }, [data, cabling, cableIdx, models, mappings]);
+  }, [data, cabling, cableIdx, devModels, mappings]);
 
   // trace izabranog porta (i isticanje svih portova na putanji)
   const selDevice = (data?.devices || []).find(d => d.id === selectedId);
-  const selModel = selDevice?.model_id && models[selDevice.model_id];
+  const selModel = selDevice ? devModels[selDevice.id] : null;  // RACK_NIC_V1: + NIC portovi
   const selPortObj = selModel && selPort ? (selModel.ports || []).find(p => p.key === selPort) : null;
   useEffect(() => {
     setTrace(null);
@@ -851,7 +884,7 @@ export default function RoomView() {
       {err && <Alert type="error" message={err} onClose={() => setErr('')} />}
 
       {portsRack ? (
-        <RackPortsView rack={portsRack} devices={devices.filter(d => d.rack_id === portsRack.id)} models={models}
+        <RackPortsView rack={portsRack} devices={devices.filter(d => d.rack_id === portsRack.id)} models={models} devModels={devModels}
           mappings={mappings} states={states} marks={marks.strip} highlights={highlights} labels={labels}
           selectedId={selectedId} selPort={selPort} onPick={(id, port) => { setSelectedId(id); setSelPort(port); }}
           canManage={canManage} onBack={() => setPortsRackId(null)}
