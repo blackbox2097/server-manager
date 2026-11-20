@@ -1339,6 +1339,12 @@ SUDOEOF
     sudo -u "$APP_USER" pm2 save > /dev/null 2>&1
     if systemctl is-enabled "pm2-${APP_USER}" &>/dev/null; then
         log "PM2 startup servis instaliran (pm2-${APP_USER}.service) — aplikacija ce se sama podici posle restarta"
+        # PM2_AFTER_PG (20.11.2026): PM2 se podize POSLE PostgreSQL-a i gasi PRE njega
+        # (inace pri gasenju sistema pollovi udaraju u bazu koja se gasi)
+        mkdir -p "/etc/systemd/system/pm2-${APP_USER}.service.d"
+        printf '[Unit]\nAfter=postgresql.service network-online.target\nWants=postgresql.service network-online.target\n' \
+            > "/etc/systemd/system/pm2-${APP_USER}.service.d/after-postgres.conf"
+        systemctl daemon-reload
     else
         warn "Automatska PM2 startup konfiguracija nije potvrdjena — proveri rucno: sudo -u ${APP_USER} pm2 startup"
     fi
