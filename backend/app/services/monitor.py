@@ -60,10 +60,20 @@ def _eval_thresholds(srv: dict, m: dict) -> tuple[bool, str | None]:
     if ram_t > 0 and ram >= ram_t:
         reasons.append(f"RAM {round(ram)}% (prag {ram_t}%)")
 
+    # NSRV_DISK_V1 (20.11.2026): prag se proverava preko SVIH particija/diskova
+    # (ranije na Linuxu samo "/"); bez liste diskova (Proxmox) -> diskPercent
     disk_t = thr("warn_disk_pct", cfg.server_warn_disk_pct)
-    disk = m.get("diskPercent") or 0
-    if disk_t > 0 and disk >= disk_t:
-        reasons.append(f"Disk {round(disk)}% (prag {disk_t}%)")
+    if disk_t > 0:
+        disks = [d for d in (m.get("disks") or []) if isinstance(d, dict)]
+        if disks:
+            for d in disks:
+                pct = d.get("percent") or 0
+                if pct >= disk_t:
+                    reasons.append(f"Disk {d.get('name', '?')} {round(pct)}% (prag {disk_t}%)")
+        else:
+            disk = m.get("diskPercent") or 0
+            if disk >= disk_t:
+                reasons.append(f"Disk {round(disk)}% (prag {disk_t}%)")
 
     return bool(reasons), (", ".join(reasons) or None)
 

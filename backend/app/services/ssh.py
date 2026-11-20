@@ -157,8 +157,8 @@ async def _get_metrics_linux(server: dict) -> dict:
                 "free | awk '/^Mem:/{printf \"%.0f\\n\", ($3/$2)*100}'",
                 'SM_T=$(command -v timeout >/dev/null 2>&1 && echo "timeout -k 2 10" || true)',
                 'echo "---DISKS---"',
-                # Sve realne particije (bez virtuelnih fs kao tmpfs/overlay), format: mount|procenat
-                "$SM_T df -l -x tmpfs -x devtmpfs -x squashfs -x overlay -x proc -x sysfs -x cgroup -x cgroup2 "
+                # Sve realne particije (bez virtuelnih fs kao tmpfs/overlay), format: mount|procenat  [NSRV_DISK_V1: + efivarfs]
+                "$SM_T df -l -x tmpfs -x devtmpfs -x squashfs -x overlay -x proc -x sysfs -x cgroup -x cgroup2 -x efivarfs "
                 "--output=target,pcent 2>/dev/null | tail -n +2 | awk '{gsub(\"%\",\"\",$NF); print $1\"|\"$NF}'",
                 'echo "---UPTIME---"',
                 "awk '{print int($1)}' /proc/uptime",
