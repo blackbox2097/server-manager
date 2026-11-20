@@ -48,13 +48,20 @@ export default function PortStrip({ model, states, info, selected, onPick, cable
         const sfp = b.type.startsWith('sfp') || b.type === 'qsfp+';
         // RACK_NIC_V1: port servera (eno1, iLO...) -- celica sa celim imenom
         const w = b.nic ? Math.max(CELL_W, 10 + 7 * String(b.name).length) : sfp ? CELL_W + 6 : CELL_W;
-        const width = cols * (w + CELL_GAP) - CELL_GAP + (gc ? Math.floor((cols - 1) / gc) * GROUP_GAP : 0);
         const height = rows * (CELL_H + CELL_GAP) - CELL_GAP;
+        // STRIP_WRAP_V1: grupe kolona (group_cols) su zasebni elementi koji se
+        // prelamaju u novi red kad nema mesta -- bez horizontalnog skrola
+        const gsize = gc || cols, ngroups = Math.ceil(cols / gsize);
+        const cells = names.map((n, i) => ({ n, i, cr: cellOfStrip(i, rows, cols, b.layout?.order) }));
         return (
-          <div key={bi} className="relative flex-shrink-0" style={{ width, height }}>
-            {names.map((n, i) => {
+          <div key={bi} className="flex flex-wrap min-w-0" style={{ columnGap: GROUP_GAP, rowGap: CELL_GAP + 4 }}>
+          {Array.from({ length: ngroups }, (_, g) => {
+            const gcols = Math.min(gsize, cols - g * gsize);
+            return (
+          <div key={g} className="relative flex-shrink-0" style={{ width: gcols * (w + CELL_GAP) - CELL_GAP, height }}>
+            {cells.filter(x => Math.floor(x.cr[0] / gsize) === g).map(({ n, cr }) => {
               const key = portKey(n, !!b.combo);
-              const [c, r] = cellOfStrip(i, rows, cols, b.layout?.order);
+              const [c0, r] = cr, c = c0 - g * gsize;
               const st = states?.[key] || 'unknown';
               const sel = selected === key;
               const hl = highlight?.has(key);
@@ -69,7 +76,7 @@ export default function PortStrip({ model, states, info, selected, onPick, cable
                 <button key={key} type="button" disabled={off} onClick={() => onPick?.(key)} title={title}
                   className={`absolute border text-[11px] font-mono flex items-center justify-center ${sfp ? 'rounded-sm' : 'rounded'} ${STRIP_CLS[st] || STRIP_CLS.unknown}
                     ${sel ? 'ring-2 ring-white z-[2]' : hl ? 'ring-2 ring-yellow-400 z-[1]' : off ? 'opacity-30 cursor-not-allowed' : 'hover:brightness-125'}`}
-                  style={{ left: c * (w + CELL_GAP) + (gc ? Math.floor(c / gc) * GROUP_GAP : 0), top: r * (CELL_H + CELL_GAP), width: w, height: CELL_H }}>
+                  style={{ left: c * (w + CELL_GAP), top: r * (CELL_H + CELL_GAP), width: w, height: CELL_H }}>
                   {b.nic ? n : portNum(n, b.type)}
                   {cab?.front && <span className="absolute left-1 right-1 bottom-0.5 h-1 rounded-sm border border-black/40"
                     style={{ background: cab.front === true ? '#C9C9C4' : cableHex(cab.front) }} />}
@@ -78,6 +85,9 @@ export default function PortStrip({ model, states, info, selected, onPick, cable
                 </button>
               );
             })}
+          </div>
+            );
+          })}
           </div>
         );
       })}

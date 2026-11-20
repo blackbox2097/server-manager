@@ -8,7 +8,7 @@ import { ArrowLeft, Plus, Pencil, Trash2, X, Unlink, Maximize2, Minimize2 } from
 import api from '../../services/api';
 import useAuthStore from '../../store/authStore';
 import { Modal, ConfirmDialog, Alert, Spinner } from '../../components/ui';
-import Faceplate, { STATUS_LED } from '../../components/rack/Faceplate';
+import Faceplate, { STATUS_LED, U_MM, RACK_WIDTH_MM } from '../../components/rack/Faceplate';
 import { loadModelList, loadModel, mapInterfaces, portStates as computePortStates, nicModel, nicMapping } from '../../components/rack/deviceModels';  // RACK_NIC_V1
 import PortStrip, { STATE_LABEL, STRIP_CLS, STRIP_HIDDEN } from '../../components/rack/PortStrip';
 import { RoomForm } from './Site';
@@ -43,7 +43,7 @@ function fits(rack, devices, selfId, topRow, h) {
 // ── rack ────────────────────────────────────────────────────────────────────
 function RackColumn({ rack, devices, models, canManage, selectedId, onSelect, onEmptyClick,
                       onEdit, onDelete, dragRef, preview, setPreview, onDrop, rowH, states, modules, marks, highlights,
-                      selPort, onPortClick, onToggleFocus }) {
+                      selPort, onPortClick }) {
   const areaRef = useRef(null);
   const ROW_H = rowH;
   const RACK_W = Math.round(482.6 / 44.45 * rowH);   // 19" sirina u istoj razmeri
@@ -87,9 +87,6 @@ function RackColumn({ rack, devices, models, canManage, selectedId, onSelect, on
           <p className="text-xs text-gray-500">{H} U · zauzeto {used} U{rack.units_from_top ? ' · U1 na vrhu' : ''}</p>
         </div>
         <div className="flex gap-0.5 items-center flex-shrink-0">
-          <button className="btn-secondary py-1 px-2.5 text-xs mr-1" title="Uvećan prikaz: uređaji i portovi" onClick={() => onToggleFocus(rack.id)}>
-            <Maximize2 size={13} /> Zoom
-          </button>
           {canManage && <>
             <button className="btn-ghost p-1.5" title="Izmeni rack" onClick={() => onEdit(rack)}><Pencil size={13} /></button>
             <button className="btn-ghost p-1.5" title="Obriši rack" onClick={() => onDelete(rack)}><Trash2 size={13} /></button>
@@ -567,7 +564,13 @@ function DeviceForm({ open, device, preset, room, rooms, racks, devices, tenantI
 
 // ── panel izabranog uredjaja ────────────────────────────────────────────────
 function DevicePanel({ device, rack, model, mapping, states, modules, marks, highlight, selPort, onPortClick,
-                       canManage, onClose, onEdit, onUnplace, onDelete, children, devices = [], onSelect }) {
+                       canManage, onClose, onEdit, onUnplace, onDelete, children, devices = [], onSelect,
+                       devModel, stripStates, stripMarks, stripLabels }) {
+  // RACK_LOGICAL_V1: portovi koje ploca ne crta (NIC-ovi servera, rucni portovi, uredjaj bez modela)
+  const extra = devModel ? (model
+    ? { ...devModel, front: { ...devModel.front, blocks: (devModel.front?.blocks || []).filter(b => b.nic) } }
+    : devModel) : null;
+  const hasExtra = extra && (extra.front?.blocks || []).some(b => !STRIP_HIDDEN.has(b.type));
   // RACK_ATTACH_V1
   const attParent = device.attached_to_id ? devices.find(d => d.id === device.attached_to_id) : null;
   const attChildren = devices.filter(d => d.attached_to_id === device.id);
@@ -590,7 +593,16 @@ function DevicePanel({ device, rack, model, mapping, states, modules, marks, hig
             selected={selPort} onPortClick={p => onPortClick(p.pkey)} />
         </div>
       )}
-      {model && !selPort && <p className="text-xs text-gray-500">Klikni na port za detalje i kablove.</p>}
+      {hasExtra && (
+        <div className="bg-gray-950 rounded-lg p-2 space-y-1.5">
+          <p className="text-xs text-gray-500">{model ? 'Mrežni portovi (monitoring / ručno)' : 'Portovi'}</p>
+          <div>
+            <PortStrip model={extra} states={stripStates} info={mapping?.info} cables={stripMarks}
+              highlight={highlight} labels={stripLabels} selected={selPort} onPick={onPortClick} />
+          </div>
+        </div>
+      )}
+      {(model || hasExtra) && !selPort && <p className="text-xs text-gray-500">Klikni na port za detalje i kablove.</p>}
       {children && <div className="bg-gray-800/30 rounded-lg p-3">{children}</div>}
       <div className="text-sm space-y-1">
         {device.linked_kind ? (
@@ -629,24 +641,70 @@ function portSummary(model) {
 }
 
 const TYPE_BADGE = {
+  pc: 'Računar', nvr: 'NVR',   // RACK_LOGICAL_V1
   switch: 'Svič', router: 'Ruter', firewall: 'Firewall', ap: 'AP', patch_panel: 'Patch panel', fiber_panel: 'Optički panel',
   ups: 'UPS', server: 'Server', nas: 'NAS', pdu: 'PDU', shelf: 'Polica', blank: 'Slepa ploča', cable_manager: 'Organizator', other: 'Uređaj',
 };
 const LINK_BADGE = { online: 'badge-green', offline: 'badge-red', warning: 'badge-yellow', on_battery: 'badge-orange', low_battery: 'badge-red' };
 
-function RackPortsView({ rack, devices, models, devModels, mappings, states, marks, highlights, labels, selectedId, selPort,
-                         onPick, canManage, onBack, onEdit, onUnplace, onDelete, children }) {
-  const ordered = [...devices].sort((a, b) => topRowOf(rack, a.rack_position, a.height_u) - topRowOf(rack, b.rack_position, b.height_u));
-  const span = d => `U${d.rack_position}${d.height_u > 1 ? `–U${d.rack_position + d.height_u - 1}` : ''}`;
+// RACK_LOGICAL_V1: kartica uredjaja sa trakom portova (logicki prikaz)
+function DeviceStripCard({ d, rack, m, mappings, states, marks, highlights, labels, selectedId, selPort,
+                           onPick, canManage, onEdit, onUnplace, onDelete }) {
+  const where = rack ? `${rack.name} · U${d.rack_position}${d.height_u > 1 ? `–U${d.rack_position + d.height_u - 1}` : ''}` : 'van racka';
+  const hasPorts = m && (m.front?.blocks || []).some(b => !STRIP_HIDDEN.has(b.type));
+  const head = (
+    <div className="flex items-center gap-2 min-w-0 flex-wrap">
+      <span className="font-mono font-semibold text-gray-100">{d.name}</span>
+      <span className="badge-gray">{TYPE_BADGE[m?.type] || 'Uređaj'}</span>
+      <span className="text-sm text-gray-400 truncate">{m ? `${m.vendor !== 'Generic' ? m.vendor + ' ' : ''}${m.model}` : 'bez modela'} · {where}</span>
+      {d.linked_kind && <span className={LINK_BADGE[d.linked_status] || 'badge-gray'}>{d.linked_status}</span>}
+    </div>
+  );
+  const actions = canManage && (
+    <div className="flex gap-4 text-sm flex-shrink-0">
+      <button className="text-brand-400 hover:underline" onClick={() => onEdit(d)}>Izmeni</button>
+      {rack && <button className="text-brand-400 hover:underline" onClick={() => onUnplace(d)}>Skini iz racka</button>}
+      <button className="text-red-400 hover:underline" onClick={() => onDelete(d)}>Obriši</button>
+    </div>
+  );
+  if (!hasPorts) {
+    return (
+      <div className="px-4 py-2.5 rounded-xl border border-gray-800 bg-gray-900/50 flex items-center justify-between gap-3">
+        {head}{actions}
+      </div>
+    );
+  }
+  return (
+    <div className={`card space-y-3 ${selectedId === d.id ? 'ring-1 ring-brand-500/60' : ''}`}>
+      <div className="flex items-start justify-between gap-3">
+        {head}
+        <span className="text-xs font-mono text-gray-500 text-right">{[d.linked_ip, portSummary(m)].filter(Boolean).join(' · ')}</span>
+      </div>
+      {actions && <div className="flex justify-end">{actions}</div>}
+      <div className="bg-gray-950 rounded-lg p-3">
+        <PortStrip model={m} states={states[d.id]} info={mappings[d.id]?.info}
+          cables={marks[d.id]} highlight={highlights.get(d.id)} labels={labels[d.id]}
+          selected={selectedId === d.id ? selPort : null} onPick={port => onPick(d.id, port)} />
+      </div>
+    </div>
+  );
+}
 
+// RACK_LOGICAL_V1: logicki prikaz cele prostorije -- levo uredjaji iz rackova
+// (po racku, odozgo nadole), desno uredjaji van racka; detalj porta u koloni desno
+function LogicalView({ racks, devices, models, devModels, onBack, children, ...card }) {
+  const unplaced = devices.filter(d => !d.rack_id).sort((a, b) => a.name.localeCompare(b.name));
+  const cardFor = (d, rack) => (
+    <DeviceStripCard key={d.id} d={d} rack={rack} m={devModels?.[d.id] || (d.model_id && models[d.model_id])} {...card} />
+  );
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <button className="btn-secondary" onClick={onBack}><Minimize2 size={14} /> Nazad na rack</button>
+          <button className="btn-secondary" onClick={onBack}><Minimize2 size={14} /> Nazad na rackove</button>
           <div>
-            <p className="font-medium">{rack.name}</p>
-            <p className="text-xs text-gray-500">{rack.height_u} U · {devices.length} uređaja · Esc za povratak</p>
+            <p className="font-medium">Logički prikaz</p>
+            <p className="text-xs text-gray-500">{racks.length} rack · {devices.length} uređaja · Esc za povratak</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-3 text-xs text-gray-400">
@@ -659,55 +717,76 @@ function RackPortsView({ rack, devices, models, devModels, mappings, states, mar
       </div>
 
       <div className="flex gap-4 items-start">
-        <div className="flex-1 min-w-0 space-y-3">
-          {ordered.length === 0 && <div className="card text-sm text-gray-400">Rack je prazan.</div>}
-          {ordered.map(d => {
-            const m = devModels?.[d.id] || (d.model_id && models[d.model_id]);
-            const hasPorts = m && (m.front?.blocks || []).some(b => !STRIP_HIDDEN.has(b.type));
-            const head = (
-              <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                <span className="font-mono font-semibold text-gray-100">{d.name}</span>
-                <span className="badge-gray">{TYPE_BADGE[m?.type] || 'Uređaj'}</span>
-                <span className="text-sm text-gray-400 truncate">{m ? `${m.vendor !== 'Generic' ? m.vendor + ' ' : ''}${m.model}` : 'bez modela'} · {span(d)}</span>
-                {d.linked_kind && <span className={LINK_BADGE[d.linked_status] || 'badge-gray'}>{d.linked_status}</span>}
-              </div>
-            );
-            const actions = canManage && (
-              <div className="flex gap-4 text-sm flex-shrink-0">
-                <button className="text-brand-400 hover:underline" onClick={() => onEdit(d)}>Izmeni</button>
-                <button className="text-brand-400 hover:underline" onClick={() => onUnplace(d)}>Skini iz racka</button>
-                <button className="text-red-400 hover:underline" onClick={() => onDelete(d)}>Obriši</button>
-              </div>
-            );
-            if (!hasPorts) {
-              return (
-                <div key={d.id} className="px-4 py-2.5 rounded-xl border border-gray-800 bg-gray-900/50 flex items-center justify-between gap-3">
-                  {head}{actions}
-                </div>
-              );
-            }
+        {/* RACK_LOGICAL_V1: rack 2/3, van racka 1/3 (uredjaji van racka su tipicno uzi) */}
+        <div className="flex-[2] min-w-0 space-y-4">
+          {racks.length === 0 && <div className="card text-sm text-gray-400">Prostorija nema rack.</div>}
+          {racks.map(r => {
+            const ordered = devices.filter(d => d.rack_id === r.id)
+              .sort((a, b) => topRowOf(r, a.rack_position, a.height_u) - topRowOf(r, b.rack_position, b.height_u));
             return (
-              <div key={d.id} className="card space-y-3">
-                <div className="flex items-start justify-between gap-3">
-                  {head}
-                  <span className="text-xs font-mono text-gray-500 text-right">{[d.linked_ip, portSummary(m)].filter(Boolean).join(' · ')}</span>
-                </div>
-                {actions && <div className="flex justify-end">{actions}</div>}
-                <div className="bg-gray-950 rounded-lg p-3 overflow-x-auto">
-                  <PortStrip model={m} states={states[d.id]} info={mappings[d.id]?.info}
-                    cables={marks[d.id]} highlight={highlights.get(d.id)} labels={labels[d.id]}
-                    selected={selectedId === d.id ? selPort : null} onPick={port => onPick(d.id, port)} />
-                </div>
+              <div key={r.id} className="space-y-2">
+                <p className="text-sm font-medium text-gray-300">{r.name} <span className="text-gray-500 font-normal">· {r.height_u} U · {ordered.length} uređaja</span></p>
+                {ordered.length === 0 ? <div className="card text-sm text-gray-500">Rack je prazan.</div> : ordered.map(d => cardFor(d, r))}
               </div>
             );
           })}
         </div>
-
+        <div className="flex-[1] min-w-0 space-y-2">
+          <p className="text-sm font-medium text-gray-300">Van racka <span className="text-gray-500 font-normal">· {unplaced.length} uređaja</span></p>
+          {unplaced.length === 0 ? <div className="card text-sm text-gray-500">Nema uređaja van racka.</div> : unplaced.map(d => cardFor(d, null))}
+        </div>
         <div className="w-[340px] flex-shrink-0 sticky top-16">
           <div className="card">
             {children || <p className="text-sm text-gray-500">Klikni na port da vidiš detalje i kablove.</p>}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// RACK_LOGICAL_V1: uredjaji van racka pored rackova -- svaki svojim izgledom,
+// u istoj razmeri kao rack; zona je i mesto za skidanje iz racka (drag & drop)
+function OffRackArea({ devices, models, rowH, canManage, selectedId, onSelect, dragRef, setPreview, isRackable, onUnplaceDrop }) {
+  const mm = rowH / U_MM;   // px po mm, isto kao u racku
+  const [over, setOver] = useState(false);
+  return (
+    <div className="flex-shrink-0" style={{ minWidth: 220, maxWidth: 760 }}
+      onDragOver={e => { if (dragRef.current) { e.preventDefault(); if (!over) setOver(true); } }}
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setOver(false); }}
+      onDrop={e => { e.preventDefault(); setOver(false); onUnplaceDrop(); }}>
+      <div className="mb-1.5">
+        <p className="text-sm font-medium">Van racka</p>
+        <p className="text-xs text-gray-500">{devices.length} uređaja{canManage ? ' · prevuci u rack ili iz racka ovde' : ''}</p>
+      </div>
+      <div className={`flex flex-wrap items-end gap-x-5 gap-y-6 p-3 rounded-lg border min-h-[160px] ${over ? 'border-brand-500 bg-brand-600/10' : 'border-dashed border-gray-800'}`}>
+        {devices.length === 0 && <p className="text-xs text-gray-600 m-auto">prazno</p>}
+        {devices.map(d => {
+          const m = d.model_id && models[d.model_id];
+          const rackable = isRackable(d);
+          const wmm = m ? (m.form.mount === 'none' ? m.form.body_width_mm : RACK_WIDTH_MM) : 200;
+          return (
+            <div key={d.id} draggable={canManage && rackable}
+              onDragStart={e => {
+                dragRef.current = { id: d.id, h: d.height_u, grabRow: 0, rackable };
+                e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', d.id);
+              }}
+              onDragEnd={() => { dragRef.current = null; setPreview(null); }}
+              onClick={() => onSelect(d.id)}
+              title={rackable ? d.name : `${d.name} · ne ide u rack`}
+              className={`${canManage && rackable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
+              style={{ width: Math.max(70, wmm * mm) }}>
+              <p className={`flex items-center gap-1.5 text-xs mb-1 truncate ${selectedId === d.id ? 'text-brand-200' : 'text-gray-300'}`}>
+                {d.linked_kind && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[d.linked_status] || 'bg-gray-600'}`} />}
+                <span className="truncate">{d.name}</span>
+              </p>
+              <div className={`rounded-sm ${selectedId === d.id ? 'ring-2 ring-brand-500' : ''}`}>
+                {m ? <Faceplate model={m} showNumbers={false} maxHeight="none" statusColor={STATUS_LED[d.linked_status]} />
+                   : <div className="bg-gray-700 border border-gray-600 flex items-center px-2 text-xs text-gray-200" style={{ height: d.height_u * rowH }}>{d.name}</div>}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -741,9 +820,9 @@ export default function RoomView() {
   const [trace, setTrace] = useState(null);
   const [cableDlg, setCableDlg] = useState({ open: false });
   // Uvecan prikaz racka (kartice uredjaja sa trakama portova)
-  const [portsRackId, setPortsRackId] = useState(null);
+  const [logical, setLogical] = useState(false);   // RACK_LOGICAL_V1
   useEffect(() => {
-    const onKey = e => { if (e.key === 'Escape') setPortsRackId(null); };
+    const onKey = e => { if (e.key === 'Escape') setLogical(false); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
@@ -782,7 +861,7 @@ export default function RoomView() {
   // dolazak sa drugog kraja kabla iz druge lokacije: izaberi uredjaj i port
   useEffect(() => {
     const st = location.state;
-    setPortsRackId(null);
+    setLogical(false);
     setSelectedId(st?.dev || null); setSelPort(st?.port || null);
   }, [roomId, location.key]);  // eslint-disable-line
   useEffect(() => { loadModelList().then(setModelList).catch(() => {}); }, []);
@@ -846,8 +925,6 @@ export default function RoomView() {
   }, [trace, selectedId, selPort]);
 
   const racks = data?.racks || [];
-  if (portsRackId && !racks.some(r => r.id === portsRackId) && data) setTimeout(() => setPortsRackId(null));
-  const portsRack = racks.find(r => r.id === portsRackId);
   const devices = data?.devices || [];
   const unplaced = devices.filter(d => !d.rack_id);
   const selected = devices.find(d => d.id === selectedId);
@@ -859,7 +936,6 @@ export default function RoomView() {
     if (rid && rid !== roomId) { navigate(`/infra/rooms/${rid}`, { state: { dev: devId, port } }); return; }
     const d = devices.find(x => x.id === devId);
     if (!d) return;
-    if (portsRackId) setPortsRackId(d.rack_id || null);
     setSelectedId(devId); setSelPort(port);
   };
   const portDetail = (selDevice && selPortObj) ? (
@@ -919,6 +995,11 @@ export default function RoomView() {
           {canManage && <button className="btn-ghost p-1.5" title="Izmeni prostoriju" onClick={() => setRoomForm(true)}><Pencil size={14} /></button>}
         </div>
         <div className="flex gap-2 items-center">
+        {!logical && (devices.length > 0) && (
+          <button className="btn-secondary" title="Svi uređaji prostorije kao trake portova -- pečovanje" onClick={() => { setLogical(true); window.scrollTo({ top: 0 }); }}>
+            <Maximize2 size={15} /> Logički prikaz
+          </button>
+        )}
         {canManage && (
           <div className="flex gap-2">
             <button className="btn-secondary" onClick={() => setRackForm({ open: true, rack: null })}><Plus size={16} /> Rack</button>
@@ -930,79 +1011,47 @@ export default function RoomView() {
 
       {err && <Alert type="error" message={err} onClose={() => setErr('')} />}
 
-      {portsRack ? (
-        <RackPortsView rack={portsRack} devices={devices.filter(d => d.rack_id === portsRack.id)} models={models} devModels={devModels}
+      {logical ? (
+        <LogicalView racks={racks} devices={devices} models={models} devModels={devModels}
           mappings={mappings} states={states} marks={marks.strip} highlights={highlights} labels={labels}
           selectedId={selectedId} selPort={selPort} onPick={(id, port) => { setSelectedId(id); setSelPort(port); }}
-          canManage={canManage} onBack={() => setPortsRackId(null)}
+          canManage={canManage} onBack={() => setLogical(false)}
           onEdit={d => setDevForm({ open: true, device: d, preset: null })}
           onUnplace={d => place(d.id, null, null)}
           onDelete={d => setConfirm({ kind: 'device', item: d })}>
           {portDetail}
-        </RackPortsView>
+        </LogicalView>
       ) : (
       <div className="flex gap-4 items-start">
-        {/* sa strane: uredjaji bez mesta u racku -- i zona za skidanje iz racka */}
-        <div className="w-56 flex-shrink-0 sticky top-16"
-          onDragOver={e => { if (dragRef.current) e.preventDefault(); }}
-          onDrop={e => {
-            e.preventDefault();
-            const drag = dragRef.current; dragRef.current = null; setPreview(null);
-            const d = drag && devices.find(x => x.id === drag.id);
-            if (d?.rack_id) place(d.id, null, null);
-          }}>
-          <div className="card p-3 min-h-[160px]">
-            <p className="text-sm font-medium mb-1">Van racka <span className="text-gray-500 font-normal">({unplaced.length})</span></p>
-            <p className="text-[11px] text-gray-500 mb-2">{canManage ? 'Prevuci u rack, ili iz racka ovde.' : 'Uređaji koji nisu u racku.'}</p>
-            <div className="space-y-1.5 max-h-[70vh] overflow-y-auto">
-              {unplaced.length === 0 && <p className="text-xs text-gray-600 py-4 text-center border border-dashed border-gray-800 rounded-lg">prazno</p>}
-              {unplaced.map(d => {
-                const rackable = isRackable(d);
-                return (
-                  <div key={d.id} draggable={canManage && rackable}
-                    onDragStart={e => {
-                      dragRef.current = { id: d.id, h: d.height_u, grabRow: 0, rackable };
-                      e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', d.id);
-                    }}
-                    onDragEnd={() => { dragRef.current = null; setPreview(null); }}
-                    onClick={() => setSelectedId(d.id)}
-                    className={`px-2.5 py-2 rounded-lg border text-xs flex items-center gap-1.5 ${selectedId === d.id ? 'border-brand-500' : 'border-gray-700'} ${canManage && rackable ? 'cursor-grab' : 'cursor-pointer'} bg-gray-800/60`}>
-                    {d.linked_kind && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[d.linked_status] || 'bg-gray-600'}`} />}
-                    <span className="truncate flex-1">{d.name}</span>
-                    <span className="text-gray-500 flex-shrink-0">{rackable ? `${d.height_u}U` : 'ne ide u rack'}</span>
-                  </div>
-                );
-              })}
+        <div className="flex-1 min-w-0 space-y-4">
+          <div className="overflow-x-auto pb-2">
+            <div className="flex gap-6 items-start">
+              {racks.length === 0 && (
+                <div className="card text-sm text-gray-400 self-start">
+                  Prostorija još nema rack. {canManage && <button className="text-brand-400 hover:underline" onClick={() => setRackForm({ open: true, rack: null })}>Dodaj rack</button>}
+                </div>
+              )}
+              {racks.map(r => (
+                <RackColumn key={r.id} rack={r} devices={devices.filter(d => d.rack_id === r.id)} models={models}
+                  rowH={ROW_H} states={states} modules={modules} marks={marks.face} highlights={highlights} selPort={selPort}
+                  onPortClick={(id, port) => { setSelectedId(id); setSelPort(port); }}
+                  canManage={canManage} selectedId={selectedId} onSelect={id => { setSelectedId(id); setSelPort(null); }}
+                  onEmptyClick={(rack, u) => setDevForm({ open: true, device: null, preset: { rackId: rack.id, position: u } })}
+                  onEdit={rack => setRackForm({ open: true, rack })}
+                  onDelete={rack => setConfirm({ kind: 'rack', item: rack })}
+                  dragRef={dragRef} preview={preview} setPreview={setPreview} onDrop={onDrop} />
+              ))}
+              {/* RACK_LOGICAL_V1: uredjaji van racka, svaki svojim izgledom */}
+              <OffRackArea devices={unplaced} models={models} rowH={ROW_H} canManage={canManage}
+                selectedId={selectedId} onSelect={id => { setSelectedId(id); setSelPort(null); }}
+                dragRef={dragRef} setPreview={setPreview} isRackable={isRackable}
+                onUnplaceDrop={() => {
+                  const drag = dragRef.current; dragRef.current = null; setPreview(null);
+                  const d = drag && devices.find(x => x.id === drag.id);
+                  if (d?.rack_id) place(d.id, null, null);
+                }} />
             </div>
           </div>
-        </div>
-        <div className="flex-1 min-w-0 space-y-4">
-          {racks.length === 0 ? (
-            <div className="card text-sm text-gray-400">
-              Prostorija još nema rack. {canManage && <button className="text-brand-400 hover:underline" onClick={() => setRackForm({ open: true, rack: null })}>Dodaj rack</button>}
-            </div>
-          ) : (
-            <div className="overflow-x-auto pb-2">
-              <div className="flex gap-6">
-                {racks.map(r => (
-                  <RackColumn key={r.id} rack={r} devices={devices.filter(d => d.rack_id === r.id)} models={models}
-                    rowH={ROW_H} states={states} modules={modules} marks={marks.face} highlights={highlights} selPort={selPort}
-                    onToggleFocus={id => {
-                      setPortsRackId(id);
-                      if (selDevice?.rack_id !== id) { setSelectedId(null); setSelPort(null); }
-                      window.scrollTo({ top: 0 });
-                    }}
-                    onPortClick={(id, port) => { setSelectedId(id); setSelPort(port); }}
-                    canManage={canManage} selectedId={selectedId} onSelect={id => { setSelectedId(id); setSelPort(null); }}
-                    onEmptyClick={(rack, u) => setDevForm({ open: true, device: null, preset: { rackId: rack.id, position: u } })}
-                    onEdit={rack => setRackForm({ open: true, rack })}
-                    onDelete={rack => setConfirm({ kind: 'rack', item: rack })}
-                    dragRef={dragRef} preview={preview} setPreview={setPreview} onDrop={onDrop} />
-                ))}
-              </div>
-            </div>
-          )}
-
         </div>
 
         {selected && (
@@ -1012,6 +1061,8 @@ export default function RoomView() {
               mapping={mappings[selected.id]} states={states[selected.id]} modules={modules[selected.id]}
               marks={marks.face[selected.id]} highlight={highlights.get(selected.id)}
               selPort={selPort} onPortClick={setSelPort}
+              devModel={devModels[selected.id]} stripStates={states[selected.id]} stripMarks={marks.strip[selected.id]}
+              stripLabels={labels[selected.id]}
               onClose={() => setSelectedId(null)}
               onEdit={() => setDevForm({ open: true, device: selected, preset: null })}
               onUnplace={() => place(selected.id, null, null)}
